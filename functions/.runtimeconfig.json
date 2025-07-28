@@ -1,0 +1,11 @@
+{
+  "telegram": {
+    "token": "7476577549:AAHbbkOLFPOgmJCiMmm9_7hfXLXywhd61TA"
+  },
+  "admin": {
+    "id": "1227459883"
+  },
+  "webapp": {
+    "url": "https://bot-vai-web-app.web.app/"
+  }
+}

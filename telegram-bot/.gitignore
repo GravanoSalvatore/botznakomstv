@@ -1,0 +1,4 @@
+node_modules/
+*.env
+firebase-adminsdk.json
+telegram-bot/firebase/firebase-adminsdk.json
