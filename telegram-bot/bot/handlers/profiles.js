@@ -381,7 +381,7 @@ sendMainMenu: async function (ctx) {
 
       // 5. Общие кнопки для всех пользователей
       menuButtons.push(
-        [{ text: "🎂 Фильтр по возрасту", callback_data: "filter_by_age" }],
+        // [{ text: "🎂 Фильтр по возрасту", callback_data: "filter_by_age" }],
         [{ text: "❌ Очистить экран", callback_data: "clear_screen" }]
       );
 
@@ -519,9 +519,9 @@ sendMainMenu: async function (ctx) {
           });
 
           // Добавляем кнопки фильтров и возврата
-          keyboard.push([
-            { text: "🎂 Фильтр по возрасту", callback_data: "filter_by_age" },
-          ]);
+          // keyboard.push([
+          //   { text: "🎂 Фильтр по возрасту", callback_data: "filter_by_age" },
+          // ]);
           keyboard.push([
             { text: "🔙 Назад к странам", callback_data: "back_to_countries" },
           ]);
@@ -1071,7 +1071,7 @@ ${profile.whatsapp ? formatWhatsApp(profile.whatsapp) + "\n" : ""}
         keyboard.push(
           [{ text: "🌐 Открыть PeaceYourGun 🥕 в WebApp", web_app: { url: process.env.WEBAPP_URL } }],
           [{ text: "🌍 Все страны", callback_data: "all_countries" }],
-          [{ text: "🎂 Фильтр по возрасту", callback_data: "filter_by_age" }],
+          // [{ text: "🎂 Фильтр по возрасту", callback_data: "filter_by_age" }],
           [{ text: "❌ Очистить экран", callback_data: "clear_screen" }]
         );
       }

@@ -1,5 +1,3 @@
-
-
 // const admin = require('firebase-admin');
 
 // module.exports = (bot, db) => {
@@ -8,19 +6,19 @@
 //     try {
 //       const subRef = db.collection('subscriptions').doc(userId.toString());
 //       const doc = await subRef.get();
-      
+
 //       if (!doc.exists) return false;
-      
+
 //       const subData = doc.data();
-      
+
 //       if (subData.subscriptionType === 'forever' && subData.isActive) {
-//         return { 
+//         return {
 //           active: true,
 //           type: 'forever',
 //           message: '🎉 У вас бессрочная подписка!'
 //         };
 //       }
-      
+
 //       if (subData.endDate && subData.endDate.toDate() > new Date() && subData.isActive) {
 //         return {
 //           active: true,
@@ -29,7 +27,7 @@
 //           message: `✅ Ваша подписка активна до: ${subData.endDate.toDate().toLocaleString()}`
 //         };
 //       }
-      
+
 //       return false;
 //     } catch (error) {
 //       console.error('Ошибка проверки подписки:', error);
@@ -41,16 +39,16 @@
 //   bot.start(async (ctx) => {
 //     const userId = ctx.from.id;
 //     const subscription = await checkSubscription(userId);
-    
+
 //     try {
 //       await ctx.replyWithPhoto(
-//         { 
+//         {
 //           url: 'https://st4.depositphotos.com/2944823/21275/i/450/depositphotos_212755884-stock-photo-fashion-outdoor-photo-group-beautiful.jpg',
 //           filename: 'welcome.jpg'
 //         },
 //         {
 //           caption: `👋<b> Привет, ${ctx.from.first_name}!
-// Добро пожаловать в бот знакомств 🅿🅴🅰🅲🅴💋🆈🅾🆄🆁🥕🅶🆄🅽</b> 
+// Добро пожаловать в бот знакомств 🅿🅴🅰🅲🅴💋🆈🅾🆄🆁🥕🅶🆄🅽</b>
 // <em>Здесь ты найдёшь каталог анкет со всего мира для общения, флирта и серьёзных отношений.
 // 🎉 Каталог обновляется каждый день — всегда свежие профили!
 // Начни поиск или размести свою анкету — возможно, твоя вторая половинка уже здесь!</em>
@@ -176,13 +174,6 @@
 //   });
 // };
 
-
-
-
-
-
-
-
 // const admin = require('firebase-admin');
 
 // module.exports = (bot, db) => {
@@ -191,19 +182,19 @@
 //     try {
 //       const subRef = db.collection('subscriptions').doc(userId.toString());
 //       const doc = await subRef.get();
-      
+
 //       if (!doc.exists) return false;
-      
+
 //       const subData = doc.data();
-      
+
 //       if (subData.subscriptionType === 'forever' && subData.isActive) {
-//         return { 
+//         return {
 //           active: true,
 //           type: 'forever',
 //           message: '🎉 У вас бессрочная подписка!'
 //         };
 //       }
-      
+
 //       if (subData.endDate && subData.endDate.toDate() > new Date() && subData.isActive) {
 //         return {
 //           active: true,
@@ -212,7 +203,7 @@
 //           message: `✅ Ваша подписка активна до: ${subData.endDate.toDate().toLocaleString()}`
 //         };
 //       }
-      
+
 //       return false;
 //     } catch (error) {
 //       console.error('Ошибка проверки подписки:', error);
@@ -239,16 +230,16 @@
 //     await initCollections();
 //     const userId = ctx.from.id;
 //     const subscription = await checkSubscription(userId);
-    
+
 //     try {
 //       await ctx.replyWithPhoto(
-//         { 
+//         {
 //           url: 'https://st4.depositphotos.com/2944823/21275/i/450/depositphotos_212755884-stock-photo-fashion-outdoor-photo-group-beautiful.jpg',
 //           filename: 'welcome.jpg'
 //         },
 //         {
 //           caption: `👋<b> Привет, ${ctx.from.first_name}!
-// Добро пожаловать в бот знакомств 🅿🅴🅰🅲🅴💋🆈🅾🆄🆁🥕🅶🆄🅽</b> 
+// Добро пожаловать в бот знакомств 🅿🅴🅰🅲🅴💋🆈🅾🆄🆁🥕🅶🆄🅽</b>
 // <em>Здесь ты найдёшь каталог анкет со всего мира для общения, флирта и серьёзных отношений.
 // 🎉 Каталог обновляется каждый день — всегда свежие профили!
 // Начни поиск или размести свою анкету — возможно, твоя вторая половинка уже здесь!</em>
@@ -294,7 +285,7 @@
 //     try {
 //       await ctx.replyWithInvoice({
 //         title: `Подписка на ${planId === '1day' ? '1 день' : planId === '1month' ? '1 месяц' : 'навсегда'}`,
-//         description: planId === '1day' ? 'Доступ на 24 часа' : 
+//         description: planId === '1day' ? 'Доступ на 24 часа' :
 //                      planId === '1month' ? 'Доступ на 30 дней' : 'Пожизненный доступ',
 //         payload: `${planId}_${ctx.from.id}_${Date.now()}`,
 //         currency: 'XTR',
@@ -369,7 +360,6 @@
 //   });
 // };
 
-
 //start.js
 // const admin = require('firebase-admin');
 
@@ -379,19 +369,19 @@
 //     try {
 //       const subRef = db.collection('subscriptions').doc(userId.toString());
 //       const doc = await subRef.get();
-      
+
 //       if (!doc.exists) return false;
-      
+
 //       const subData = doc.data();
-      
+
 //       if (subData.subscriptionType === 'forever' && subData.isActive) {
-//         return { 
+//         return {
 //           active: true,
 //           type: 'forever',
 //           message: '🎉 У вас бессрочная подписка!'
 //         };
 //       }
-      
+
 //       if (subData.endDate && subData.endDate.toDate() > new Date() && subData.isActive) {
 //         return {
 //           active: true,
@@ -400,7 +390,7 @@
 //           message: `✅ <b>Ваша подписка активна до:</b> ${subData.endDate.toDate().toLocaleString()}`
 //         };
 //       }
-      
+
 //       return false;
 //     } catch (error) {
 //       console.error('Ошибка проверки подписки:', error);
@@ -428,10 +418,10 @@
 //       // Удаляем предыдущие сообщения (до 10 последних)
 //       const chatId = ctx.chat.id;
 //       const messageId = ctx.message.message_id;
-      
+
 //       // Удаляем текущее сообщение
 //       await ctx.deleteMessage();
-      
+
 //       // Пытаемся удалить предыдущие сообщения
 //       for (let i = 1; i <= 10; i++) {
 //         try {
@@ -440,7 +430,7 @@
 //           // Игнорируем ошибки (если сообщение уже удалено или не существует)
 //         }
 //       }
-      
+
 //       // Отправляем новое чистое сообщение
 //       return true;
 //     } catch (error) {
@@ -454,20 +444,19 @@
 //     await initCollections();
 //     const userId = ctx.from.id;
 //     const subscription = await checkSubscription(userId);
-    
+
 //     try {
 //       await ctx.replyWithPhoto(
-//         { 
+//         {
 //           url: 'https://st4.depositphotos.com/2944823/21275/i/450/depositphotos_212755884-stock-photo-fashion-outdoor-photo-group-beautiful.jpg',
 //           filename: 'welcome.jpg'
 //         },
 //         {
 //           caption: `👋<b> Привет, ${ctx.from.first_name}!
-// Добро пожаловать в бот знакомств 🅿🅴🅰🅲🅴💋🆈🅾🆄🆁🥕🅶🆄🅽</b> 
+// Добро пожаловать в бот знакомств 🅿🅴🅰🅲🅴💋🆈🅾🆄🆁🥕🅶🆄🅽</b>
 // <em>Здесь ты найдёшь каталог анкет со всего мира для общения, флирта и серьёзных отношений.
 // 🎉 Каталог обновляется каждый день — всегда свежие профили!
 // Начни поиск или размести свою анкету — возможно, твоя вторая половинка уже здесь!</em>
-
 
 // ${subscription ? `\n\n${subscription.message}` : ''}`,
 //           parse_mode: 'HTML',
@@ -508,7 +497,7 @@
 //     try {
 //       await ctx.replyWithInvoice({
 //         title: `Подписка на ${planId === '1day' ? '1 день' : planId === '1month' ? '1 месяц' : 'навсегда'}`,
-//         description: planId === '1day' ? 'Доступ на 24 часа' : 
+//         description: planId === '1day' ? 'Доступ на 24 часа' :
 //                      planId === '1month' ? 'Доступ на 30 дней' : 'Пожизненный доступ',
 //         payload: `${planId}_${ctx.from.id}_${Date.now()}`,
 //         currency: 'XTR',
@@ -581,7 +570,7 @@
 //       // Отправляем обновленное сообщение с подтверждением
 //       const subscription = await checkSubscription(userId);
 //       await ctx.replyWithPhoto(
-//         { 
+//         {
 //           url: 'https://st4.depositphotos.com/2944823/21275/i/450/depositphotos_212755884-stock-photo-fashion-outdoor-photo-group-beautiful.jpg',
 //           filename: 'welcome.jpg'
 //         },
@@ -627,9 +616,9 @@
 //     try {
 //         const subRef = db.collection('subscriptions').doc(userId.toString());
 //         const doc = await subRef.get();
-        
+
 //         if (!doc.exists) return false;
-        
+
 //         const subData = doc.data();
 //         return subData.isActive && subData.endDate.toDate() > new Date();
 //     } catch (error) {
@@ -657,15 +646,15 @@
 //         try {
 //             const chatId = ctx.chat.id;
 //             const messageId = ctx.message.message_id;
-            
+
 //             await ctx.deleteMessage();
-            
+
 //             for (let i = 1; i <= 10; i++) {
 //                 try {
 //                     await ctx.telegram.deleteMessage(chatId, messageId - i);
 //                 } catch (e) {}
 //             }
-            
+
 //             return true;
 //         } catch (error) {
 //             console.error('Ошибка при очистке чата:', error);
@@ -677,10 +666,10 @@
 // //     bot.start(async (ctx) => {
 // //         // Асинхронно инициализируем коллекции (не ждём завершения)
 // //         initCollections().catch(e => console.error('Ошибка инициализации:', e));
-        
+
 // //         const userId = ctx.from.id;
 // //         const welcomeText = `👋<b> Привет, ${ctx.from.first_name}!
-// // Добро пожаловать в бот знакомств 🅿🅴🅰🅲🅴💋🆈🅾🆄🆁🥕🅶🆄🅽</b> 
+// // Добро пожаловать в бот знакомств 🅿🅴🅰🅲🅴💋🆈🅾🆄🆁🥕🅶🆄🅽</b>
 // // <em>Здесь ты найдёшь каталог анкет со всего мира для общения, флирта и серьёзных отношений.
 // // 🎉 Каталог обновляется каждый день — всегда свежие профили!
 // // Начни поиск или размести свою анкету — возможно, твоя вторая половинка уже здесь!</em>`;
@@ -781,7 +770,7 @@
 //         try {
 //             await ctx.replyWithInvoice({
 //                 title: `Подписка на ${planId === '1day' ? '1 день' : planId === '1month' ? '1 месяц' : 'навсегда'}`,
-//                 description: planId === '1day' ? 'Доступ на 24 часа' : 
+//                 description: planId === '1day' ? 'Доступ на 24 часа' :
 //                             planId === '1month' ? 'Доступ на 30 дней' : 'Пожизненный доступ',
 //                 payload: `${planId}_${ctx.from.id}_${Date.now()}`,
 //                 currency: 'XTR',
@@ -891,230 +880,276 @@
 //         }
 //     });
 // };
-const admin = require('firebase-admin');
-const fs = require('fs');
-const path = require('path');
+const admin = require("firebase-admin");
+const fs = require("fs");
+const path = require("path");
 
 module.exports = (bot, db) => {
-    // ================= 1. ПРЕДЗАГРУЗКА ИЗОБРАЖЕНИЯ =================
-    const welcomeImage = {
-        path: path.join(__dirname, '../../img/welcome.jpg'),
-        buffer: null,
-        fileId: null,
-        load: function() {
-            if (fs.existsSync(this.path)) {
-                this.buffer = fs.readFileSync(this.path);
-                console.log('Изображение welcome.jpg загружено в память');
-            }
-        }
-    };
-    welcomeImage.load();
+  // ================= 1. ПРЕДЗАГРУЗКА ИЗОБРАЖЕНИЯ =================
+  const welcomeImage = {
+    path: path.join(__dirname, "../../img/welcome.jpg"),
+    buffer: null,
+    fileId: null,
+    load: function () {
+      if (fs.existsSync(this.path)) {
+        this.buffer = fs.readFileSync(this.path);
+        console.log("Изображение welcome.jpg загружено в память");
+      }
+    },
+  };
+  welcomeImage.load();
 
-    // ================= 2. ФУНКЦИЯ ПРОВЕРКИ ПОДПИСКИ =================
-    const checkSubscription = async (userId) => {
+  // ================= 2. ФУНКЦИЯ ПРОВЕРКИ ПОДПИСКИ =================
+  const checkSubscription = async (userId) => {
+    try {
+      const subRef = db.collection("subscriptions").doc(userId.toString());
+      const doc = await subRef.get();
+
+      if (!doc.exists) return false;
+
+      const subData = doc.data();
+      return {
+        active: subData.isActive && subData.endDate.toDate() > new Date(),
+        message:
+          subData.subscriptionType === "forever"
+            ? "🎉 У вас бессрочная подписка!"
+            : `✅  подписка активна до: ${subData.endDate
+                .toDate()
+                .toLocaleString()}`,
+      };
+    } catch (error) {
+      console.error("Ошибка проверки подписки:", error);
+      return { active: false };
+    }
+  };
+
+  // ================= 3. ОРИГИНАЛЬНЫЕ ФУНКЦИИ =================
+  const initCollections = async () => {
+    const collections = ["subscriptions", "transactions", "payment_logs"];
+    for (const col of collections) {
+      try {
+        const ref = db.collection(col).doc("init");
+        await ref.set({ _init: true });
+        await ref.delete();
+      } catch (error) {
+        console.log(`Коллекция ${col} уже существует`);
+      }
+    }
+  };
+
+  const clearChat = async (ctx) => {
+    try {
+      const chatId = ctx.chat.id;
+      const messageId = ctx.message.message_id;
+
+      await ctx.deleteMessage();
+
+      for (let i = 1; i <= 10; i++) {
         try {
-            const subRef = db.collection('subscriptions').doc(userId.toString());
-            const doc = await subRef.get();
-            
-            if (!doc.exists) return false;
-            
-            const subData = doc.data();
-            return {
-                active: subData.isActive && subData.endDate.toDate() > new Date(),
-                message: subData.subscriptionType === 'forever' 
-                    ? '🎉 У вас бессрочная подписка!' 
-                    : `✅ Ваша подписка активна до: ${subData.endDate.toDate().toLocaleString()}`
-            };
-        } catch (error) {
-            console.error('Ошибка проверки подписки:', error);
-            return { active: false };
-        }
-    };
+          await ctx.telegram.deleteMessage(chatId, messageId - i);
+        } catch (e) {}
+      }
 
-    // ================= 3. ОРИГИНАЛЬНЫЕ ФУНКЦИИ =================
-    const initCollections = async () => {
-        const collections = ['subscriptions', 'transactions', 'payment_logs'];
-        for (const col of collections) {
-            try {
-                const ref = db.collection(col).doc('init');
-                await ref.set({ _init: true });
-                await ref.delete();
-            } catch (error) {
-                console.log(`Коллекция ${col} уже существует`);
-            }
-        }
-    };
+      return true;
+    } catch (error) {
+      console.error("Ошибка при очистке чата:", error);
+      return false;
+    }
+  };
 
-    const clearChat = async (ctx) => {
-        try {
-            const chatId = ctx.chat.id;
-            const messageId = ctx.message.message_id;
-            
-            await ctx.deleteMessage();
-            
-            for (let i = 1; i <= 10; i++) {
-                try {
-                    await ctx.telegram.deleteMessage(chatId, messageId - i);
-                } catch (e) {}
-            }
-            
-            return true;
-        } catch (error) {
-            console.error('Ошибка при очистке чата:', error);
-            return false;
-        }
-    };
+  // ================= 4. ОБНОВЛЕННЫЙ ОБРАБОТЧИК START =================
+  bot.start(async (ctx) => {
+    initCollections().catch((e) => console.error("Ошибка инициализации:", e));
 
-    // ================= 4. ОБНОВЛЕННЫЙ ОБРАБОТЧИК START =================
-    bot.start(async (ctx) => {
-        initCollections().catch(e => console.error('Ошибка инициализации:', e));
-        
-        const userId = ctx.from.id;
-        const welcomeText = `👋<b> Привет, ${ctx.from.first_name}!
+    const userId = ctx.from.id;
+    const welcomeText = `👋<b> Привет, ${ctx.from.first_name}!
 Добро пожаловать в бот знакомств 🅿🅴🅰🅲🅴💋🆈🅾🆄🆁🥕🅶🆄🅽</b> 
 <em>Здесь ты найдёшь каталог анкет со всего мира для общения, флирта и серьёзных отношений.
 🎉 Каталог обновляется каждый день — всегда свежие профили!
 Начни поиск или размести свою анкету — возможно, твоя вторая половинка уже здесь!</em>`;
 
-        // Проверяем подписку сразу
-        const subscription = await checkSubscription(userId);
-        const hasSub = subscription.active;
+    // Проверяем подписку сразу
+    const subscription = await checkSubscription(userId);
+    const hasSub = subscription.active;
 
-        // Формируем динамическую клавиатуру
-        const baseKeyboard = [
-            [{
-                text: '🌐 Открыть PeaceYourGun 🥕 в WebApp',
-                web_app: { url: process.env.WEBAPP_URL }
-            }]
-        ];
+    // Формируем динамическую клавиатуру
+    const baseKeyboard = [
+      [
+        {
+          text: "🌐 Открыть PeaceYourGun 🥕 в WebApp",
+          web_app: { url: process.env.WEBAPP_URL },
+        },
+      ],
+    ];
 
-        // Добавляем кнопку "Все страны" только при наличии подписки
-        if (hasSub) {
-            baseKeyboard.push([{ text: '🌍 Все страны', callback_data: 'all_countries' }]);
-        }
+    // Добавляем кнопку "Все страны" только при наличии подписки
+    if (hasSub) {
+      baseKeyboard.push([
+        { text: "🌍 Все страны", callback_data: "all_countries" },
+      ]);
+    }
 
-        // Кнопки покупки подписки
-        baseKeyboard.push(
-            [{ text: '🔥 Купить подписку на 1 день (1🌟)', callback_data: 'buy_1day' }],
-            [{ text: '❤️ Купить подписку на 1 месяц (2000🌟)', callback_data: 'buy_1month' }],
-            [{ text: '💫 Купить подписку навсегда (10000🌟)', callback_data: 'buy_forever' }]
+    // Кнопки покупки подписки
+    baseKeyboard.push(
+      [
+        {
+          text: "🔥 Купить подписку на 1 день (1🌟)",
+          callback_data: "buy_1day",
+        },
+      ],
+      [
+        {
+          text: "❤️ Купить подписку на 1 месяц (2000🌟)",
+          callback_data: "buy_1month",
+        },
+      ],
+      [
+        {
+          text: "💫 Купить подписку навсегда (10000🌟)",
+          callback_data: "buy_forever",
+        },
+      ]
+    );
+
+    // Отправка приветственного сообщения
+    try {
+      if (welcomeImage.fileId) {
+        await ctx.replyWithPhoto(welcomeImage.fileId, {
+          caption: welcomeText,
+          parse_mode: "HTML",
+          reply_markup: { inline_keyboard: baseKeyboard },
+        });
+      } else if (welcomeImage.buffer) {
+        const msg = await ctx.replyWithPhoto(
+          { source: welcomeImage.buffer },
+          {
+            caption: welcomeText,
+            parse_mode: "HTML",
+            reply_markup: { inline_keyboard: baseKeyboard },
+          }
         );
+        welcomeImage.fileId = msg.photo[0].file_id;
+      } else {
+        await ctx.reply(welcomeText, {
+          parse_mode: "HTML",
+          reply_markup: { inline_keyboard: baseKeyboard },
+        });
+      }
+    } catch (e) {
+      console.error("Ошибка отправки welcome:", e);
+      await ctx.reply(welcomeText, {
+        parse_mode: "HTML",
+        reply_markup: { inline_keyboard: baseKeyboard },
+      });
+    }
 
-        // Отправка приветственного сообщения
+    // Показываем статус подписки (если есть)
+    if (hasSub) {
+      setTimeout(async () => {
         try {
-            if (welcomeImage.fileId) {
-                await ctx.replyWithPhoto(welcomeImage.fileId, {
-                    caption: welcomeText,
-                    parse_mode: 'HTML',
-                    reply_markup: { inline_keyboard: baseKeyboard }
-                });
-            } else if (welcomeImage.buffer) {
-                const msg = await ctx.replyWithPhoto(
-                    { source: welcomeImage.buffer },
-                    {
-                        caption: welcomeText,
-                        parse_mode: 'HTML',
-                        reply_markup: { inline_keyboard: baseKeyboard }
-                    }
-                );
-                welcomeImage.fileId = msg.photo[0].file_id;
-            } else {
-                await ctx.reply(welcomeText, {
-                    parse_mode: 'HTML',
-                    reply_markup: { inline_keyboard: baseKeyboard }
-                });
-            }
+          await ctx.reply(subscription.message, { parse_mode: "HTML" });
         } catch (e) {
-            console.error('Ошибка отправки welcome:', e);
-            await ctx.reply(welcomeText, {
-                parse_mode: 'HTML',
-                reply_markup: { inline_keyboard: baseKeyboard }
-            });
+          console.error("Ошибка отправки статуса подписки:", e);
         }
+      }, 500);
+    }
+  });
 
-        // Показываем статус подписки (если есть)
-        if (hasSub) {
-            setTimeout(async () => {
-                try {
-                    await ctx.reply(subscription.message, { parse_mode: 'HTML' });
-                } catch (e) {
-                    console.error('Ошибка отправки статуса подписки:', e);
-                }
-            }, 500);
+  // ================= 5. ОБРАБОТЧИКИ ПОДПИСОК =================
+  const handleSubscriptionPurchase = async (ctx, planId, amount, duration) => {
+    try {
+      await ctx.replyWithInvoice({
+        title: `Подписка на ${
+          planId === "1day"
+            ? "1 день"
+            : planId === "1month"
+            ? "1 месяц"
+            : "навсегда"
+        }`,
+        description:
+          planId === "1day"
+            ? "Доступ на 24 часа"
+            : planId === "1month"
+            ? "Доступ на 30 дней"
+            : "Пожизненный доступ",
+        payload: `${planId}_${ctx.from.id}_${Date.now()}`,
+        currency: "XTR",
+        prices: [{ label: "Подписка", amount: amount }],
+        start_parameter: `${planId}_sub`,
+      });
+    } catch (error) {
+      console.error("Ошибка создания счета:", error);
+      await ctx.reply("⚠️ Ошибка при создании платежа");
+    }
+  };
+
+  bot.action("buy_1day", (ctx) =>
+    handleSubscriptionPurchase(ctx, "1day", 1, 86400000)
+  );
+  bot.action("buy_1month", (ctx) =>
+    handleSubscriptionPurchase(ctx, "1month", 2000, 2592000000)
+  );
+  bot.action("buy_forever", (ctx) =>
+    handleSubscriptionPurchase(ctx, "forever", 10000, null)
+  );
+
+  bot.on("pre_checkout_query", (ctx) => ctx.answerPreCheckoutQuery(true));
+
+  bot.on("successful_payment", async (ctx) => {
+    const userId = ctx.from.id;
+    const payment = ctx.message.successful_payment;
+    const [planId, _] = payment.invoice_payload.split("_");
+
+    try {
+      await clearChat(ctx);
+
+      const subRef = db.collection("subscriptions").doc(userId.toString());
+      const subData = {
+        userId,
+        plan: planId,
+        subscriptionType: planId,
+        startDate: admin.firestore.FieldValue.serverTimestamp(),
+        status: "active",
+        isActive: true,
+        lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
+      };
+
+      if (planId === "1day") {
+        subData.endDate = admin.firestore.Timestamp.fromDate(
+          new Date(Date.now() + 86400000)
+        );
+      } else if (planId === "1month") {
+        subData.endDate = admin.firestore.Timestamp.fromDate(
+          new Date(Date.now() + 2592000000)
+        );
+      }
+
+      await subRef.set(subData, { merge: true });
+
+      // Дополнительные операции с базой данных...
+
+      // Обновляем интерфейс после покупки
+      const subscription = await checkSubscription(userId);
+      const keyboard = [
+        [
+          {
+            text: "🌐 Открыть PeaceYourGun 🥕 в WebApp",
+            web_app: { url: process.env.WEBAPP_URL },
+          },
+        ],
+        [{ text: "🌍 Все страны", callback_data: "all_countries" }],
+      ];
+
+      await ctx.reply(
+        `✅ <b>Подписка успешно активирована!</b>\n\n${subscription.message}`,
+        {
+          parse_mode: "HTML",
+          reply_markup: { inline_keyboard: keyboard },
         }
-    });
-
-    // ================= 5. ОБРАБОТЧИКИ ПОДПИСОК =================
-    const handleSubscriptionPurchase = async (ctx, planId, amount, duration) => {
-        try {
-            await ctx.replyWithInvoice({
-                title: `Подписка на ${planId === '1day' ? '1 день' : planId === '1month' ? '1 месяц' : 'навсегда'}`,
-                description: planId === '1day' ? 'Доступ на 24 часа' : 
-                            planId === '1month' ? 'Доступ на 30 дней' : 'Пожизненный доступ',
-                payload: `${planId}_${ctx.from.id}_${Date.now()}`,
-                currency: 'XTR',
-                prices: [{ label: 'Подписка', amount: amount }],
-                start_parameter: `${planId}_sub`
-            });
-        } catch (error) {
-            console.error('Ошибка создания счета:', error);
-            await ctx.reply('⚠️ Ошибка при создании платежа');
-        }
-    };
-
-    bot.action('buy_1day', (ctx) => handleSubscriptionPurchase(ctx, '1day', 1, 86400000));
-    bot.action('buy_1month', (ctx) => handleSubscriptionPurchase(ctx, '1month', 2000, 2592000000));
-    bot.action('buy_forever', (ctx) => handleSubscriptionPurchase(ctx, 'forever', 10000, null));
-
-    bot.on('pre_checkout_query', (ctx) => ctx.answerPreCheckoutQuery(true));
-
-    bot.on('successful_payment', async (ctx) => {
-        const userId = ctx.from.id;
-        const payment = ctx.message.successful_payment;
-        const [planId, _] = payment.invoice_payload.split('_');
-
-        try {
-            await clearChat(ctx);
-
-            const subRef = db.collection('subscriptions').doc(userId.toString());
-            const subData = {
-                userId,
-                plan: planId,
-                subscriptionType: planId,
-                startDate: admin.firestore.FieldValue.serverTimestamp(),
-                status: 'active',
-                isActive: true,
-                lastUpdated: admin.firestore.FieldValue.serverTimestamp()
-            };
-
-            if (planId === '1day') {
-                subData.endDate = admin.firestore.Timestamp.fromDate(new Date(Date.now() + 86400000));
-            } else if (planId === '1month') {
-                subData.endDate = admin.firestore.Timestamp.fromDate(new Date(Date.now() + 2592000000));
-            }
-
-            await subRef.set(subData, { merge: true });
-
-            // Дополнительные операции с базой данных...
-            
-            // Обновляем интерфейс после покупки
-            const subscription = await checkSubscription(userId);
-            const keyboard = [
-                [{
-                    text: '🌐 Открыть PeaceYourGun 🥕 в WebApp',
-                    web_app: { url: process.env.WEBAPP_URL }
-                }],
-                [{ text: '🌍 Все страны', callback_data: 'all_countries' }]
-            ];
-
-            await ctx.reply(`✅ <b>Подписка успешно активирована!</b>\n\n${subscription.message}`, {
-                parse_mode: 'HTML',
-                reply_markup: { inline_keyboard: keyboard }
-            });
-
-        } catch (error) {
-            console.error('Ошибка обработки платежа:', error);
-            await ctx.reply('⚠️ Ошибка активации подписки');
-        }
-    });
+      );
+    } catch (error) {
+      console.error("Ошибка обработки платежа:", error);
+      await ctx.reply("⚠️ Ошибка активации подписки");
+    }
+  });
 };
