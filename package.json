@@ -4,9 +4,9 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-"start": "node index.js",
-  "dev": "nodemon index.js", 
-  "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node index.js",
+    "dev": "nodemon index.js",
+    "test": "echo \"Error: no test specified\" && exit 1",
     "deploy": "npm run build && npm start"
   },
   "keywords": [],
@@ -18,8 +18,11 @@
     "firebase-admin": "^13.4.0",
     "firebase-functions": "^6.4.0",
     "node-cache": "^5.1.2",
+    "node-cron": "^3.0.2",
     "node-telegram-bot-api": "^0.66.0",
     "p-queue": "^7.4.1",
+    "redis": "^5.8.2",
+    "sqlite3": "^5.1.7",
     "telegraf": "^4.16.3",
     "telegraf-ratelimit": "^2.0.0"
   },

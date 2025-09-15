@@ -963,7 +963,7 @@ module.exports = (bot, db) => {
 
     const userId = ctx.from.id;
     const welcomeText = `👋<b> Привет, ${ctx.from.first_name}!
-Добро пожаловать в бот знакомств 🅿🅴🅰🅲🅴💋🆈🅾🆄🆁🥕🅶🆄🅽</b> 
+Добро пожаловать в бот знакомств Эскорт💋 Блокнот🥕</b> 
 <em>Здесь ты найдёшь каталог анкет со всего мира для общения, флирта и серьёзных отношений.
 🎉 Каталог обновляется каждый день — всегда свежие профили!
 Начни поиск или размести свою анкету — возможно, твоя вторая половинка уже здесь!</em>`;
@@ -974,12 +974,12 @@ module.exports = (bot, db) => {
 
     // Формируем динамическую клавиатуру
     const baseKeyboard = [
-      [
-        {
-          text: "🌐 Открыть PeaceYourGun 🥕 в WebApp",
-          web_app: { url: process.env.WEBAPP_URL },
-        },
-      ],
+      // [
+      //   {
+      //     text: "🌐 Открыть PeaceYourGun 🥕 в WebApp",
+      //     web_app: { url: process.env.WEBAPP_URL },
+      //   },
+      // ],
     ];
 
     // Добавляем кнопку "Все страны" только при наличии подписки
@@ -993,22 +993,22 @@ module.exports = (bot, db) => {
     baseKeyboard.push(
       [
         {
-          text: "🔥 Купить подписку на 1 день (1🌟)",
+          text: "🔥 Купить подписку на 1 день (199🌟)",
           callback_data: "buy_1day",
         },
       ],
       [
         {
-          text: "❤️ Купить подписку на 1 месяц (2000🌟)",
+          text: "❤️ Купить подписку на 1 месяц (599🌟)",
           callback_data: "buy_1month",
         },
       ],
-      [
-        {
-          text: "💫 Купить подписку навсегда (10000🌟)",
-          callback_data: "buy_forever",
-        },
-      ]
+      // [
+      //   {
+      //     text: "💫 Купить подписку навсегда (10000🌟)",
+      //     callback_data: "buy_forever",
+      //   },
+      // ]
     );
 
     // Отправка приветственного сообщения
@@ -1131,12 +1131,12 @@ module.exports = (bot, db) => {
       // Обновляем интерфейс после покупки
       const subscription = await checkSubscription(userId);
       const keyboard = [
-        [
-          {
-            text: "🌐 Открыть PeaceYourGun 🥕 в WebApp",
-            web_app: { url: process.env.WEBAPP_URL },
-          },
-        ],
+        // [
+        //   {
+        //     text: "🌐 Открыть PeaceYourGun 🥕 в WebApp",
+        //     web_app: { url: process.env.WEBAPP_URL },
+        //   },
+        // ],
         [{ text: "🌍 Все страны", callback_data: "all_countries" }],
       ];
 
