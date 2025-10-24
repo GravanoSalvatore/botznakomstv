@@ -1,6 +1,9 @@
 
-require('dotenv').config({ path: __dirname + '/.env' });
-
+// require('dotenv').config({ path: __dirname + '/.env' });
+// Только для разработки
+if (process.env.NODE_ENV !== 'production') {
+  require('dotenv').config({ path: __dirname + '/.env' });
+}
 // Валидация обязательных переменных окружения
 const requiredEnvVars = [
   'TELEGRAM_BOT_TOKEN',
