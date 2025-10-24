@@ -1,15 +1,5 @@
-// САМОЕ ПЕРВОЕ - HEALTH SERVER
-const express = require('express');
-const healthApp = express();
-const HEALTH_PORT = process.env.PORT || 3000;
 
-healthApp.get('/health', (req, res) => {
-  res.status(200).json({ status: 'OK', service: 'Telegram Bot' });
-});
 
-healthApp.listen(HEALTH_PORT, '0.0.0.0', () => {
-  console.log(`✅ Health server запущен на порту ${HEALTH_PORT}`);
-});
 
 if (process.env.NODE_ENV !== 'production') {
   require('dotenv').config({ path: __dirname + '/.env' });
