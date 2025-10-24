@@ -118,17 +118,28 @@ if (process.env.NODE_ENV === 'production') {
   
   app.use(express.json());
   
-  // ✅ Важно: добавляем обработку callback_data
+  // ✅ Обработка callback_data
   app.use(bot.webhookCallback('/webhook', {
     allowedUpdates: ['message', 'callback_query', 'chat_member', 'my_chat_member']
   }));
   
-  // ✅ И здесь тоже
+  // ✅ Установка вебхука
   await bot.telegram.setWebhook(`${process.env.WEBAPP_URL}/webhook`, {
     allowed_updates: ['message', 'callback_query', 'chat_member', 'my_chat_member']
   });
   
-  app.listen(PORT, () => {
+  // ✅ Health check для Render
+  app.get('/health', (req, res) => {
+    res.status(200).json({ status: 'OK', timestamp: new Date().toISOString() });
+  });
+  
+  // ✅ Корневой endpoint
+  app.get('/', (req, res) => {
+    res.status(200).json({ service: 'Telegram Bot', status: 'running' });
+  });
+  
+  // ✅ Явно слушаем порт с указанием хоста
+  app.listen(PORT, '0.0.0.0', () => {
     console.log(`[Production] Бот запущен на порту ${PORT}`);
   });
 } else {
