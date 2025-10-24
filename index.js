@@ -111,13 +111,26 @@ const startBot = async () => {
 };
 
 // Обработка завершения работы
-const shutdown = (signal) => {
+// const shutdown = (signal) => {
+//   console.log(`Получен сигнал ${signal}, завершение работы...`);
+//   bot.stop()
+//     .then(() => process.exit(0))
+//     .catch(() => process.exit(1));
+// };
+// Обработка завершения работы
+const shutdown = async (signal) => {
   console.log(`Получен сигнал ${signal}, завершение работы...`);
-  bot.stop()
-    .then(() => process.exit(0))
-    .catch(() => process.exit(1));
+  try {
+    await bot.stop();
+    console.log('Бот успешно остановлен');
+  } catch (error) {
+    console.log('Бот уже остановлен или не был запущен:', error.message);
+  }
+  process.exit(0);
 };
 
+process.once('SIGINT', () => shutdown('SIGINT'));
+process.once('SIGTERM', () => shutdown('SIGTERM'));
 process.once('SIGINT', () => shutdown('SIGINT'));
 process.once('SIGTERM', () => shutdown('SIGTERM'));
 
