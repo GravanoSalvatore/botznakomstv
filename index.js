@@ -140,7 +140,7 @@ const startBot = async () => {
       
       // ✅ Запускаем сервер СРАЗУ
       app.listen(PORT, '0.0.0.0', () => {
-        console.log(`[Production] Express запущен на порту ${PORT}`);
+        console.log(`[Production] Express запущен на порту ! ${PORT}`);
       });
       
       // ✅ setWebhook в try-catch чтобы не падало
