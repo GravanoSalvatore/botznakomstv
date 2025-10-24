@@ -88,21 +88,53 @@ const startBot = async () => {
     //   await bot.launch();
     //   console.log('[Development] Бот запущен в polling режиме');
     // }
-    if (process.env.NODE_ENV === 'production' || true) {
+//     if (process.env.NODE_ENV === 'production' || true) {
+//   const express = require('express');
+//   const app = express();
+//   const PORT = process.env.PORT || 3000;
+  
+//   app.use(express.json());
+  
+//   // ДОБАВЬ allowedUpdates ДЛЯ CALLBACK_DATA
+//   app.use(bot.webhookCallback('/webhook', {
+//     allowedUpdates: ['message', 'callback_query', 'chat_member', 'my_chat_member']
+//   }));
+  
+//   // И здесь тоже добавь allowed_updates
+//   await bot.telegram.setWebhook(`${process.env.WEBAPP_URL}/webhook`, {
+//     allowed_updates: ['message', 'callback_query', 'chat_member', 'my_chat_member']
+//   });
+  
+//   app.listen(PORT, () => {
+//     console.log(`[Production] Бот запущен на порту ${PORT}`);
+//   });
+// } else {
+//   await bot.launch();
+// }
+if (process.env.NODE_ENV === 'production') {
   const express = require('express');
   const app = express();
   const PORT = process.env.PORT || 3000;
   
   app.use(express.json());
-  app.use(bot.webhookCallback('/webhook'));
   
-  await bot.telegram.setWebhook(`${process.env.WEBAPP_URL}/webhook`);
+  // ✅ Важно: добавляем обработку callback_data
+  app.use(bot.webhookCallback('/webhook', {
+    allowedUpdates: ['message', 'callback_query', 'chat_member', 'my_chat_member']
+  }));
+  
+  // ✅ И здесь тоже
+  await bot.telegram.setWebhook(`${process.env.WEBAPP_URL}/webhook`, {
+    allowed_updates: ['message', 'callback_query', 'chat_member', 'my_chat_member']
+  });
   
   app.listen(PORT, () => {
     console.log(`[Production] Бот запущен на порту ${PORT}`);
   });
 } else {
+  // Локальная разработка - polling
   await bot.launch();
+  console.log('[Development] Бот запущен в polling режиме');
 }
   } catch (error) {
     console.error('[Startup Error] Ошибка запуска бота:', error);
