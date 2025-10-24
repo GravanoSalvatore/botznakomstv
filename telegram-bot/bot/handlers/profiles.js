@@ -4436,7 +4436,7 @@ ${profile.phone ? formatPhone(profile.phone) : ""}${profile.telegram ? "\n------
 <b>ЭТО 100% МОШЕННИКИ!
 НИ В КОЕМ СЛУЧАЕ НЕ ОТПРАВЛЯЙТЕ ПРЕДОПЛАТУ  🛑 ВАС ОБМАНУТ!</b>
 -------------------------------
-<a href="http://t.me/magicboss_bot/magic"><b>✨Magic WebApp</b></a>
+<a href="http://t.me/magicboss_bot/magic?refresh=true"><b>✨Magic WebApp v2</b></a>
 `.trim();
 
                 let keyboard = [];
