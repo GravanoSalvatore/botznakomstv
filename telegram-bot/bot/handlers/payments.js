@@ -335,9 +335,9 @@ module.exports = (bot, db) => {
 
       // Обновленные тарифы (1 день теперь за 1🌟)
       const plans = [
-        { id: '1day', name: "1 день", price: 1, duration: 86400000 }, // Изменено с 300 на 1
-        { id: '1month', name: "1 месяц", price: 2000, duration: 2592000000 },
-        { id: 'forever', name: "Навсегда", price: 10000, duration: null }
+        { id: '1day', name: "1 день", price: 399, duration: 86400000 }, // Изменено с 300 на 1
+        { id: '1month', name: "1 месяц", price: 799, duration: 2592000000 },
+        { id: 'forever', name: "Навсегда", price: 3999, duration: null }
       ];
 
       await ctx.reply(`💰 <b>Ваш баланс: ${balance}🌟</b>\nВыберите подписку:`, {
@@ -366,9 +366,9 @@ module.exports = (bot, db) => {
     try {
       // Обновленные тарифы (1 день за 1🌟)
       const plan = {
-        '1day': { price: 1, name: "1 день", duration: 86400000 }, // Изменено с 300 на 1
-        '1month': { price: 2000, name: "1 месяц", duration: 2592000000 },
-        'forever': { price: 10000, name: "Навсегда", duration: null }
+        '1day': { price: 399, name: "1 день", duration: 86400000 }, // Изменено с 300 на 1
+        '1month': { price: 799, name: "1 месяц", duration: 2592000000 },
+        'forever': { price: 3999, name: "1 год", duration: null }
       }[planId];
 
       if (!plan) throw new Error('Неизвестный тариф');
