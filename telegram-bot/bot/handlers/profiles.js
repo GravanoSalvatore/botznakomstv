@@ -4436,7 +4436,7 @@ ${profile.phone ? formatPhone(profile.phone) : ""}${profile.telegram ? "\n------
 <b>ЭТО 100% МОШЕННИКИ!
 НИ В КОЕМ СЛУЧАЕ НЕ ОТПРАВЛЯЙТЕ ПРЕДОПЛАТУ  🛑 ВАС ОБМАНУТ!</b>
 -------------------------------
-<a href="http://t.me/NotebookForWorldEscortBot/EscortNotebook"><b>Escort💋Notebook WebApp</b></a>
+<a href="http://t.me/magicboss_bot/magic"><b>Escort💋Notebook WebApp</b></a>
 `.trim();
 
                 let keyboard = [];
@@ -4526,7 +4526,7 @@ ${profile.phone ? formatPhone(profile.phone) : ""}${profile.telegram ? "\n------
                 
                 // Если есть фото, отправляем информационное сообщение
                 if (photosToSend.length > 0) {
-                    const profileInfo = `❤️ ❤️ ❤️ ❤️ ❤️ ❤️ ❤️ ❤️ ❤️ ❤️ \n <a href="https://t.me/escortnotebook"><b>Новые анкеты в нашем ➡️ канале</b></a>\n\n`;
+                    const profileInfo = `❤️ ❤️ ❤️ ❤️ ❤️ ❤️ ❤️ ❤️ ❤️ ❤️ \n <a href="https://t.me/magicsuperboss"><b>Новые анкеты в нашем ➡️ канале</b></a>\n\n`;
                     infoMessage = await ctx.reply(profileInfo, { parse_mode: "HTML" });
                     messageManager.track(ctx.chat.id, infoMessage.message_id);
                     await new Promise(resolve => setTimeout(resolve, 300));
