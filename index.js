@@ -71,23 +71,39 @@ const loadHandler = (name) => {
 // Запуск бота
 const startBot = async () => {
   try {
-    if (process.env.NODE_ENV === 'production') {
-      const express = require('express');
-      const app = express();
-      const PORT = process.env.PORT || 3000;
+    // if (process.env.NODE_ENV === 'production') {
+    //   const express = require('express');
+    //   const app = express();
+    //   const PORT = process.env.PORT || 3000;
       
-      app.use(express.json());
-      app.use(bot.webhookCallback('/webhook'));
+    //   app.use(express.json());
+    //   app.use(bot.webhookCallback('/webhook'));
       
-      await bot.telegram.setWebhook(`${process.env.WEBAPP_URL}/webhook`);
+    //   await bot.telegram.setWebhook(`${process.env.WEBAPP_URL}/webhook`);
       
-      app.listen(PORT, () => {
-        console.log(`[Production] Бот запущен на порту ${PORT}`);
-      });
-    } else {
-      await bot.launch();
-      console.log('[Development] Бот запущен в polling режиме');
-    }
+    //   app.listen(PORT, () => {
+    //     console.log(`[Production] Бот запущен на порту ${PORT}`);
+    //   });
+    // } else {
+    //   await bot.launch();
+    //   console.log('[Development] Бот запущен в polling режиме');
+    // }
+    if (process.env.NODE_ENV === 'production' || true) {
+  const express = require('express');
+  const app = express();
+  const PORT = process.env.PORT || 3000;
+  
+  app.use(express.json());
+  app.use(bot.webhookCallback('/webhook'));
+  
+  await bot.telegram.setWebhook(`${process.env.WEBAPP_URL}/webhook`);
+  
+  app.listen(PORT, () => {
+    console.log(`[Production] Бот запущен на порту ${PORT}`);
+  });
+} else {
+  await bot.launch();
+}
   } catch (error) {
     console.error('[Startup Error] Ошибка запуска бота:', error);
     process.exit(1);
