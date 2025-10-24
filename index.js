@@ -85,7 +85,7 @@ const startBot = async () => {
         console.log(`[Production] Бот запущен на порту ${PORT}`);
       });
     } else {
-      await bot.launch();
+      //await bot.launch();
       console.log('[Development] Бот запущен в polling режиме');
     }
   } catch (error) {
