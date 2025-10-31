@@ -4452,7 +4452,7 @@ module.exports = (bot, db) => {
 -------------------------------
 ${profile.country},📍${profile.city}
 -------------------------------
-<em>${about.length > 300 ? about.substring(0, 300) + `...<a href="http://t.me/NotebookForWorldEscortBot/EscortNotebook">читать полностью в Эскорт💋Блокнот</a>` : about}</em>
+<em>${about.length > 300 ? about.substring(0, 300) + `...<a href="http://t.me/magicboss_bot/magic">читать полностью в ✨Magic</a>` : about}</em>
 🔹🔹🔹🔹🔹🔹🔹🔹🔹🔹
 <b>Контакты:</b>
 -------------------------------
@@ -4552,7 +4552,7 @@ ${profile.phone ? formatPhone(profile.phone) : ""}${profile.telegram ? "\n------
                 
                 // Если есть фото, отправляем информационное сообщение
                 if (photosToSend.length > 0) {
-                    const profileInfo = `❤️ ❤️ ❤️ ❤️ ❤️ ❤️ ❤️ ❤️ ❤️ ❤️ \n <a href="https://t.me/magicsuperboss"><b>Новые анкеты в нашем ➡️ канале</b></a>\n\n`;
+                    const profileInfo = `✨✨✨✨✨✨✨✨✨✨ \n <a href="https://t.me/magicsuperboss"><b>Новые анкеты в нашем ➡️ канале</b></a>\n\n`;
                     infoMessage = await ctx.reply(profileInfo, { parse_mode: "HTML" });
                     messageManager.track(ctx.chat.id, infoMessage.message_id);
                     await new Promise(resolve => setTimeout(resolve, 300));
