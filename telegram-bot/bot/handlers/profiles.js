@@ -2944,9 +2944,19 @@ const { default: PQueue } = require("p-queue");
 const NodeCache = require("node-cache");
 const fs = require('fs');
 const path = require('path');
+// ===== ДОБАВЬТЕ ЭТОТ КОД ПЕРЕД ПРОВЕРКОЙ LOCK =====
+// Удаляем lock файл при запуске на Render
+const LOCK_FILE = path.join(__dirname, 'bot.lock');
+try {
+    if (fs.existsSync(LOCK_FILE)) {
+        console.log('🗑️ УДАЛЯЕМ LOCK ФАЙЛ ДЛЯ RENDER');
+        fs.unlinkSync(LOCK_FILE);
+    }
+} catch (error) {
+    console.log('⚠️ Не удалось удалить lock файл:', error.message);
+}
 
 // ===================== БЛОКИРОВКА ОТ МНОЖЕСТВЕННОГО ЗАПУСКА =====================
-const LOCK_FILE = path.join(__dirname, 'bot.lock');
 if (fs.existsSync(LOCK_FILE)) {
     const existingPid = fs.readFileSync(LOCK_FILE, 'utf8');
     console.error(`❌ Бот уже запущен с PID: ${existingPid}`);
