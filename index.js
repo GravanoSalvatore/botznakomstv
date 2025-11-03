@@ -1,4 +1,28 @@
+// ===== ЭКСТРЕННЫЙ ФИКС ДЛЯ RENDER =====
+const fs = require('fs');
+const path = require('path');
 
+// Удаляем все возможные lock файлы
+const lockFiles = [
+    path.join(__dirname, 'bot.lock'),
+    path.join(process.cwd(), 'bot.lock'),
+    path.join('/tmp', 'bot.lock'),
+    '/tmp/bot.lock',
+    './bot.lock'
+];
+
+lockFiles.forEach(file => {
+    try {
+        if (fs.existsSync(file)) {
+            console.log(`🗑️ УДАЛЯЕМ LOCK ФАЙЛ: ${file}`);
+            fs.unlinkSync(file);
+            console.log(`✅ Lock файл удален: ${file}`);
+        }
+    } catch (error) {
+        console.log(`⚠️ Не удалось удалить ${file}:`, error.message);
+    }
+});
+// ===== КОНЕЦ ФИКСА =====
 
 
 if (process.env.NODE_ENV !== 'production') {
@@ -184,5 +208,53 @@ process.once('SIGTERM', () => shutdown('SIGTERM'));
 
 // Запуск приложения
 startBot().catch(console.error);
+// Добавьте этот код перед module.exports = bot;
 
+// Graceful shutdown для Render
+process.on('SIGINT', () => {
+    console.log('🛑 Получен SIGINT, завершаем работу...');
+    bot.stop();
+    process.exit(0);
+});
+
+process.on('SIGTERM', () => {
+    console.log('🛑 Получен SIGTERM, завершаем работу...');
+    bot.stop();
+    
+    // Удаляем lock файлы при завершении
+    lockFiles.forEach(file => {
+        try {
+            if (fs.existsSync(file)) {
+                fs.unlinkSync(file);
+                console.log(`✅ Lock файл удален при завершении: ${file}`);
+            }
+        } catch (error) {
+            // Игнорируем ошибки
+        }
+    });
+    
+    process.exit(0);
+});
+
+// Обработка необработанных исключений
+process.on('uncaughtException', (error) => {
+    console.error('💥 Необработанное исключение:', error);
+    
+    // Удаляем lock файлы при аварийном завершении
+    lockFiles.forEach(file => {
+        try {
+            if (fs.existsSync(file)) {
+                fs.unlinkSync(file);
+            }
+        } catch (e) {
+            // Игнорируем
+        }
+    });
+    
+    process.exit(1);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('💥 Необработанный промис:', reason);
+});
 module.exports = bot;
