@@ -781,91 +781,96 @@ module.exports = (bot, db) => {
     }
   };
 
-  // ================= 4. ФУНКЦИЯ ОЧИСТКИ ЭКРАНА =================
-  const clearScreen = async (ctx) => {
+// ================= 4. ФУНКЦИЯ ОЧИСТКИ ЭКРАНА =================
+const clearScreen = async (ctx) => {
     try {
-      await clearChat(ctx);
+        await clearChat(ctx);
 
-      // Отправляем главное меню
-      const userId = ctx.from.id;
-      const subscription = await checkSubscription(userId);
-      const hasSub = subscription.active;
+        // Отправляем главное меню
+        const userId = ctx.from.id;
+        const subscription = await checkSubscription(userId);
+        const hasSub = subscription.active;
 
-      const baseKeyboard = [];
+        const baseKeyboard = [];
 
-      if (hasSub) {
+        if (hasSub) {
+            baseKeyboard.push([
+                { text: "🌍 Все страны", callback_data: "all_countries" },
+            ]);
+        }
+        if (!hasSub) {
+            baseKeyboard.push([
+                { text: "🌍 Все страны", callback_data: "choose_payment_method" },
+            ]);
+        }
+
         baseKeyboard.push([
-          { text: "🌍 Все страны", callback_data: "all_countries" },
+            { text: "💎 Купить подписку", callback_data: "choose_payment_method" },
         ]);
-      }
-if (!hasSub) {
-baseKeyboard.push([
-        { text: "🌍 Все страны", callback_data: "choose_payment_method" },
-      ]);}
+        // ДОБАВЛЕНА НОВАЯ КНОПКА
+        baseKeyboard.push([
+            { text: "👨‍💻 Связаться с админом", url: "https://t.me/MagicAdd" },
+        ]);
+        baseKeyboard.push([
+            { text: "🧹 Очистить экран", callback_data: "clear_screen" },
+        ]);
 
-      baseKeyboard.push([
-        { text: "💎 Купить подписку", callback_data: "choose_payment_method" },
-      ]);
-      baseKeyboard.push([
-        { text: "🧹 Очистить экран", callback_data: "clear_screen" },
-      ]);
-
-      const welcomeText = `👋<b> Привет, ${ctx.from.first_name}!
+        const welcomeText = `👋<b> Привет, ${ctx.from.first_name}!
 Добро пожаловать в клуб  ✨Magic</b> 
 <em>Здесь ты найдёшь каталог анкет со всего мира для общения, флирта и серьёзных отношений.
 🎉 Каталог обновляется каждый день — всегда свежие профили!
 Начни поиск или размести свою анкету — возможно, твоя вторая половинка уже здесь!</em>\n
-<a href="http://t.me/escortnotebook"><b>Подпишись на новости и обновления ✨</b></a>\n`;
+<a href="http://t.me/MagicYourClub"><b>Подпишись на новости и обновления ✨</b></a>\n`;
 
-      try {
-        if (welcomeImage.fileId) {
-          await ctx.replyWithPhoto(welcomeImage.fileId, {
-            caption: welcomeText,
-            parse_mode: "HTML",
-            reply_markup: { inline_keyboard: baseKeyboard },
-          });
-        } else if (welcomeImage.buffer) {
-          const msg = await ctx.replyWithPhoto(
-            { source: welcomeImage.buffer },
-            {
-              caption: welcomeText,
-              parse_mode: "HTML",
-              reply_markup: { inline_keyboard: baseKeyboard },
+        try {
+            if (welcomeImage.fileId) {
+                await ctx.replyWithPhoto(welcomeImage.fileId, {
+                    caption: welcomeText,
+                    parse_mode: "HTML",
+                    reply_markup: { inline_keyboard: baseKeyboard },
+                });
+            } else if (welcomeImage.buffer) {
+                const msg = await ctx.replyWithPhoto(
+                    { source: welcomeImage.buffer },
+                    {
+                        caption: welcomeText,
+                        parse_mode: "HTML",
+                        reply_markup: { inline_keyboard: baseKeyboard },
+                    }
+                );
+                welcomeImage.fileId = msg.photo[0].file_id;
+            } else {
+                await ctx.reply(welcomeText, {
+                    parse_mode: "HTML",
+                    reply_markup: { inline_keyboard: baseKeyboard },
+                });
             }
-          );
-          welcomeImage.fileId = msg.photo[0].file_id;
-        } else {
-          await ctx.reply(welcomeText, {
-            parse_mode: "HTML",
-            reply_markup: { inline_keyboard: baseKeyboard },
-          });
+        } catch (e) {
+            console.error("Ошибка отправки welcome:", e);
+            await ctx.reply(welcomeText, {
+                parse_mode: "HTML",
+                reply_markup: { inline_keyboard: baseKeyboard },
+            });
         }
-      } catch (e) {
-        console.error("Ошибка отправки welcome:", e);
-        await ctx.reply(welcomeText, {
-          parse_mode: "HTML",
-          reply_markup: { inline_keyboard: baseKeyboard },
-        });
-      }
 
-      if (hasSub) {
-        setTimeout(async () => {
-          try {
-            await ctx.reply(subscription.message, { parse_mode: "HTML" });
-          } catch (e) {
-            console.error("Ошибка отправки статуса подписки:", e);
-          }
-        }, 500);
-      }
+        if (hasSub) {
+            setTimeout(async () => {
+                try {
+                    await ctx.reply(subscription.message, { parse_mode: "HTML" });
+                } catch (e) {
+                    console.error("Ошибка отправки статуса подписки:", e);
+                }
+            }, 500);
+        }
     } catch (error) {
-      console.error("Ошибка при очистке экрана:", error);
-      // Если очистка не удалась, просто отправляем главное меню
-      await showMainMenu(ctx);
+        console.error("Ошибка при очистке экрана:", error);
+        // Если очистка не удалась, просто отправляем главное меню
+        await showMainMenu(ctx);
     }
-  };
+};
 
   // ================= 5. ФУНКЦИЯ ОТОБРАЖЕНИЯ ГЛАВНОГО МЕНЮ =================
-  const showMainMenu = async (ctx) => {
+const showMainMenu = async (ctx) => {
     const userId = ctx.from.id;
     const subscription = await checkSubscription(userId);
     const hasSub = subscription.active;
@@ -873,19 +878,24 @@ baseKeyboard.push([
     const baseKeyboard = [];
 
     if (hasSub) {
-      baseKeyboard.push([
-        { text: "🌍 Все страны", callback_data: "all_countries" },
-      ]);
+        baseKeyboard.push([
+            { text: "🌍 Все страны", callback_data: "all_countries" },
+        ]);
     }
     if (!hasSub) {
-baseKeyboard.push([
-        { text: "🌍 Все страны", callback_data: "choose_payment_method" },
-      ]);}
+        baseKeyboard.push([
+            { text: "🌍 Все страны", callback_data: "choose_payment_method" },
+        ]);
+    }
     baseKeyboard.push([
-      { text: "💎 Купить подписку", callback_data: "choose_payment_method" },
+        { text: "💎 Купить подписку", callback_data: "choose_payment_method" },
+    ]);
+    // ДОБАВЛЕНА НОВАЯ КНОПКА
+    baseKeyboard.push([
+        { text: "👨‍💻 Связаться с админом", url: "https://t.me/MagicAdd" },
     ]);
     baseKeyboard.push([
-      { text: "🧹 Очистить экран", callback_data: "clear_screen" },
+        { text: "🧹 Очистить экран", callback_data: "clear_screen" },
     ]);
 
     const welcomeText = `👋<b> Привет, ${ctx.from.first_name}!
@@ -893,50 +903,49 @@ baseKeyboard.push([
 <em>Здесь ты найдёшь базу данных анкет со всего мира для общения и не только. 
 🗄️ База обновляется и пополняется каждый день — всегда свежие профили!
 Начни поиск или размести свою анкету — возможно, твоя вторая половинка уже здесь!</em>\n
-<a href="http://t.me/magicsuperboss"><b>Подпишись на новости и обновления ❤️</b></a>\n`;
+<a href="http://t.me/MagicYourClub"><b>✨ Подпишись на новости и обновления </b></a>\n`;
 
     try {
-      if (welcomeImage.fileId) {
-        await ctx.replyWithPhoto(welcomeImage.fileId, {
-          caption: welcomeText,
-          parse_mode: "HTML",
-          reply_markup: { inline_keyboard: baseKeyboard },
-        });
-      } else if (welcomeImage.buffer) {
-        const msg = await ctx.replyWithPhoto(
-          { source: welcomeImage.buffer },
-          {
-            caption: welcomeText,
+        if (welcomeImage.fileId) {
+            await ctx.replyWithPhoto(welcomeImage.fileId, {
+                caption: welcomeText,
+                parse_mode: "HTML",
+                reply_markup: { inline_keyboard: baseKeyboard },
+            });
+        } else if (welcomeImage.buffer) {
+            const msg = await ctx.replyWithPhoto(
+                { source: welcomeImage.buffer },
+                {
+                    caption: welcomeText,
+                    parse_mode: "HTML",
+                    reply_markup: { inline_keyboard: baseKeyboard },
+                }
+            );
+            welcomeImage.fileId = msg.photo[0].file_id;
+        } else {
+            await ctx.reply(welcomeText, {
+                parse_mode: "HTML",
+                reply_markup: { inline_keyboard: baseKeyboard },
+            });
+        }
+    } catch (e) {
+        console.error("Ошибка отправки welcome:", e);
+        await ctx.reply(welcomeText, {
             parse_mode: "HTML",
             reply_markup: { inline_keyboard: baseKeyboard },
-          }
-        );
-        welcomeImage.fileId = msg.photo[0].file_id;
-      } else {
-        await ctx.reply(welcomeText, {
-          parse_mode: "HTML",
-          reply_markup: { inline_keyboard: baseKeyboard },
         });
-      }
-    } catch (e) {
-      console.error("Ошибка отправки welcome:", e);
-      await ctx.reply(welcomeText, {
-        parse_mode: "HTML",
-        reply_markup: { inline_keyboard: baseKeyboard },
-      });
     }
 
     if (hasSub) {
-      setTimeout(async () => {
-        try {
-          await ctx.reply(subscription.message, { parse_mode: "HTML" });
-        } catch (e) {
-          console.error("Ошибка отправки статуса подписки:", e);
-        }
-      }, 500);
+        setTimeout(async () => {
+            try {
+                await ctx.reply(subscription.message, { parse_mode: "HTML" });
+            } catch (e) {
+                console.error("Ошибка отправки статуса подписки:", e);
+            }
+        }, 500);
     }
-  };
-
+};
   // ================= 6. ИНИЦИАЛИЗАЦИЯ КОЛЛЕКЦИЙ =================
   const initCollections = async () => {
     const collections = [
@@ -1057,17 +1066,17 @@ baseKeyboard.push([
     };
 
     await ctx.reply(
-      `⭐ <b>ОПЛАТА STARS</b>\n\n` +
-        `Выбери тариф подписки:\n\n` +
-        `🔥 <b>1 день</b> - 399 Stars\n` +
-        `❤️ <b>1 месяц</b> - 799 Stars\n` +
-        `💫 <b>1 год</b> - 3999 Stars\n\n` +
-        `<b>Выбери тариф:</b>`,
-      {
-        parse_mode: "HTML",
-        reply_markup: keyboard,
-      }
-    );
+  `⭐ <b>ОПЛАТА STARS</b>\n\n` +
+  
+  `🔥 <b>1 день</b> - 399 Stars\n` +
+  `❤️ <b>1 месяц</b> - 799 Stars\n` +
+  `💫 <b>1 год</b> - 3999 Stars\n\n` +
+  `<b>Выбери тариф:</b>`,
+  {
+    parse_mode: "HTML",
+    reply_markup: keyboard,
+  }
+);
   });
 
   // ================= 11. ТАРИФЫ ДЛЯ CRYPTO PAY =================
@@ -1106,8 +1115,18 @@ baseKeyboard.push([
     };
 
     await ctx.reply(
-      ` <b>ОПЛАТА USDT )</b>\n\n` +
-        `Выбери тариф подписки:\n\n` +
+      ` <b>ОПЛАТА USDT </b>\n\n` +
+      `Чтобы купить USDT через 🤖крипто-бота, выберите бота, найдите раздел P2P-торговли, выберите USDT, затем укажите способ оплаты (например, СБП) и найдите подходящего продавца, чьи лимиты и курс вас устраивают. Следуйте инструкциям продавца для завершения сделки: сделайте перевод фиатных денег и дождитесь поступления USDT на ваш счет.\n\n` +
+  `<b>Пошаговая инструкция:</b>\n` +
+  `1. Найдите бота: Запустите нужного крипто-бота, например, через телеграм-кошелек.\n` +
+  `2. Настройте бота (необязательно): Перед началом зайдите в «Настройки», чтобы установить нужную фиатную валюту (например, гривну или рубль), это повлияет на доступные способы оплаты.\n` +
+  `3. Перейдите в P2P-раздел: Найдите в меню раздел «P2P» (peer-to-peer), где происходит покупка и продажа криптовалюты напрямую между пользователями.\n` +
+  `4. Выберите «Купить»: Нажмите на кнопку «Купить», выберите USDT и удобный для вас метод оплаты (например, СБП, банковский перевод).\n` +
+  `5. Выберите продавца: Ознакомьтесь с предложенными продавцами. Обратите внимание на курс, лимиты по сумме и репутацию продавца.\n` +
+  `6. Создайте сделку: Выберите подходящего продавца и следуйте его инструкциям для совершения сделки.\n` +
+  `7. Подтвердите перевод: После совершения перевода подтвердите сделку в боте. Продавец получит уведомление, и после проверки оплаты отправит вам USDT.\n\n` +
+  `Выбери тариф подписки:\n\n` +
+        
         `🟢 <b>1 день</b> - 5 USDT\n` +
         `🔵 <b>1 месяц</b> - 10 USDT\n` +
         `🟣 <b>1 год</b> - 50 USDT\n\n` +

@@ -3651,67 +3651,142 @@ module.exports = (bot, db) => {
     /**
      * Создает расширенную клавиатуру пагинации с быстрыми переходами
      */
-    const createEnhancedPaginationKeyboard = (currentPage, totalPages, filterKey) => {
-        const keyboard = [];
+    // const createEnhancedPaginationKeyboard = (currentPage, totalPages, filterKey) => {
+    //     const keyboard = [];
         
-        // Основная навигация
-        const navRow = [];
-        if (currentPage > 0) {
-            navRow.push({ text: "⏪", callback_data: `page_first_${currentPage}` });
-            navRow.push({ text: "◀️", callback_data: `page_prev_${currentPage}` });
-        }
+    //     // Основная навигация
+    //     const navRow = [];
+    //     if (currentPage > 0) {
+    //         navRow.push({ text: "⏪", callback_data: `page_first_${currentPage}` });
+    //         navRow.push({ text: "◀️", callback_data: `page_prev_${currentPage}` });
+    //     }
         
-        navRow.push({ text: `${currentPage + 1}/${totalPages}`, callback_data: "page_info" });
+    //     navRow.push({ text: `${currentPage + 1}/${totalPages}`, callback_data: "page_info" });
         
-        if (currentPage < totalPages - 1) {
-            navRow.push({ text: "▶️", callback_data: `page_next_${currentPage}` });
-            navRow.push({ text: "⏩", callback_data: `page_last_${currentPage}` });
-        }
+    //     if (currentPage < totalPages - 1) {
+    //         navRow.push({ text: "▶️", callback_data: `page_next_${currentPage}` });
+    //         navRow.push({ text: "⏩", callback_data: `page_last_${currentPage}` });
+    //     }
         
-        keyboard.push(navRow);
+    //     keyboard.push(navRow);
 
-        // Быстрые переходы по секциям для большого количества страниц
-        if (totalPages > 10) {
-            const jumpRow = [];
-            const totalProfiles = totalPages * SCALING_CONFIG.PERFORMANCE.PROFILES_PER_PAGE;
+    //     // Быстрые переходы по секциям для большого количества страниц
+    //     if (totalPages > 10) {
+    //         const jumpRow = [];
+    //         const totalProfiles = totalPages * SCALING_CONFIG.PERFORMANCE.PROFILES_PER_PAGE;
             
-            PAGINATION_JUMP_SECTIONS.forEach(section => {
-                if (section.start < totalProfiles) {
-                    const sectionPage = Math.floor(section.start / SCALING_CONFIG.PERFORMANCE.PROFILES_PER_PAGE);
-                    if (sectionPage < totalPages) {
-                        jumpRow.push({ text: section.label, callback_data: `page_${sectionPage}_${currentPage}` });
-                    }
-                }
-            });
+    //         PAGINATION_JUMP_SECTIONS.forEach(section => {
+    //             if (section.start < totalProfiles) {
+    //                 const sectionPage = Math.floor(section.start / SCALING_CONFIG.PERFORMANCE.PROFILES_PER_PAGE);
+    //                 if (sectionPage < totalPages) {
+    //                     jumpRow.push({ text: section.label, callback_data: `page_${sectionPage}_${currentPage}` });
+    //                 }
+    //             }
+    //         });
             
-            if (jumpRow.length > 0) keyboard.push(jumpRow);
-        }
+    //         if (jumpRow.length > 0) keyboard.push(jumpRow);
+    //     }
 
-        // Быстрый выбор страниц
-        if (totalPages > 1) {
-            const quickPagesRow = [];
-            const pagesToShow = Math.min(5, totalPages);
-            let startPage = Math.max(0, currentPage - Math.floor(pagesToShow / 2));
+    //     // Быстрый выбор страниц
+    //     if (totalPages > 1) {
+    //         const quickPagesRow = [];
+    //         const pagesToShow = Math.min(5, totalPages);
+    //         let startPage = Math.max(0, currentPage - Math.floor(pagesToShow / 2));
             
-            if (startPage + pagesToShow > totalPages) startPage = Math.max(0, totalPages - pagesToShow);
+    //         if (startPage + pagesToShow > totalPages) startPage = Math.max(0, totalPages - pagesToShow);
 
-            for (let i = 0; i < pagesToShow; i++) {
-                const pageNum = startPage + i;
-                if (pageNum >= 0 && pageNum < totalPages) {
-                    quickPagesRow.push({
-                        text: pageNum === currentPage ? `• ${pageNum + 1} •` : `${pageNum + 1}`,
-                        callback_data: `page_${pageNum}_${currentPage}`,
-                    });
-                }
-            }
+    //         for (let i = 0; i < pagesToShow; i++) {
+    //             const pageNum = startPage + i;
+    //             if (pageNum >= 0 && pageNum < totalPages) {
+    //                 quickPagesRow.push({
+    //                     text: pageNum === currentPage ? `• ${pageNum + 1} •` : `${pageNum + 1}`,
+    //                     callback_data: `page_${pageNum}_${currentPage}`,
+    //                 });
+    //             }
+    //         }
             
-            if (quickPagesRow.length > 0) keyboard.push(quickPagesRow);
-        }
+    //         if (quickPagesRow.length > 0) keyboard.push(quickPagesRow);
+    //     }
 
-        return keyboard;
-    };
+    //     return keyboard;
+    // };
 
     // ===================== МЕНЕДЖЕР СООБЩЕНИЙ =====================
+    /**
+ * Создает расширенную клавиатуру пагинации с быстрыми переходами
+ */
+
+const createEnhancedPaginationKeyboard = (currentPage, totalPages, filterKey, currentFilters = {}) => {
+    const keyboard = [];
+    
+    // ПЕРВАЯ КНОПКА - отображение текущих фильтров
+    if (currentFilters.country || currentFilters.city || currentFilters.ageRange) {
+        let filtersText = "";
+        const filters = [];
+        if (currentFilters.country) filters.push(currentFilters.country);
+        if (currentFilters.city) filters.push(currentFilters.city);
+        if (currentFilters.ageRange) filters.push(currentFilters.ageRange.label);
+        filtersText += filters.join(", ");
+        
+        keyboard.push([{ text: filtersText, callback_data: "filters_info" }]);
+    }
+    
+    // Основная навигация
+    const navRow = [];
+    if (currentPage > 0) {
+        navRow.push({ text: "⏪", callback_data: `page_first_${currentPage}` });
+        navRow.push({ text: "◀️", callback_data: `page_prev_${currentPage}` });
+    }
+    
+    navRow.push({ text: `${currentPage + 1}/${totalPages}`, callback_data: "page_info" });
+    
+    if (currentPage < totalPages - 1) {
+        navRow.push({ text: "▶️", callback_data: `page_next_${currentPage}` });
+        navRow.push({ text: "⏩", callback_data: `page_last_${currentPage}` });
+    }
+    
+    keyboard.push(navRow);
+
+    // Быстрые переходы по секциям для большого количества страниц
+    if (totalPages > 10) {
+        const jumpRow = [];
+        const totalProfiles = totalPages * SCALING_CONFIG.PERFORMANCE.PROFILES_PER_PAGE;
+        
+        PAGINATION_JUMP_SECTIONS.forEach(section => {
+            if (section.start < totalProfiles) {
+                const sectionPage = Math.floor(section.start / SCALING_CONFIG.PERFORMANCE.PROFILES_PER_PAGE);
+                if (sectionPage < totalPages) {
+                    jumpRow.push({ text: section.label, callback_data: `page_${sectionPage}_${currentPage}` });
+                }
+            }
+        });
+        
+        if (jumpRow.length > 0) keyboard.push(jumpRow);
+    }
+
+    // Быстрый выбор страниц
+    if (totalPages > 1) {
+        const quickPagesRow = [];
+        const pagesToShow = Math.min(5, totalPages);
+        let startPage = Math.max(0, currentPage - Math.floor(pagesToShow / 2));
+        
+        if (startPage + pagesToShow > totalPages) startPage = Math.max(0, totalPages - pagesToShow);
+
+        for (let i = 0; i < pagesToShow; i++) {
+            const pageNum = startPage + i;
+            if (pageNum >= 0 && pageNum < totalPages) {
+                quickPagesRow.push({
+                    text: pageNum === currentPage ? `• ${pageNum + 1} •` : `${pageNum + 1}`,
+                    callback_data: `page_${pageNum}_${currentPage}`,
+                });
+            }
+        }
+        
+        if (quickPagesRow.length > 0) keyboard.push(quickPagesRow);
+    }
+
+    return keyboard;
+};
     const messageManager = {
         /**
          * Отслеживает сообщение для последующего управления
@@ -3726,61 +3801,71 @@ module.exports = (bot, db) => {
         /**
          * Очищает сообщения в чате с опциональным сохранением клавиатур
          */
-        clear: async function (ctx, keepCityKeyboard = false, keepCountryKeyboard = false) {
-            const chatId = ctx.chat.id;
-            if (!chatStorage.messages.has(chatId)) return;
+        /**
+ * Очищает сообщения в чате с опциональным сохранением клавиатур
+ */
+clear: async function (ctx, keepCityKeyboard = false, keepCountryKeyboard = false) {
+    const chatId = ctx.chat.id;
+    if (!chatStorage.messages.has(chatId)) return;
 
-            const messages = [...chatStorage.messages.get(chatId)];
-            const mainMenuId = chatStorage.mainMenu.get(chatId);
-            const countryKeyboardId = chatStorage.countryKeyboard.get(chatId);
-            const cityKeyboardId = chatStorage.cityKeyboard.get(chatId);
+    const messages = [...chatStorage.messages.get(chatId)];
+    const mainMenuId = chatStorage.mainMenu.get(chatId);
+    const countryKeyboardId = chatStorage.countryKeyboard.get(chatId);
+    const cityKeyboardId = chatStorage.cityKeyboard.get(chatId);
 
-            let deletedCount = 0;
+    let deletedCount = 0;
 
-            // Удаляем все сообщения кроме исключенных
-            for (const messageId of messages) {
-                if (messageId !== mainMenuId && messageId !== countryKeyboardId && messageId !== cityKeyboardId) {
-                    try {
-                        await ctx.telegram.deleteMessage(chatId, messageId);
-                        chatStorage.messages.get(chatId).delete(messageId);
-                        chatStorage.messageTimestamps.delete(messageId);
-                        deletedCount++;
-                    } catch (e) {
-                        if (e.response?.error_code !== 400) console.error(`❌ Ошибка удаления ${messageId}:`, e.message);
-                    }
+    // Удаляем все сообщения кроме исключенных
+    for (const messageId of messages) {
+        const shouldKeep = 
+            (keepCountryKeyboard && messageId === countryKeyboardId) ||
+            (keepCityKeyboard && messageId === cityKeyboardId) ||
+            messageId === mainMenuId;
+            
+        if (!shouldKeep) {
+            try {
+                await ctx.telegram.deleteMessage(chatId, messageId);
+                chatStorage.messages.get(chatId).delete(messageId);
+                chatStorage.messageTimestamps.delete(messageId);
+                deletedCount++;
+            } catch (e) {
+                if (e.response?.error_code !== 400) {
+                    console.error(`❌ Ошибка удаления ${messageId}:`, e.message);
                 }
             }
+        }
+    }
 
-            // Удаляем клавиатуру городов если не нужно сохранять
-            if (cityKeyboardId && !keepCityKeyboard) {
-                try {
-                    await ctx.telegram.deleteMessage(chatId, cityKeyboardId);
-                    chatStorage.messages.get(chatId).delete(cityKeyboardId);
-                    chatStorage.messageTimestamps.delete(cityKeyboardId);
-                    chatStorage.cityKeyboard.delete(chatId);
-                    deletedCount++;
-                } catch (e) {
-                    if (e.response?.error_code !== 400) console.error("❌ Ошибка удаления клавиатуры городов:", e);
-                }
-            }
+    // Удаляем клавиатуру городов если не нужно сохранять
+    if (cityKeyboardId && !keepCityKeyboard) {
+        try {
+            await ctx.telegram.deleteMessage(chatId, cityKeyboardId);
+            chatStorage.messages.get(chatId)?.delete(cityKeyboardId);
+            chatStorage.messageTimestamps.delete(cityKeyboardId);
+            chatStorage.cityKeyboard.delete(chatId);
+            deletedCount++;
+        } catch (e) {
+            if (e.response?.error_code !== 400) console.error("❌ Ошибка удаления клавиатуры городов:", e);
+        }
+    }
 
-            // Удаляем клавиатуру стран если не нужно сохранять
-            if (countryKeyboardId && !keepCountryKeyboard) {
-                try {
-                    await ctx.telegram.deleteMessage(chatId, countryKeyboardId);
-                    chatStorage.messages.get(chatId).delete(countryKeyboardId);
-                    chatStorage.messageTimestamps.delete(countryKeyboardId);
-                    chatStorage.countryKeyboard.delete(chatId);
-                    deletedCount++;
-                } catch (e) {
-                    if (e.response?.error_code !== 400) console.error("❌ Ошибка удаления клавиатуры стран:", e);
-                }
-            }
+    // Удаляем клавиатуру стран если не нужно сохранять
+    if (countryKeyboardId && !keepCountryKeyboard) {
+        try {
+            await ctx.telegram.deleteMessage(chatId, countryKeyboardId);
+            chatStorage.messages.get(chatId)?.delete(countryKeyboardId);
+            chatStorage.messageTimestamps.delete(countryKeyboardId);
+            chatStorage.countryKeyboard.delete(chatId);
+            deletedCount++;
+        } catch (e) {
+            if (e.response?.error_code !== 400) console.error("❌ Ошибка удаления клавиатуры стран:", e);
+        }
+    }
 
-            // Очищаем состояние пользователя
-            chatStorage.userState.delete(ctx.from.id);
-            if (deletedCount > 0) console.log(`🧹 [CLEAN] Удалено ${deletedCount} сообщений для чата ${chatId}`);
-        },
+    // Очищаем состояние пользователя
+    chatStorage.userState.delete(ctx.from.id);
+    if (deletedCount > 0) console.log(`🧹 [CLEAN] Удалено ${deletedCount} сообщений для чата ${chatId}`);
+},
 
         /**
          * Отправляет главное меню
@@ -3871,50 +3956,67 @@ module.exports = (bot, db) => {
             });
         },
 
-        /**
-         * Отправляет клавиатуру выбора городов для указанной страны
-         */
-        sendCitiesKeyboard: async function (ctx, country) {
-            return messageQueue.add(async () => {
-                const chatId = ctx.chat.id;
-                const self = this;
+       /**
+ * Отправляет клавиатуру выбора городов для указанной страны
+ */
+sendCitiesKeyboard: async function (ctx, country) {
+    return messageQueue.add(async () => {
+        const chatId = ctx.chat.id;
+        const self = this;
 
+        try {
+            // Удаляем предыдущую клавиатуру городов если есть
+            if (chatStorage.cityKeyboard.has(chatId)) {
                 try {
-                    // Удаляем предыдущую клавиатуру городов если есть
-                    if (chatStorage.cityKeyboard.has(chatId)) {
-                        try {
-                            await ctx.telegram.deleteMessage(chatId, chatStorage.cityKeyboard.get(chatId));
-                            chatStorage.messages.get(chatId)?.delete(chatStorage.cityKeyboard.get(chatId));
-                            chatStorage.messageTimestamps.delete(chatStorage.cityKeyboard.get(chatId));
-                        } catch (e) {
-                            if (e.response?.error_code !== 400) console.error("❌ Ошибка удаления клавиатуры городов:", e);
-                        }
-                    }
+                    await ctx.telegram.deleteMessage(chatId, chatStorage.cityKeyboard.get(chatId));
+                    chatStorage.messages.get(chatId)?.delete(chatStorage.cityKeyboard.get(chatId));
+                    chatStorage.messageTimestamps.delete(chatStorage.cityKeyboard.get(chatId));
+                } catch (e) {
+                    if (e.response?.error_code !== 400) console.error("❌ Ошибка удаления клавиатуры городов:", e);
+                }
+            }
 
-                    // Получаем список городов для страны
-                    const cities = await getUniqueCitiesForCountry(country);
-                    const keyboard = [];
-                    let row = [];
+            // Получаем список городов для страны
+            const cities = await getUniqueCitiesForCountry(country);
+            
+            if (!cities || cities.length === 0) {
+                const msg = await ctx.reply(`❌ Для страны "${country}" нет доступных городов`);
+                self.track(chatId, msg.message_id);
+                return;
+            }
 
-                    cities.forEach((city, index) => {
-                        row.push({ text: city, callback_data: `city_${city}` });
-                        if (row.length === 3 || index === cities.length - 1) {
-                            keyboard.push(row);
-                            row = [];
-                        }
-                    });
+            const keyboard = [];
+            let row = [];
 
-                    keyboard.push([{ text: "🔙 Назад к странам", callback_data: "back_to_countries" }]);
-                    const msg = await ctx.reply(`Города в ${country}:`, { reply_markup: { inline_keyboard: keyboard } });
-                    chatStorage.cityKeyboard.set(chatId, msg.message_id);
-                    self.track(chatId, msg.message_id);
-                } catch (error) {
-                    console.error("❌ Ошибка отправки клавиатуры городов:", error);
-                    throw error;
+            // ПОКАЗЫВАЕМ ВСЕ ГОРОДА БЕЗ ОГРАНИЧЕНИЙ
+            cities.forEach((city, index) => {
+                row.push({ text: city, callback_data: `city_${city}` });
+                if (row.length === 3 || index === cities.length - 1) {
+                    keyboard.push(row);
+                    row = [];
                 }
             });
-        },
+
+            // ДОБАВЛЯЕМ КНОПКУ "НАЗАД К СТРАНАМ" В САМОМ КОНЦЕ
+            keyboard.push([{ text: "🔙 Назад к странам", callback_data: "back_to_countries" }]);
+
+            const msg = await ctx.reply(`🏙️ Выберите город в ${country}:`, { 
+                reply_markup: { inline_keyboard: keyboard } 
+            });
+            
+            chatStorage.cityKeyboard.set(chatId, msg.message_id);
+            self.track(chatId, msg.message_id);
+            
+        } catch (error) {
+            console.error("❌ Ошибка отправки клавиатуры городов:", error);
+            throw error;
+        }
+    });
+},
     };
+/**
+ * Отправляет клавиатуру выбора городов для указанной страны
+ */
 
     // ===================== ОБРАБОТЧИКИ КОМАНД =====================
     
@@ -4046,67 +4148,81 @@ module.exports = (bot, db) => {
         });
     });
 
-    // Действие: выбор города
-    bot.action(/^city_(.+)$/, async (ctx) => {
-        const userId = ctx.from.id;
-        
-        if (!acquireUserLock(userId, 3000)) {
-            await ctx.answerCbQuery("⏳ Подождите, обрабатываем предыдущий запрос...");
-            return;
-        }
-        
-        await messageQueue.add(async () => {
-            try {
-                const city = ctx.match[1];
-                ctx.session = ctx.session || {};
-                ctx.session.profilesPage = 0;
-                ctx.session.filterCity = city;
 
-                await messageManager.clear(ctx, true, true);
-                await messageManager.sendMainMenu(ctx);
+// Действие: выбор города
+bot.action(/^city_(.+)$/, async (ctx) => {
+    const userId = ctx.from.id;
+    
+    if (!acquireUserLock(userId, 3000)) {
+        await ctx.answerCbQuery("⏳ Подождите, обрабатываем предыдущий запрос...");
+        return;
+    }
+    
+    await messageQueue.add(async () => {
+        try {
+            const city = ctx.match[1];
+            ctx.session = ctx.session || {};
+            ctx.session.profilesPage = 0;
+            ctx.session.filterCity = city;
 
-                const profiles = await getProfilesPage(0, ctx.session.filterCountry, ctx.session.ageRange, city);
+            // ОЧИЩАЕМ КЛАВИАТУРУ ГОРОДОВ ПРИ ВЫБОРЕ ГОРОДА
+            await messageManager.clear(ctx, false, true); // false - не сохранять cityKeyboard, true - сохранять countryKeyboard
+            
+            const profiles = await getProfilesPage(0, ctx.session.filterCountry, ctx.session.ageRange, city);
 
-                if (!profiles.length) {
-                    const msg = await ctx.reply(`Анкет из города "${city}" не найдено`);
-                    messageManager.track(ctx.chat.id, msg.message_id);
-                    return;
-                }
-
-                for (let i = 0; i < profiles.length; i++) {
-                    const isLast = i === profiles.length - 1;
-                    await sendProfile(ctx, profiles[i], 0, profiles.length, isLast);
-                    if (!isLast) await new Promise((resolve) => setTimeout(resolve, 300));
-                }
-            } catch (error) {
-                console.error("❌ Ошибка обработки выбора города:", error);
-            } finally {
-                releaseUserLock(userId);
+            if (!profiles.length) {
+                const msg = await ctx.reply(`Анкет из города "${city}" не найдено`);
+                messageManager.track(ctx.chat.id, msg.message_id);
+                return;
             }
-        });
-    });
 
-    // Действие: возврат к списку стран
-    bot.action("back_to_countries", async (ctx) => {
-        const userId = ctx.from.id;
-        
-        if (!acquireUserLock(userId, 2000)) {
-            await ctx.answerCbQuery("⏳ Подождите, обрабатываем предыдущий запрос...");
-            return;
-        }
-        
-        await messageQueue.add(async () => {
-            try {
-                await messageManager.clear(ctx, false, true);
-                await messageManager.sendCountriesKeyboard(ctx);
-                await ctx.answerCbQuery();
-            } catch (error) {
-                console.error("❌ Ошибка возврата к странам:", error);
-            } finally {
-                releaseUserLock(userId);
+            // Отправляем профили
+            for (let i = 0; i < profiles.length; i++) {
+                const isLast = i === profiles.length - 1;
+                await sendProfile(ctx, profiles[i], 0, profiles.length, isLast);
+                if (!isLast) await new Promise((resolve) => setTimeout(resolve, 300));
             }
-        });
+
+        } catch (error) {
+            console.error("❌ Ошибка обработки выбора города:", error);
+        } finally {
+            releaseUserLock(userId);
+        }
     });
+});
+// Действие: информация о фильтрах (просто показывает текущие фильтры)
+bot.action("filters_info", async (ctx) => {
+    await ctx.answerCbQuery("ℹ️ Это ваши текущие фильтры");
+    // Ничего не делаем, просто подтверждаем нажатие
+});
+   // Действие: возврат к списку стран
+bot.action("back_to_countries", async (ctx) => {
+    const userId = ctx.from.id;
+    
+    if (!acquireUserLock(userId, 2000)) {
+        await ctx.answerCbQuery("⏳ Подождите, обрабатываем предыдущий запрос...");
+        return;
+    }
+    
+    await messageQueue.add(async () => {
+        try {
+            // ОЧИЩАЕМ КЛАВИАТУРУ ГОРОДОВ И ПОКАЗЫВАЕМ СТРАНЫ
+            await messageManager.clear(ctx, false, true); // false - не сохранять cityKeyboard, true - сохранять countryKeyboard
+            await messageManager.sendCountriesKeyboard(ctx);
+            await ctx.answerCbQuery("✅ Возврат к странам");
+            
+        } catch (error) {
+            console.error("❌ Ошибка возврата к странам:", error);
+            try {
+                await ctx.answerCbQuery("❌ Ошибка возврата");
+            } catch (e) {
+                // Игнорируем ошибки ответа
+            }
+        } finally {
+            releaseUserLock(userId);
+        }
+    });
+});
     
     // Действие: возврат в главное меню
     bot.action("back_to_menu", async (ctx) => {
@@ -4481,29 +4597,21 @@ ${profile.phone ? formatPhone(profile.phone) : ""}${profile.telegram ? "\n------
                     const filteredProfiles = cacheManager.getCachedFilteredProfiles(filterKey);
                     const totalPages = Math.ceil((filteredProfiles?.length || 0) / SCALING_CONFIG.PERFORMANCE.PROFILES_PER_PAGE);
                     
-                    keyboard = createEnhancedPaginationKeyboard(page, totalPages, filterKey);
+                    // ПЕРЕДАЕМ ТЕКУЩИЕ ФИЛЬТРЫ ДЛЯ ОТОБРАЖЕНИЯ В ПЕРВОЙ КНОПКЕ
+    const currentFilters = {
+        country: ctx.session?.displayCountry,
+        city: ctx.session?.filterCity,
+        ageRange: ctx.session?.ageRange
+    };
+    
+    keyboard = createEnhancedPaginationKeyboard(page, totalPages, filterKey, currentFilters);         // Добавляем информацию о примененных фильтрах
+                    
 
-                    // Добавляем информацию о примененных фильтрах
-                    if (ctx.session?.displayCountry || ctx.session?.ageRange?.label || ctx.session?.filterCity) {
-                        let filtersText = "";
-                        if (ctx.session.displayCountry) filtersText += ` ${ctx.session.displayCountry}`;
-                        if (ctx.session.filterCity) {
-                            if (ctx.session.displayCountry) filtersText += ", ";
-                            filtersText += ` ${ctx.session.filterCity}`;
-                        }
-                        if (ctx.session.ageRange?.label) {
-                            if (ctx.session.displayCountry || ctx.session.filterCity) filtersText += ", ";
-                            filtersText += ` ${ctx.session.ageRange.label}`;
-                        }
-                        keyboard.push([{ text: filtersText, callback_data: "filters_info" }]);
-                    }
-
-                    // Добавляем кнопки управления
-                    keyboard.push(
-                        [{ text: "🎂 Фильтр по возрасту", callback_data: "filter_by_age" }],
-                        [{ text: "🌍 Все страны", callback_data: "all_countries" }],
-                        [{ text: "🧹 Очистить экран", callback_data: "clear_screen" }]
-                    );
+keyboard.push(
+        [{ text: "🎂 Фильтр по возрасту", callback_data: "filter_by_age" }],
+        [{ text: "🌍 Все страны", callback_data: "all_countries" }],
+        [{ text: "🧹 Очистить экран", callback_data: "clear_screen" }]
+    );
                 }
 
                 // Подготовка фото для отправки
@@ -4562,7 +4670,7 @@ ${profile.phone ? formatPhone(profile.phone) : ""}${profile.telegram ? "\n------
                 
                 // Если есть фото, отправляем информационное сообщение
                 if (photosToSend.length > 0) {
-                    const profileInfo = `✨✨✨✨✨✨✨✨✨✨ \n <a href="https://t.me/magicsuperboss"><b>Новые анкеты в нашем ➡️ канале</b></a>\n\n`;
+                    const profileInfo = `✨✨✨✨✨✨✨✨✨✨ \n <a href="http://t.me/MagicYourClub"><b>Новые анкеты в нашем ➡️ канале</b></a>\n\n`;
                     infoMessage = await ctx.reply(profileInfo, { parse_mode: "HTML" });
                     messageManager.track(ctx.chat.id, infoMessage.message_id);
                     await new Promise(resolve => setTimeout(resolve, 300));
