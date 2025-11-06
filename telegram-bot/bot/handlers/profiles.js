@@ -4165,8 +4165,8 @@ bot.action(/^city_(.+)$/, async (ctx) => {
             ctx.session.profilesPage = 0;
             ctx.session.filterCity = city;
 
-            // ОЧИЩАЕМ КЛАВИАТУРУ ГОРОДОВ ПРИ ВЫБОРЕ ГОРОДА
-            await messageManager.clear(ctx, false, true); // false - не сохранять cityKeyboard, true - сохранять countryKeyboard
+            // ВАЖНО: НЕ ОЧИЩАЕМ КЛАВИАТУРУ ГОРОДОВ - только старые сообщения
+            await messageManager.clear(ctx, true, true); // true - сохранять cityKeyboard, true - сохранять countryKeyboard
             
             const profiles = await getProfilesPage(0, ctx.session.filterCountry, ctx.session.ageRange, city);
 
