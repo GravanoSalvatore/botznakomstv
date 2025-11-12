@@ -2,3 +2,1220 @@
 rm telegram-bot/bot/handlers/bot.lock
  
 kill -9 18044 17397 9886 2371 22658 20770 23467
+
+
+
+
+
+
+
+
+
+
+
+const admin = require("firebase-admin");
+const fs = require("fs");
+const path = require("path");
+const CryptoPayHandler = require("./cryptoPay");
+
+module.exports = (bot, db) => {
+  // ================= 1. ПРЕДЗАГРУЗКА ИЗОБРАЖЕНИЯ =================
+  const welcomeImage = {
+    path: path.join(__dirname, "../../img/welcome.jpg"),
+    buffer: null,
+    fileId: null,
+    load: function () {
+      if (fs.existsSync(this.path)) {
+        this.buffer = fs.readFileSync(this.path);
+        console.log("Изображение welcome.jpg загружено в память");
+      }
+    },
+  };
+  welcomeImage.load();
+
+  const cryptoPay = new CryptoPayHandler(bot, db);
+
+  // ================= 2. ФУНКЦИЯ ПРОВЕРКИ ПОДПИСКИ =================
+  const checkSubscription = async (userId) => {
+    try {
+      const subRef = db.collection("subscriptions").doc(userId.toString());
+      const doc = await subRef.get();
+
+      if (!doc.exists) {
+        return {
+          active: false,
+          message: "❌ У вас нет активной подписки",
+        };
+      }
+
+      const subData = doc.data();
+      const isActive =
+        subData.isActive && subData.endDate.toDate() > new Date();
+
+      let message = "";
+      if (isActive) {
+        const endDate = subData.endDate.toDate();
+        const daysLeft = Math.ceil(
+          (endDate - new Date()) / (1000 * 60 * 60 * 24)
+        );
+
+        if (subData.subscriptionType === "forever") {
+          message = "🎉 У вас бессрочная подписка!";
+        } else {
+          message = `✅ Подписка активна до: ${endDate.toLocaleDateString()} (осталось ${daysLeft} дней)`;
+        }
+      } else {
+        message = "❌ Подписка истекла";
+      }
+
+      return {
+        active: isActive,
+        message: message,
+        subscription: subData,
+      };
+    } catch (error) {
+      console.error("Ошибка проверки подписки:", error);
+      return {
+        active: false,
+        message: "❌ Ошибка проверки подписки",
+      };
+    }
+  };
+
+  // ================= 3. ФУНКЦИЯ ОЧИСТКИ ЧАТА =================
+  const clearChat = async (ctx) => {
+    try {
+      const chatId = ctx.chat.id;
+      const messageId = ctx.message
+        ? ctx.message.message_id
+        : ctx.update.callback_query.message.message_id;
+
+      // Удаляем текущее сообщение
+      await ctx.deleteMessage();
+
+      // Удаляем предыдущие сообщения (до 10 штук)
+      for (let i = 1; i <= 10; i++) {
+        try {
+          await ctx.telegram.deleteMessage(chatId, messageId - i);
+        } catch (e) {
+          // Игнорируем ошибки (сообщения могут не существовать)
+        }
+      }
+
+      return true;
+    } catch (error) {
+      console.error("Ошибка при очистке чата:", error);
+      return false;
+    }
+  };
+
+// ================= 4. ФУНКЦИЯ ОЧИСТКИ ЭКРАНА =================
+const clearScreen = async (ctx) => {
+    try {
+        await clearChat(ctx);
+
+        // Отправляем главное меню
+        const userId = ctx.from.id;
+        const subscription = await checkSubscription(userId);
+        const hasSub = subscription.active;
+
+        const baseKeyboard = [];
+
+        if (hasSub) {
+            baseKeyboard.push([
+                { text: "🌍 Все страны", callback_data: "all_countries" },
+            ]);
+        }
+        if (!hasSub) {
+            baseKeyboard.push([
+                { text: "🌍 Все страны", callback_data: "choose_payment_method" },
+            ]);
+        }
+
+        baseKeyboard.push([
+            { text: "💎 Купить подписку", callback_data: "choose_payment_method" },
+        ]);
+        // ДОБАВЛЕНА НОВАЯ КНОПКА
+        baseKeyboard.push([
+            { text: "👨‍💻 Связаться с админом", url: "https://t.me/MagicAdd" },
+        ]);
+        baseKeyboard.push([
+            { text: "🧹 Очистить экран", callback_data: "clear_screen" },
+        ]);
+
+        const welcomeText = `👋<b> Привет, ${ctx.from.first_name}!
+Добро пожаловать в клуб  ✨Magic</b> 
+<em>Здесь ты найдёшь каталог анкет со всего мира для общения, флирта и серьёзных отношений.
+🎉 Каталог обновляется каждый день — всегда свежие профили!
+Начни поиск или размести свою анкету — возможно, твоя вторая половинка уже здесь!</em>\n
+<a href="http://t.me/MagicYourClub"><b>Подпишись на новости и обновления ✨</b></a>\n`;
+
+        try {
+            if (welcomeImage.fileId) {
+                await ctx.replyWithPhoto(welcomeImage.fileId, {
+                    caption: welcomeText,
+                    parse_mode: "HTML",
+                    reply_markup: { inline_keyboard: baseKeyboard },
+                });
+            } else if (welcomeImage.buffer) {
+                const msg = await ctx.replyWithPhoto(
+                    { source: welcomeImage.buffer },
+                    {
+                        caption: welcomeText,
+                        parse_mode: "HTML",
+                        reply_markup: { inline_keyboard: baseKeyboard },
+                    }
+                );
+                welcomeImage.fileId = msg.photo[0].file_id;
+            } else {
+                await ctx.reply(welcomeText, {
+                    parse_mode: "HTML",
+                    reply_markup: { inline_keyboard: baseKeyboard },
+                });
+            }
+        } catch (e) {
+            console.error("Ошибка отправки welcome:", e);
+            await ctx.reply(welcomeText, {
+                parse_mode: "HTML",
+                reply_markup: { inline_keyboard: baseKeyboard },
+            });
+        }
+
+        if (hasSub) {
+            setTimeout(async () => {
+                try {
+                    await ctx.reply(subscription.message, { parse_mode: "HTML" });
+                } catch (e) {
+                    console.error("Ошибка отправки статуса подписки:", e);
+                }
+            }, 500);
+        }
+    } catch (error) {
+        console.error("Ошибка при очистке экрана:", error);
+        // Если очистка не удалась, просто отправляем главное меню
+        await showMainMenu(ctx);
+    }
+};
+
+  // ================= 5. ФУНКЦИЯ ОТОБРАЖЕНИЯ ГЛАВНОГО МЕНЮ =================
+const showMainMenu = async (ctx) => {
+    const userId = ctx.from.id;
+    const subscription = await checkSubscription(userId);
+    const hasSub = subscription.active;
+
+    const baseKeyboard = [];
+
+    if (hasSub) {
+        baseKeyboard.push([
+            { text: "🌍 Все страны", callback_data: "all_countries" },
+        ]);
+    }
+    if (!hasSub) {
+        baseKeyboard.push([
+            { text: "🌍 Все страны", callback_data: "choose_payment_method" },
+        ]);
+    }
+    baseKeyboard.push([
+        { text: "💎 Купить подписку", callback_data: "choose_payment_method" },
+    ]);
+    // ДОБАВЛЕНА НОВАЯ КНОПКА
+    baseKeyboard.push([
+        { text: "👨‍💻 Связаться с админом", url: "https://t.me/MagicAdd" },
+    ]);
+    baseKeyboard.push([
+        { text: "🧹 Очистить экран", callback_data: "clear_screen" },
+    ]);
+
+    const welcomeText = `👋<b> Привет, ${ctx.from.first_name}!
+Добро пожаловать в клуб знакомств ✨Magic!</b> 
+<em>Здесь ты найдёшь базу данных анкет со всего мира для общения и не только. 
+🗄️ База обновляется и пополняется каждый день — всегда свежие профили!
+Начни поиск или размести свою анкету — возможно, твоя вторая половинка уже здесь!</em>\n
+<a href="http://t.me/MagicYourClub"><b>✨ Подпишись на новости и обновления </b></a>\n`;
+
+    try {
+        if (welcomeImage.fileId) {
+            await ctx.replyWithPhoto(welcomeImage.fileId, {
+                caption: welcomeText,
+                parse_mode: "HTML",
+                reply_markup: { inline_keyboard: baseKeyboard },
+            });
+        } else if (welcomeImage.buffer) {
+            const msg = await ctx.replyWithPhoto(
+                { source: welcomeImage.buffer },
+                {
+                    caption: welcomeText,
+                    parse_mode: "HTML",
+                    reply_markup: { inline_keyboard: baseKeyboard },
+                }
+            );
+            welcomeImage.fileId = msg.photo[0].file_id;
+        } else {
+            await ctx.reply(welcomeText, {
+                parse_mode: "HTML",
+                reply_markup: { inline_keyboard: baseKeyboard },
+            });
+        }
+    } catch (e) {
+        console.error("Ошибка отправки welcome:", e);
+        await ctx.reply(welcomeText, {
+            parse_mode: "HTML",
+            reply_markup: { inline_keyboard: baseKeyboard },
+        });
+    }
+
+    if (hasSub) {
+        setTimeout(async () => {
+            try {
+                await ctx.reply(subscription.message, { parse_mode: "HTML" });
+            } catch (e) {
+                console.error("Ошибка отправки статуса подписки:", e);
+            }
+        }, 500);
+    }
+};
+  // ================= 6. ИНИЦИАЛИЗАЦИЯ КОЛЛЕКЦИЙ =================
+  const initCollections = async () => {
+    const collections = [
+      "subscriptions",
+      "transactions",
+      "payment_logs",
+      "cryptoPayPayments",
+    ];
+    for (const col of collections) {
+      try {
+        const ref = db.collection(col).doc("init");
+        await ref.set({ _init: true });
+        await ref.delete();
+      } catch (error) {
+        console.log(`Коллекция ${col} уже существует`);
+      }
+    }
+  };
+
+  // ================= 7. ОБРАБОТЧИК START =================
+  bot.start(async (ctx) => {
+    initCollections().catch((e) => console.error("Ошибка инициализации:", e));
+    await showMainMenu(ctx);
+  });
+
+  // ================= 8. ОБРАБОТЧИК ОЧИСТКИ ЭКРАНА =================
+  bot.action("clear_screen", async (ctx) => {
+    await clearScreen(ctx);
+  });
+
+  // ================= 9. ВЫБОР СПОСОБА ОПЛАТЫ =================
+  bot.action("choose_payment_method", async (ctx) => {
+    const keyboard = {
+      inline_keyboard: [
+        [
+          {
+            text: "⭐ Оплата Stars",
+            callback_data: "show_stars_plans",
+          },
+        ],
+        [
+          {
+            text: "💲 Оплата USDT ",
+            callback_data: "show_crypto_plans",
+          },
+        ],
+        [
+          {
+            text: "💎 Оплата TON",
+            callback_data: "show_ton_plans",
+          },
+        ],
+        [
+          {
+            text: "🔙 Назад",
+            callback_data: "back_to_main",
+          },
+          {
+            text: "🧹 Очистить экран",
+            callback_data: "clear_screen",
+          },
+        ],
+      ],
+    };
+
+    await ctx.reply(
+      `💎 <b>ВЫБЕРИ СПОСОБ ОПЛАТЫ</b>\n\n` +
+        `⭐ <b>Stars</b> - оплата через Telegram\n` +
+        `• Быстро и удобно\n` +
+        `• Внутри Telegram\n\n` +
+        ` 💲 <b>USDT </b> - оплата криптовалютой\n` +
+        `• Анонимно и безопасно\n` +
+        `• Поддержка USDT, BTC, ETH\n\n` +
+        `💎 <b>TON</b> - оплата в Toncoin\n` +
+        `• Быстрые переводы\n` +
+        `• Низкие комиссии\n\n` +
+        `<b>Выбери способ оплаты:</b>`,
+      {
+        parse_mode: "HTML",
+        reply_markup: keyboard,
+      }
+    );
+  });
+
+  // ================= 10. ТАРИФЫ ДЛЯ STARS =================
+  bot.action("show_stars_plans", async (ctx) => {
+    const keyboard = {
+      inline_keyboard: [
+        [
+          {
+            text: "🔥 1 день (399🌟)",
+            callback_data: "buy_1day",
+          },
+        ],
+        [
+          {
+            text: "❤️ 1 месяц (799🌟)",
+            callback_data: "buy_1month",
+          },
+        ],
+        [
+          {
+            text: "💫 1 год (3999🌟)",
+            callback_data: "buy_forever",
+          },
+        ],
+        [
+          {
+            text: "🔙 Назад",
+            callback_data: "choose_payment_method",
+          },
+          {
+            text: "🧹 Очистить экран",
+            callback_data: "clear_screen",
+          },
+        ],
+      ],
+    };
+
+    await ctx.reply(
+  `⭐ <b>ОПЛАТА STARS</b>\n\n` +
+  
+  `🔥 <b>1 день</b> - 399 Stars\n` +
+  `❤️ <b>1 месяц</b> - 799 Stars\n` +
+  `💫 <b>1 год</b> - 3999 Stars\n\n` +
+  `<b>Выбери тариф:</b>`,
+  {
+    parse_mode: "HTML",
+    reply_markup: keyboard,
+  }
+);
+  });
+
+  // ================= 11. ТАРИФЫ ДЛЯ CRYPTO PAY =================
+  bot.action("show_crypto_plans", async (ctx) => {
+    const keyboard = {
+      inline_keyboard: [
+        [
+          {
+            text: "🟢 1 день - 5 USDT",
+            callback_data: "crypto_basic",
+          },
+        ],
+        [
+          {
+            text: "🔵 1 месяц - 10 USDT",
+            callback_data: "crypto_pro",
+          },
+        ],
+        [
+          {
+            text: "🟣 1 год - 50 USDT",
+            callback_data: "crypto_premium",
+          },
+        ],
+        [
+          {
+            text: "🔙 Назад",
+            callback_data: "choose_payment_method",
+          },
+          {
+            text: "🧹 Очистить экран",
+            callback_data: "clear_screen",
+          },
+        ],
+      ],
+    };
+
+    await ctx.reply(
+      ` <b>ОПЛАТА USDT </b>\n\n` +
+      `Чтобы купить USDT через 🤖крипто-бота, выберите бота, найдите раздел P2P-торговли, выберите USDT, затем укажите способ оплаты (например, СБП) и найдите подходящего продавца, чьи лимиты и курс вас устраивают. Следуйте инструкциям продавца для завершения сделки: сделайте перевод фиатных денег и дождитесь поступления USDT на ваш счет.\n\n` +
+  `<b>Пошаговая инструкция:</b>\n` +
+  `1. Найдите бота: Запустите нужного крипто-бота, например, через телеграм-кошелек.\n` +
+  `2. Настройте бота (необязательно): Перед началом зайдите в «Настройки», чтобы установить нужную фиатную валюту (например, гривну или рубль), это повлияет на доступные способы оплаты.\n` +
+  `3. Перейдите в P2P-раздел: Найдите в меню раздел «P2P» (peer-to-peer), где происходит покупка и продажа криптовалюты напрямую между пользователями.\n` +
+  `4. Выберите «Купить»: Нажмите на кнопку «Купить», выберите USDT и удобный для вас метод оплаты (например, СБП, банковский перевод).\n` +
+  `5. Выберите продавца: Ознакомьтесь с предложенными продавцами. Обратите внимание на курс, лимиты по сумме и репутацию продавца.\n` +
+  `6. Создайте сделку: Выберите подходящего продавца и следуйте его инструкциям для совершения сделки.\n` +
+  `7. Подтвердите перевод: После совершения перевода подтвердите сделку в боте. Продавец получит уведомление, и после проверки оплаты отправит вам USDT.\n\n` +
+  `Выбери тариф подписки:\n\n` +
+        
+        `🟢 <b>1 день</b> - 5 USDT\n` +
+        `🔵 <b>1 месяц</b> - 10 USDT\n` +
+        `🟣 <b>1 год</b> - 50 USDT\n\n` +
+        `<b>Выбери тариф:</b>`,
+      {
+        parse_mode: "HTML",
+        reply_markup: keyboard,
+      }
+    );
+  });
+
+  // ================= 12. ТАРИФЫ ДЛЯ TON =================
+  bot.action("show_ton_plans", async (ctx) => {
+    const keyboard = {
+      inline_keyboard: [
+        [
+          {
+            text: "🟡 1 день - 1.5 TON",
+            callback_data: "ton_basic",
+          },
+        ],
+        [
+          {
+            text: "🟠 1 месяц - 3.5 TON",
+            callback_data: "ton_pro",
+          },
+        ],
+        [
+          {
+            text: "🔴 1 год - 15 TON",
+            callback_data: "ton_premium",
+          },
+        ],
+        [
+          {
+            text: "🔙 Назад",
+            callback_data: "choose_payment_method",
+          },
+          {
+            text: "🧹 Очистить экран",
+            callback_data: "clear_screen",
+          },
+        ],
+      ],
+    };
+
+    await ctx.reply(
+      `💎 <b>ОПЛАТА TON</b>\n\n` +
+        `Выбери тариф подписки:\n\n` +
+        `🟡 <b>1 день</b> - 1.5 TON\n` +
+        `🟠 <b>1 месяц</b> - 3.5 TON\n` +
+        `🔴 <b>1 год</b> - 15 TON\n\n` +
+        `<b>Выбери тариф:</b>`,
+      {
+        parse_mode: "HTML",
+        reply_markup: keyboard,
+      }
+    );
+  });
+
+  // ================= 13. ОБРАБОТКА CRYPTO PAY ПЛАТЕЖЕЙ =================
+  bot.action(/crypto_(.+)/, async (ctx) => {
+    const plan = ctx.match[1];
+    let planData;
+
+    if (plan === "basic") {
+      planData = { amount: 5, name: "1 день", duration: 1, asset: "USDT" };
+    } else if (plan === "pro") {
+      planData = { amount: 10, name: "1 месяц", duration: 30, asset: "USDT" };
+    } else if (plan === "premium") {
+      planData = { amount: 50, name: "1 год", duration: 365, asset: "USDT" };
+    } else {
+      await ctx.reply("❌ Неизвестный тариф");
+      return;
+    }
+
+    try {
+      console.log(
+        `Создание инвойса для плана: ${plan}, сумма: ${planData.amount} ${planData.asset}`
+      );
+
+      const invoice = await cryptoPay.createInvoice(
+        planData.amount,
+        `Подписка: ${planData.name}`
+      );
+
+      if (!invoice || !invoice.invoice_id) {
+        console.error("Инвойс не создан:", invoice);
+        await ctx.reply("❌ Ошибка при создании счета. Попробуй еще раз.");
+        return;
+      }
+
+      console.log("Инвойс создан успешно:", invoice);
+
+      const paymentData = {
+        userId: ctx.from.id,
+        plan: plan === "basic" ? "1day" : plan === "pro" ? "1month" : "forever",
+        invoiceId: invoice.invoice_id,
+        amount: planData.amount,
+        asset: planData.asset,
+        status: "active",
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        expiresAt: new Date(Date.now() + 3600 * 1000),
+      };
+
+      const paymentRef = await db
+        .collection("cryptoPayPayments")
+        .add(paymentData);
+
+      const keyboard = {
+        inline_keyboard: [
+          [
+            {
+              text: "💳 ОПЛАТИТЬ В @CryptoBot",
+              url: `https://t.me/CryptoBot?start=${invoice.hash}`,
+            },
+          ],
+          [
+            {
+              text: "✅ Я ОПЛАТИЛ",
+              callback_data: `check_crypto_${paymentRef.id}`,
+            },
+          ],
+          [
+            {
+              text: "🔙 НАЗАД",
+              callback_data: "show_crypto_plans",
+            },
+            {
+              text: "🧹 Очистить экран",
+              callback_data: "clear_screen",
+            },
+          ],
+        ],
+      };
+
+      await ctx.reply(
+        `💎 <b>${planData.name}</b>\n` +
+          `💲 <b>ОПЛАТА ЧЕРЕЗ CRYPTO PAY</b>\n\n` +
+          `💰 <b>Сумма:</b> ${planData.amount} ${planData.asset}\n` +
+          `⏰ <b>Время на оплату:</b> 1 час\n\n` +
+          `📋 <b>Инструкция:</b>\n` +
+          `1. Нажми "ОПЛАТИТЬ В @CryptoBot"\n` +
+          `2. Оплати счет в боте @CryptoBot\n` +
+          `3. Вернись и нажми "Я ОПЛАТИЛ"\n\n` +
+          `🆔 <b>ID платежа:</b> <code>${paymentRef.id}</code>\n` +
+          `🆔 <b>ID счета:</b> <code>${invoice.invoice_id}</code>`,
+        {
+          parse_mode: "HTML",
+          reply_markup: keyboard,
+        }
+      );
+    } catch (error) {
+      console.error("Crypto Pay error:", error);
+      await ctx.reply(
+        "❌ Ошибка при создании платежа. Проверь настройки Crypto Pay."
+      );
+    }
+  });
+
+  // ================= 14. ОБРАБОТКА TON ПЛАТЕЖЕЙ =================
+  bot.action(/ton_(.+)/, async (ctx) => {
+    const plan = ctx.match[1];
+    let planData;
+
+    if (plan === "basic") {
+      planData = { amount: 1.5, name: "1 день", duration: 1, asset: "TON" };
+    } else if (plan === "pro") {
+      planData = { amount: 3.5, name: "1 месяц", duration: 30, asset: "TON" };
+    } else if (plan === "premium") {
+      planData = { amount: 15, name: "1 год", duration: 365, asset: "TON" };
+    } else {
+      await ctx.reply("❌ Неизвестный тариф");
+      return;
+    }
+
+    try {
+      console.log(
+        `Создание TON инвойса для плана: ${plan}, сумма: ${planData.amount} ${planData.asset}`
+      );
+
+      const invoice = await cryptoPay.createInvoice(
+        planData.amount,
+        `Подписка: ${planData.name}`,
+        "TON"
+      );
+
+      if (!invoice || !invoice.invoice_id) {
+        console.error("TON инвойс не создан:", invoice);
+        await ctx.reply("❌ Ошибка при создании счета. Попробуй еще раз.");
+        return;
+      }
+
+      console.log("TON инвойс создан успешно:", invoice);
+
+      const paymentData = {
+        userId: ctx.from.id,
+        plan: plan === "basic" ? "1day" : plan === "pro" ? "1month" : "forever",
+        invoiceId: invoice.invoice_id,
+        amount: planData.amount,
+        asset: planData.asset,
+        status: "active",
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        expiresAt: new Date(Date.now() + 3600 * 1000),
+      };
+
+      const paymentRef = await db
+        .collection("cryptoPayPayments")
+        .add(paymentData);
+
+      const keyboard = {
+        inline_keyboard: [
+          [
+            {
+              text: "💳 ОПЛАТИТЬ В @CryptoBot",
+              url: `https://t.me/CryptoBot?start=${invoice.hash}`,
+            },
+          ],
+          [
+            {
+              text: "✅ Я ОПЛАТИЛ",
+              callback_data: `check_crypto_${paymentRef.id}`,
+            },
+          ],
+          [
+            {
+              text: "🔙 НАЗАД",
+              callback_data: "show_ton_plans",
+            },
+            {
+              text: "🧹 Очистить экран",
+              callback_data: "clear_screen",
+            },
+          ],
+        ],
+      };
+
+      await ctx.reply(
+        `💎 <b>${planData.name}</b>\n` +
+          `💎 <b>ОПЛАТА TON</b>\n\n` +
+          `💰 <b>Сумма:</b> ${planData.amount} ${planData.asset}\n` +
+          `⏰ <b>Время на оплату:</b> 1 час\n\n` +
+          `📋 <b>Инструкция:</b>\n` +
+          `1. Нажми "ОПЛАТИТЬ В @CryptoBot"\n` +
+          `2. Оплати счет в боте @CryptoBot\n` +
+          `3. Вернись и нажми "Я ОПЛАТИЛ"\n\n` +
+          `🆔 <b>ID платежа:</b> <code>${paymentRef.id}</code>\n` +
+          `🆔 <b>ID счета:</b> <code>${invoice.invoice_id}</code>`,
+        {
+          parse_mode: "HTML",
+          reply_markup: keyboard,
+        }
+      );
+    } catch (error) {
+      console.error("TON Pay error:", error);
+      await ctx.reply(
+        "❌ Ошибка при создании платежа. Проверь настройки Crypto Pay."
+      );
+    }
+  });
+
+  // ================= 15. ПРОВЕРКА CRYPTO PAY ПЛАТЕЖА =================
+  bot.action(/check_crypto_(.+)/, async (ctx) => {
+    const paymentId = ctx.match[1];
+
+    try {
+      await ctx.answerCbQuery("🔍 Проверяем платеж...");
+
+      const paymentDoc = await db
+        .collection("cryptoPayPayments")
+        .doc(paymentId)
+        .get();
+
+      if (!paymentDoc.exists) {
+        await ctx.answerCbQuery("❌ Платеж не найден");
+        return;
+      }
+
+      const payment = paymentDoc.data();
+
+      if (payment.userId !== ctx.from.id) {
+        await ctx.answerCbQuery("❌ Это не ваш платеж");
+        return;
+      }
+
+      let invoice;
+      try {
+        invoice = await cryptoPay.getInvoice(payment.invoiceId);
+      } catch (error) {
+        console.error("Ошибка получения инвойса:", error);
+        await ctx.answerCbQuery("❌ Ошибка проверки счета");
+        return;
+      }
+
+      if (!invoice) {
+        await ctx.answerCbQuery("❌ Счет не найден или истек");
+        return;
+      }
+
+      console.log(`Статус инвойса ${payment.invoiceId}:`, invoice.status);
+
+      if (invoice.status === "paid") {
+        const planId = payment.plan;
+        const subRef = db
+          .collection("subscriptions")
+          .doc(ctx.from.id.toString());
+        const subData = {
+          userId: ctx.from.id,
+          plan: planId,
+          subscriptionType: planId,
+          startDate: admin.firestore.FieldValue.serverTimestamp(),
+          status: "active",
+          isActive: true,
+          lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
+          paymentMethod: payment.asset === "TON" ? "ton" : "crypto",
+        };
+
+        if (planId === "1day") {
+          subData.endDate = admin.firestore.Timestamp.fromDate(
+            new Date(Date.now() + 86400000)
+          );
+        } else if (planId === "1month") {
+          subData.endDate = admin.firestore.Timestamp.fromDate(
+            new Date(Date.now() + 2592000000)
+          );
+        } else if (planId === "forever") {
+          subData.endDate = admin.firestore.Timestamp.fromDate(
+            new Date(Date.now() + 365 * 86400000)
+          );
+        }
+
+        await subRef.set(subData, { merge: true });
+        await paymentDoc.ref.update({
+          status: "paid",
+          paidAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+
+        const subscription = await checkSubscription(ctx.from.id);
+        const keyboard = {
+          inline_keyboard: [
+            [{ text: "🌍 Все страны", callback_data: "all_countries" }],
+            [{ text: "🧹 Очистить экран", callback_data: "clear_screen" }],
+          ],
+        };
+
+        await ctx.reply(
+          `🎉 <b>ПЛАТЕЖ ПОДТВЕРЖДЕН!</b>\n\n` +
+            `✅ Подписка успешно активирована!\n\n` +
+            `${subscription.message}`,
+          {
+            parse_mode: "HTML",
+            reply_markup: keyboard,
+          }
+        );
+      } else {
+        let statusText = "не оплачен";
+        if (invoice.status === "active") statusText = "ожидает оплаты";
+        if (invoice.status === "expired") statusText = "истек";
+
+        await ctx.answerCbQuery(
+          `❌ Счет ${statusText}. Попробуй через минуту.`
+        );
+      }
+    } catch (error) {
+      console.error("Payment check error:", error);
+      await ctx.answerCbQuery("❌ Ошибка проверки платежа");
+    }
+  });
+
+  // ================= 16. ОБРАБОТЧИКИ ПОДПИСОК STARS =================
+  const handleSubscriptionPurchase = async (ctx, planId, amount, duration) => {
+    try {
+      await ctx.replyWithInvoice({
+        title: `Подписка на ${
+          planId === "1day"
+            ? "1 день"
+            : planId === "1month"
+            ? "1 месяц"
+            : "1 год"
+        }`,
+        description:
+          planId === "1day"
+            ? "Доступ на 24 часа"
+            : planId === "1month"
+            ? "Доступ на 30 дней"
+            : "Доступ на 365 дней",
+        payload: `${planId}_${ctx.from.id}_${Date.now()}`,
+        currency: "XTR",
+        prices: [{ label: "Подписка", amount: amount }],
+        start_parameter: `${planId}_sub`,
+      });
+    } catch (error) {
+      console.error("Ошибка создания счета:", error);
+      await ctx.reply("⚠️ Ошибка при создании платежа");
+    }
+  };
+
+  bot.action("buy_1day", (ctx) =>
+    handleSubscriptionPurchase(ctx, "1day", 399, 86400000)
+  );
+  bot.action("buy_1month", (ctx) =>
+    handleSubscriptionPurchase(ctx, "1month", 799, 2592000000)
+  );
+  bot.action("buy_forever", (ctx) =>
+    handleSubscriptionPurchase(ctx, "forever", 3999, 31536000000)
+  );
+
+  bot.on("pre_checkout_query", (ctx) => ctx.answerPreCheckoutQuery(true));
+
+  bot.on("successful_payment", async (ctx) => {
+    const userId = ctx.from.id;
+    const payment = ctx.message.successful_payment;
+    const [planId, _] = payment.invoice_payload.split("_");
+
+    try {
+      await clearChat(ctx);
+
+      const subRef = db.collection("subscriptions").doc(userId.toString());
+      const subData = {
+        userId,
+        plan: planId,
+        subscriptionType: planId,
+        startDate: admin.firestore.FieldValue.serverTimestamp(),
+        status: "active",
+        isActive: true,
+        lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
+        paymentMethod: "stars",
+      };
+
+      if (planId === "1day") {
+        subData.endDate = admin.firestore.Timestamp.fromDate(
+          new Date(Date.now() + 86400000)
+        );
+      } else if (planId === "1month") {
+        subData.endDate = admin.firestore.Timestamp.fromDate(
+          new Date(Date.now() + 2592000000)
+        );
+      } else if (planId === "forever") {
+        subData.endDate = admin.firestore.Timestamp.fromDate(
+          new Date(Date.now() + 31536000000)
+        );
+      }
+
+      await subRef.set(subData, { merge: true });
+
+      const subscription = await checkSubscription(userId);
+      const keyboard = {
+        inline_keyboard: [
+          [{ text: "🌍 Все страны", callback_data: "all_countries" }],
+          [{ text: "🧹 Очистить экран", callback_data: "clear_screen" }],
+        ],
+      };
+
+      await ctx.reply(
+        `✅ <b>Подписка успешно активирована!</b>\n\n${subscription.message}`,
+        {
+          parse_mode: "HTML",
+          reply_markup: keyboard,
+        }
+      );
+    } catch (error) {
+      console.error("Ошибка обработки платежа:", error);
+      await ctx.reply("⚠️ Ошибка активации подписки");
+    }
+  });
+
+  // ================= 17. НАЗАД В ГЛАВНОЕ МЕНЮ =================
+  bot.action("back_to_main", async (ctx) => {
+    await showMainMenu(ctx);
+  });
+};const admin = require('firebase-admin');
+
+module.exports = (bot, db) => {
+  // 1. Инициализация пользователя
+  const ensureUser = async (userId) => {
+    const userRef = db.collection('usersPay').doc(userId.toString());
+    try {
+      const userDoc = await userRef.get();
+      
+      if (!userDoc.exists) {
+        await userRef.set({
+          balance: 1000,    // Стартовый баланс 1000🌟
+          reserved: 0,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          lastUpdated: admin.firestore.FieldValue.serverTimestamp()
+        });
+        console.log(`[User] Создан пользователь ${userId} с балансом 1000🌟`);
+      }
+      
+      return userRef;
+    } catch (error) {
+      console.error('Ошибка создания пользователя:', error);
+      throw error;
+    }
+  };
+
+  // 2. Команда /buy
+  bot.command('buy', async (ctx) => {
+    try {
+      const userId = ctx.from.id;
+      const userRef = await ensureUser(userId);
+      const userDoc = await userRef.get();
+      const balance = userDoc.data().balance || 0;
+
+      // Обновленные тарифы (1 день теперь за 1🌟)
+      const plans = [
+        { id: '1day', name: "1 день", price: 399, duration: 86400000 }, // Изменено с 300 на 1
+        { id: '1month', name: "1 месяц", price: 799, duration: 2592000000 },
+        { id: 'forever', name: "Навсегда", price: 3999, duration: null }
+      ];
+
+      await ctx.reply(`💰 <b>Ваш баланс: ${balance}🌟</b>\nВыберите подписку:`, {
+        parse_mode: 'HTML',
+        reply_markup: {
+          inline_keyboard: plans.map(p => [
+            { 
+              text: `${p.name} - ${p.price}🌟`, 
+              callback_data: `start_pay_${p.id}`
+            }
+          ])
+        }
+      });
+
+    } catch (error) {
+      console.error('Buy command error:', error);
+      await ctx.reply('⚠️ Ошибка при загрузке меню');
+    }
+  });
+
+  // 3. Обработка выбора тарифа
+  bot.action(/start_pay_(.+)/, async (ctx) => {
+    const userId = ctx.from.id;
+    const planId = ctx.match[1];
+    
+    try {
+      // Обновленные тарифы (1 день за 1🌟)
+      const plan = {
+        '1day': { price: 399, name: "1 день", duration: 86400000 }, // Изменено с 300 на 1
+        '1month': { price: 799, name: "1 месяц", duration: 2592000000 },
+        'forever': { price: 3999, name: "1 год", duration: null }
+      }[planId];
+
+      if (!plan) throw new Error('Неизвестный тариф');
+
+      const userRef = db.collection('usersPay').doc(userId.toString());
+      const txRef = db.collection('transactions').doc();
+
+      // Проверка баланса
+      const userDoc = await userRef.get();
+      const userData = userDoc.data() || {};
+      const available = (userData.balance || 0) - (userData.reserved || 0);
+
+      if (available < plan.price) {
+        throw new Error(`Недостаточно средств. Доступно: ${available}🌟`);
+      }
+
+      // Резервирование средств
+      await userRef.update({
+        reserved: admin.firestore.FieldValue.increment(plan.price),
+        lastUpdated: admin.firestore.FieldValue.serverTimestamp()
+      });
+
+      // Создание транзакции
+      await txRef.set({
+        userId,
+        amount: plan.price,
+        plan: planId,
+        status: 'pending',
+        createdAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+
+      // Подтверждение оплаты
+      await ctx.editMessageText(
+        `Подтвердите покупку:\n\n` +
+        `🔹 ${plan.name}\n` +
+        `🔹 ${plan.price}🌟\n\n` +
+        `Баланс после списания: ${(userData.balance || 0) - plan.price}🌟`,
+        {
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '✅ Подтвердить', callback_data: `confirm_pay_${txRef.id}` }],
+              [{ text: '❌ Отмена', callback_data: `cancel_pay_${txRef.id}` }]
+            ]
+          }
+        }
+      );
+
+    } catch (error) {
+      console.error('Payment start error:', error);
+      await ctx.reply(`⚠️ Ошибка: ${error.message}`);
+    }
+  });
+
+  // 4. Подтверждение платежа
+  bot.action(/confirm_pay_(.+)/, async (ctx) => {
+    const txId = ctx.match[1];
+    const userId = ctx.from.id;
+    
+    try {
+      const txRef = db.collection('transactions').doc(txId);
+      const userRef = db.collection('usersPay').doc(userId.toString());
+      const subRef = db.collection('subscriptions').doc(userId.toString());
+
+      await db.runTransaction(async (t) => {
+        const txDoc = await t.get(txRef);
+        if (!txDoc.exists) throw new Error('Транзакция не найдена');
+        
+        const txData = txDoc.data();
+        if (txData.status !== 'pending') throw new Error('Неверный статус');
+
+        const plan = {
+          '1day': { name: "1 день", duration: 86400000 },
+          '1month': { name: "1 месяц", duration: 2592000000 },
+          'forever': { name: "Навсегда", duration: null }
+        }[txData.plan];
+
+        // Списание средств
+        t.update(userRef, {
+          balance: admin.firestore.FieldValue.increment(-txData.amount),
+          reserved: admin.firestore.FieldValue.increment(-txData.amount),
+          lastUpdated: admin.firestore.FieldValue.serverTimestamp()
+        });
+
+        // Обновление транзакции
+        t.update(txRef, {
+          status: 'completed',
+          completedAt: admin.firestore.FieldValue.serverTimestamp()
+        });
+
+        // Активация подписки
+        const subData = {
+          userId,
+          plan: txData.plan,
+          subscriptionType: txData.plan,
+          startDate: admin.firestore.FieldValue.serverTimestamp(),
+          status: 'active',
+          isActive: true,
+          lastUpdated: admin.firestore.FieldValue.serverTimestamp()
+        };
+
+        if (plan.duration) {
+          subData.endDate = admin.firestore.Timestamp.fromDate(new Date(Date.now() + plan.duration));
+        }
+
+        t.set(subRef, subData, { merge: true });
+      });
+
+      await ctx.editMessageText('✅ Подписка успешно активирована!');
+
+    } catch (error) {
+      console.error('Payment confirm error:', error);
+      await ctx.reply(`⚠️ Ошибка: ${error.message}`);
+    }
+  });
+
+  // 5. Отмена платежа
+  bot.action(/cancel_pay_(.+)/, async (ctx) => {
+    const txId = ctx.match[1];
+    const userId = ctx.from.id;
+    
+    try {
+      await db.runTransaction(async (t) => {
+        const txRef = db.collection('transactions').doc(txId);
+        const txDoc = await t.get(txRef);
+        
+        if (txDoc.exists && txDoc.data().status === 'pending') {
+          const amount = txDoc.data().amount;
+          
+          t.update(db.collection('usersPay').doc(userId.toString()), {
+            reserved: admin.firestore.FieldValue.increment(-amount),
+            lastUpdated: admin.firestore.FieldValue.serverTimestamp()
+          });
+          
+          t.update(txRef, {
+            status: 'cancelled',
+            cancelledAt: admin.firestore.FieldValue.serverTimestamp()
+          });
+        }
+      });
+      
+      await ctx.deleteMessage();
+      await ctx.reply('ℹ️ Платеж отменен');
+
+    } catch (error) {
+      console.error('Payment cancel error:', error);
+      await ctx.reply('⚠️ Ошибка при отмене');
+    }
+  });
+}; в этом коде когда подписка активна отображается кнопка все страны ! но только когда за звезды !также нужно когда за юздт оплачено то тоже отображается кнопка!у меня есть колекция subsscriptions  endDate
+October 27, 2027 at 8:07:53 AM UTC+3
+(timestamp)
+
+
+isActive
+true
+(boolean)
+
+
+lastUpdated
+September 17, 2025 at 8:07:55 AM UTC+3
+(timestamp)
+
+
+plan
+"1day"
+(string)
+
+
+startDate
+September 17, 2025 at 8:07:55 AM UTC+3
+(timestamp)
+
+
+status
+"active"
+(string)
+
+
+subscriptionType
+"1day"
+(string)
+
+
+userId
+1227459883
+(number) и cryptoPayPayments amount
+5
+(number)
+
+
+asset
+"USDT"
+(string)
+
+
+createdAt
+October 24, 2025 at 5:23:46 PM UTC+3
+(timestamp)
+
+
+expiresAt
+October 24, 2025 at 6:23:46 PM UTC+3
+(timestamp)
+
+
+invoiceId
+36208031
+(number)
+
+
+plan
+"1day"
+(string)
+
+
+status
+"active"
+(string)
+
+
+userId
+7574264848 если подписка в subsscriptions активна status
+"active"
+(string) то кнопка отображается ! нужно и с cryptoPayPayments также сделать! но учти что в cryptoPayPayments статус активна ещё до оплаты и это нужно изменить !или объединить колекции в одну оплата за звезды и за юздт и тон

@@ -708,51 +708,96 @@ module.exports = (bot, db) => {
   const cryptoPay = new CryptoPayHandler(bot, db);
 
   // ================= 2. ФУНКЦИЯ ПРОВЕРКИ ПОДПИСКИ =================
-  const checkSubscription = async (userId) => {
-    try {
-      const subRef = db.collection("subscriptions").doc(userId.toString());
-      const doc = await subRef.get();
+const checkSubscription = async (userId) => {
+  try {
+    const userIdStr = userId.toString();
+    
+    // Проверяем основную подписку
+    const subRef = db.collection("subscriptions").doc(userIdStr);
+    const subDoc = await subRef.get();
 
-      if (!doc.exists) {
-        return {
-          active: false,
-          message: "❌ У вас нет активной подписки",
-        };
-      }
-
-      const subData = doc.data();
-      const isActive =
-        subData.isActive && subData.endDate.toDate() > new Date();
-
-      let message = "";
+    if (subDoc.exists) {
+      const subData = subDoc.data();
+      const isActive = subData.isActive && subData.endDate.toDate() > new Date();
+      
       if (isActive) {
         const endDate = subData.endDate.toDate();
-        const daysLeft = Math.ceil(
-          (endDate - new Date()) / (1000 * 60 * 60 * 24)
-        );
+        const daysLeft = Math.ceil((endDate - new Date()) / (1000 * 60 * 60 * 24));
 
+        let message = "";
         if (subData.subscriptionType === "forever") {
           message = "🎉 У вас бессрочная подписка!";
         } else {
           message = `✅ Подписка активна до: ${endDate.toLocaleDateString()} (осталось ${daysLeft} дней)`;
         }
-      } else {
-        message = "❌ Подписка истекла";
+
+        return {
+          active: true,
+          message: message,
+          subscription: subData,
+        };
+      }
+    }
+
+    // Если подписка неактивна или не существует, проверяем оплаченные крипто-платежи
+    const cryptoPaymentsRef = db.collection("cryptoPayPayments")
+      .where("userId", "==", userId)
+      .where("status", "==", "paid");
+    
+    const cryptoPayments = await cryptoPaymentsRef.get();
+
+    for (const doc of cryptoPayments.docs) {
+      const payment = doc.data();
+      
+      // Проверяем, не истекла ли подписка из крипто-платежа
+      const paymentDate = payment.paidAt ? payment.paidAt.toDate() : payment.createdAt.toDate();
+      let subscriptionEndDate = new Date(paymentDate);
+      
+      // Определяем длительность подписки на основе плана
+      if (payment.plan === "1day") {
+        subscriptionEndDate.setDate(subscriptionEndDate.getDate() + 1);
+      } else if (payment.plan === "1month") {
+        subscriptionEndDate.setDate(subscriptionEndDate.getDate() + 30);
+      } else if (payment.plan === "forever") {
+        subscriptionEndDate.setFullYear(subscriptionEndDate.getFullYear() + 100); // Фактически бессрочно
       }
 
-      return {
-        active: isActive,
-        message: message,
-        subscription: subData,
-      };
-    } catch (error) {
-      console.error("Ошибка проверки подписки:", error);
-      return {
-        active: false,
-        message: "❌ Ошибка проверки подписки",
-      };
+      // Если подписка еще активна
+      if (subscriptionEndDate > new Date()) {
+        const daysLeft = Math.ceil((subscriptionEndDate - new Date()) / (1000 * 60 * 60 * 24));
+        
+        let planName = "";
+        if (payment.plan === "1day") planName = "1 день";
+        else if (payment.plan === "1month") planName = "1 месяц";
+        else if (payment.plan === "forever") planName = "1 год";
+
+        return {
+          active: true,
+          message: `✅ Подписка (${planName}, оплата: ${payment.asset}) активна до: ${subscriptionEndDate.toLocaleDateString()} (осталось ${daysLeft} дней)`,
+          subscription: {
+            ...payment,
+            endDate: admin.firestore.Timestamp.fromDate(subscriptionEndDate),
+            isActive: true,
+            subscriptionType: payment.plan
+          },
+        };
+      }
     }
-  };
+
+    // Если активных подписок нет
+    return {
+      active: false,
+      message: "❌ У вас нет активной подписки",
+    };
+
+  } catch (error) {
+    console.error("Ошибка проверки подписки:", error);
+    return {
+      active: false,
+      message: "❌ Ошибка проверки подписки",
+    };
+  }
+};
 
   // ================= 3. ФУНКЦИЯ ОЧИСТКИ ЧАТА =================
   const clearChat = async (ctx) => {
@@ -1188,313 +1233,303 @@ const showMainMenu = async (ctx) => {
   });
 
   // ================= 13. ОБРАБОТКА CRYPTO PAY ПЛАТЕЖЕЙ =================
-  bot.action(/crypto_(.+)/, async (ctx) => {
-    const plan = ctx.match[1];
-    let planData;
+bot.action(/crypto_(.+)/, async (ctx) => {
+  const plan = ctx.match[1];
+  let planData;
 
-    if (plan === "basic") {
-      planData = { amount: 5, name: "1 день", duration: 1, asset: "USDT" };
-    } else if (plan === "pro") {
-      planData = { amount: 10, name: "1 месяц", duration: 30, asset: "USDT" };
-    } else if (plan === "premium") {
-      planData = { amount: 50, name: "1 год", duration: 365, asset: "USDT" };
-    } else {
-      await ctx.reply("❌ Неизвестный тариф");
+  if (plan === "basic") {
+    planData = { amount: 5, name: "1 день", duration: 1, asset: "USDT" };
+  } else if (plan === "pro") {
+    planData = { amount: 10, name: "1 месяц", duration: 30, asset: "USDT" };
+  } else if (plan === "premium") {
+    planData = { amount: 50, name: "1 год", duration: 365, asset: "USDT" };
+  } else {
+    await ctx.reply("❌ Неизвестный тариф");
+    return;
+  }
+
+  try {
+    console.log(`Создание инвойса для плана: ${plan}, сумма: ${planData.amount} ${planData.asset}`);
+
+    const invoice = await cryptoPay.createInvoice(
+      planData.amount,
+      `Подписка: ${planData.name}`
+    );
+
+    if (!invoice || !invoice.invoice_id) {
+      console.error("Инвойс не создан:", invoice);
+      await ctx.reply("❌ Ошибка при создании счета. Попробуй еще раз.");
       return;
     }
 
-    try {
-      console.log(
-        `Создание инвойса для плана: ${plan}, сумма: ${planData.amount} ${planData.asset}`
-      );
+    console.log("Инвойс создан успешно:", invoice);
 
-      const invoice = await cryptoPay.createInvoice(
-        planData.amount,
-        `Подписка: ${planData.name}`
-      );
+    const paymentData = {
+      userId: ctx.from.id,
+      plan: plan === "basic" ? "1day" : plan === "pro" ? "1month" : "forever",
+      invoiceId: invoice.invoice_id,
+      amount: planData.amount,
+      asset: planData.asset,
+      status: "pending", // ИЗМЕНЕНО С "active" НА "pending"
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      expiresAt: new Date(Date.now() + 3600 * 1000),
+    };
 
-      if (!invoice || !invoice.invoice_id) {
-        console.error("Инвойс не создан:", invoice);
-        await ctx.reply("❌ Ошибка при создании счета. Попробуй еще раз.");
-        return;
-      }
+    const paymentRef = await db.collection("cryptoPayPayments").add(paymentData);
 
-      console.log("Инвойс создан успешно:", invoice);
-
-      const paymentData = {
-        userId: ctx.from.id,
-        plan: plan === "basic" ? "1day" : plan === "pro" ? "1month" : "forever",
-        invoiceId: invoice.invoice_id,
-        amount: planData.amount,
-        asset: planData.asset,
-        status: "active",
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        expiresAt: new Date(Date.now() + 3600 * 1000),
-      };
-
-      const paymentRef = await db
-        .collection("cryptoPayPayments")
-        .add(paymentData);
-
-      const keyboard = {
-        inline_keyboard: [
-          [
-            {
-              text: "💳 ОПЛАТИТЬ В @CryptoBot",
-              url: `https://t.me/CryptoBot?start=${invoice.hash}`,
-            },
-          ],
-          [
-            {
-              text: "✅ Я ОПЛАТИЛ",
-              callback_data: `check_crypto_${paymentRef.id}`,
-            },
-          ],
-          [
-            {
-              text: "🔙 НАЗАД",
-              callback_data: "show_crypto_plans",
-            },
-            {
-              text: "🧹 Очистить экран",
-              callback_data: "clear_screen",
-            },
-          ],
+    // Остальной код без изменений...
+    const keyboard = {
+      inline_keyboard: [
+        [
+          {
+            text: "💳 ОПЛАТИТЬ В @CryptoBot",
+            url: `https://t.me/CryptoBot?start=${invoice.hash}`,
+          },
         ],
-      };
+        [
+          {
+            text: "✅ Я ОПЛАТИЛ",
+            callback_data: `check_crypto_${paymentRef.id}`,
+          },
+        ],
+        [
+          {
+            text: "🔙 НАЗАД",
+            callback_data: "show_crypto_plans",
+          },
+          {
+            text: "🧹 Очистить экран",
+            callback_data: "clear_screen",
+          },
+        ],
+      ],
+    };
 
-      await ctx.reply(
-        `💎 <b>${planData.name}</b>\n` +
-          `💲 <b>ОПЛАТА ЧЕРЕЗ CRYPTO PAY</b>\n\n` +
-          `💰 <b>Сумма:</b> ${planData.amount} ${planData.asset}\n` +
-          `⏰ <b>Время на оплату:</b> 1 час\n\n` +
-          `📋 <b>Инструкция:</b>\n` +
-          `1. Нажми "ОПЛАТИТЬ В @CryptoBot"\n` +
-          `2. Оплати счет в боте @CryptoBot\n` +
-          `3. Вернись и нажми "Я ОПЛАТИЛ"\n\n` +
-          `🆔 <b>ID платежа:</b> <code>${paymentRef.id}</code>\n` +
-          `🆔 <b>ID счета:</b> <code>${invoice.invoice_id}</code>`,
-        {
-          parse_mode: "HTML",
-          reply_markup: keyboard,
-        }
-      );
-    } catch (error) {
-      console.error("Crypto Pay error:", error);
-      await ctx.reply(
-        "❌ Ошибка при создании платежа. Проверь настройки Crypto Pay."
-      );
-    }
-  });
+    await ctx.reply(
+      `💎 <b>${planData.name}</b>\n` +
+        `💲 <b>ОПЛАТА ЧЕРЕЗ CRYPTO PAY</b>\n\n` +
+        `💰 <b>Сумма:</b> ${planData.amount} ${planData.asset}\n` +
+        `⏰ <b>Время на оплату:</b> 1 час\n\n` +
+        `📋 <b>Инструкция:</b>\n` +
+        `1. Нажми "ОПЛАТИТЬ В @CryptoBot"\n` +
+        `2. Оплати счет в боте @CryptoBot\n` +
+        `3. Вернись и нажми "Я ОПЛАТИЛ"\n\n` +
+        `🆔 <b>ID платежа:</b> <code>${paymentRef.id}</code>\n` +
+        `🆔 <b>ID счета:</b> <code>${invoice.invoice_id}</code>`,
+      {
+        parse_mode: "HTML",
+        reply_markup: keyboard,
+      }
+    );
+  } catch (error) {
+    console.error("Crypto Pay error:", error);
+    await ctx.reply("❌ Ошибка при создании платежа. Проверь настройки Crypto Pay.");
+  }
+});
 
   // ================= 14. ОБРАБОТКА TON ПЛАТЕЖЕЙ =================
-  bot.action(/ton_(.+)/, async (ctx) => {
-    const plan = ctx.match[1];
-    let planData;
+bot.action(/ton_(.+)/, async (ctx) => {
+  const plan = ctx.match[1];
+  let planData;
 
-    if (plan === "basic") {
-      planData = { amount: 1.5, name: "1 день", duration: 1, asset: "TON" };
-    } else if (plan === "pro") {
-      planData = { amount: 3.5, name: "1 месяц", duration: 30, asset: "TON" };
-    } else if (plan === "premium") {
-      planData = { amount: 15, name: "1 год", duration: 365, asset: "TON" };
-    } else {
-      await ctx.reply("❌ Неизвестный тариф");
+  if (plan === "basic") {
+    planData = { amount: 1.5, name: "1 день", duration: 1, asset: "TON" };
+  } else if (plan === "pro") {
+    planData = { amount: 3.5, name: "1 месяц", duration: 30, asset: "TON" };
+  } else if (plan === "premium") {
+    planData = { amount: 15, name: "1 год", duration: 365, asset: "TON" };
+  } else {
+    await ctx.reply("❌ Неизвестный тариф");
+    return;
+  }
+
+  try {
+    console.log(`Создание TON инвойса для плана: ${plan}, сумма: ${planData.amount} ${planData.asset}`);
+
+    const invoice = await cryptoPay.createInvoice(
+      planData.amount,
+      `Подписка: ${planData.name}`,
+      "TON"
+    );
+
+    if (!invoice || !invoice.invoice_id) {
+      console.error("TON инвойс не создан:", invoice);
+      await ctx.reply("❌ Ошибка при создании счета. Попробуй еще раз.");
       return;
     }
 
+    console.log("TON инвойс создан успешно:", invoice);
+
+    const paymentData = {
+      userId: ctx.from.id,
+      plan: plan === "basic" ? "1day" : plan === "pro" ? "1month" : "forever",
+      invoiceId: invoice.invoice_id,
+      amount: planData.amount,
+      asset: planData.asset,
+      status: "pending", // ИЗМЕНЕНО С "active" НА "pending"
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      expiresAt: new Date(Date.now() + 3600 * 1000),
+    };
+
+    const paymentRef = await db.collection("cryptoPayPayments").add(paymentData);
+
+    // Остальной код без изменений...
+    const keyboard = {
+      inline_keyboard: [
+        [
+          {
+            text: "💳 ОПЛАТИТЬ В @CryptoBot",
+            url: `https://t.me/CryptoBot?start=${invoice.hash}`,
+          },
+        ],
+        [
+          {
+            text: "✅ Я ОПЛАТИЛ",
+            callback_data: `check_crypto_${paymentRef.id}`,
+          },
+        ],
+        [
+          {
+            text: "🔙 НАЗАД",
+            callback_data: "show_ton_plans",
+          },
+          {
+            text: "🧹 Очистить экран",
+            callback_data: "clear_screen",
+          },
+        ],
+      ],
+    };
+
+    await ctx.reply(
+      `💎 <b>${planData.name}</b>\n` +
+        `💎 <b>ОПЛАТА TON</b>\n\n` +
+        `💰 <b>Сумма:</b> ${planData.amount} ${planData.asset}\n` +
+        `⏰ <b>Время на оплату:</b> 1 час\n\n` +
+        `📋 <b>Инструкция:</b>\n` +
+        `1. Нажми "ОПЛАТИТЬ В @CryptoBot"\n` +
+        `2. Оплати счет в боте @CryptoBot\n` +
+        `3. Вернись и нажми "Я ОПЛАТИЛ"\n\n` +
+        `🆔 <b>ID платежа:</b> <code>${paymentRef.id}</code>\n` +
+        `🆔 <b>ID счета:</b> <code>${invoice.invoice_id}</code>`,
+      {
+        parse_mode: "HTML",
+        reply_markup: keyboard,
+      }
+    );
+  } catch (error) {
+    console.error("TON Pay error:", error);
+    await ctx.reply("❌ Ошибка при создании платежа. Проверь настройки Crypto Pay.");
+  }
+});
+
+  // ================= 15. ПРОВЕРКА CRYPTO PAY ПЛАТЕЖА =================
+bot.action(/check_crypto_(.+)/, async (ctx) => {
+  const paymentId = ctx.match[1];
+
+  try {
+    await ctx.answerCbQuery("🔍 Проверяем платеж...");
+
+    const paymentDoc = await db.collection("cryptoPayPayments").doc(paymentId).get();
+
+    if (!paymentDoc.exists) {
+      await ctx.answerCbQuery("❌ Платеж не найден");
+      return;
+    }
+
+    const payment = paymentDoc.data();
+
+    if (payment.userId !== ctx.from.id) {
+      await ctx.answerCbQuery("❌ Это не ваш платеж");
+      return;
+    }
+
+    // Если платеж уже обработан
+    if (payment.status === "paid") {
+      await ctx.answerCbQuery("✅ Платеж уже подтвержден");
+      return;
+    }
+
+    let invoice;
     try {
-      console.log(
-        `Создание TON инвойса для плана: ${plan}, сумма: ${planData.amount} ${planData.asset}`
-      );
+      invoice = await cryptoPay.getInvoice(payment.invoiceId);
+    } catch (error) {
+      console.error("Ошибка получения инвойса:", error);
+      await ctx.answerCbQuery("❌ Ошибка проверки счета");
+      return;
+    }
 
-      const invoice = await cryptoPay.createInvoice(
-        planData.amount,
-        `Подписка: ${planData.name}`,
-        "TON"
-      );
+    if (!invoice) {
+      await ctx.answerCbQuery("❌ Счет не найден или истек");
+      return;
+    }
 
-      if (!invoice || !invoice.invoice_id) {
-        console.error("TON инвойс не создан:", invoice);
-        await ctx.reply("❌ Ошибка при создании счета. Попробуй еще раз.");
-        return;
+    console.log(`Статус инвойса ${payment.invoiceId}:`, invoice.status);
+
+    if (invoice.status === "paid") {
+      const planId = payment.plan;
+      
+      // Обновляем статус платежа
+      await paymentDoc.ref.update({
+        status: "paid",
+        paidAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+
+      // Создаем запись в subscriptions для унификации
+      const subRef = db.collection("subscriptions").doc(ctx.from.id.toString());
+      
+      let endDate = new Date();
+      if (planId === "1day") {
+        endDate.setDate(endDate.getDate() + 1);
+      } else if (planId === "1month") {
+        endDate.setDate(endDate.getDate() + 30);
+      } else if (planId === "forever") {
+        endDate.setFullYear(endDate.getFullYear() + 100); // Фактически бессрочно
       }
 
-      console.log("TON инвойс создан успешно:", invoice);
-
-      const paymentData = {
+      const subData = {
         userId: ctx.from.id,
-        plan: plan === "basic" ? "1day" : plan === "pro" ? "1month" : "forever",
-        invoiceId: invoice.invoice_id,
-        amount: planData.amount,
-        asset: planData.asset,
+        plan: planId,
+        subscriptionType: planId,
+        startDate: admin.firestore.FieldValue.serverTimestamp(),
+        endDate: admin.firestore.Timestamp.fromDate(endDate),
         status: "active",
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        expiresAt: new Date(Date.now() + 3600 * 1000),
+        isActive: true,
+        lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
+        paymentMethod: payment.asset === "TON" ? "ton" : "crypto",
       };
 
-      const paymentRef = await db
-        .collection("cryptoPayPayments")
-        .add(paymentData);
+      await subRef.set(subData, { merge: true });
 
+      const subscription = await checkSubscription(ctx.from.id);
       const keyboard = {
         inline_keyboard: [
-          [
-            {
-              text: "💳 ОПЛАТИТЬ В @CryptoBot",
-              url: `https://t.me/CryptoBot?start=${invoice.hash}`,
-            },
-          ],
-          [
-            {
-              text: "✅ Я ОПЛАТИЛ",
-              callback_data: `check_crypto_${paymentRef.id}`,
-            },
-          ],
-          [
-            {
-              text: "🔙 НАЗАД",
-              callback_data: "show_ton_plans",
-            },
-            {
-              text: "🧹 Очистить экран",
-              callback_data: "clear_screen",
-            },
-          ],
+          [{ text: "🌍 Все страны", callback_data: "all_countries" }],
+          [{ text: "🧹 Очистить экран", callback_data: "clear_screen" }],
         ],
       };
 
       await ctx.reply(
-        `💎 <b>${planData.name}</b>\n` +
-          `💎 <b>ОПЛАТА TON</b>\n\n` +
-          `💰 <b>Сумма:</b> ${planData.amount} ${planData.asset}\n` +
-          `⏰ <b>Время на оплату:</b> 1 час\n\n` +
-          `📋 <b>Инструкция:</b>\n` +
-          `1. Нажми "ОПЛАТИТЬ В @CryptoBot"\n` +
-          `2. Оплати счет в боте @CryptoBot\n` +
-          `3. Вернись и нажми "Я ОПЛАТИЛ"\n\n` +
-          `🆔 <b>ID платежа:</b> <code>${paymentRef.id}</code>\n` +
-          `🆔 <b>ID счета:</b> <code>${invoice.invoice_id}</code>`,
+        `🎉 <b>ПЛАТЕЖ ПОДТВЕРЖДЕН!</b>\n\n` +
+          `✅ Подписка успешно активирована!\n\n` +
+          `${subscription.message}`,
         {
           parse_mode: "HTML",
           reply_markup: keyboard,
         }
       );
-    } catch (error) {
-      console.error("TON Pay error:", error);
-      await ctx.reply(
-        "❌ Ошибка при создании платежа. Проверь настройки Crypto Pay."
-      );
+    } else {
+      let statusText = "не оплачен";
+      if (invoice.status === "active") statusText = "ожидает оплаты";
+      if (invoice.status === "expired") statusText = "истек";
+
+      await ctx.answerCbQuery(`❌ Счет ${statusText}. Попробуй через минуту.`);
     }
-  });
-
-  // ================= 15. ПРОВЕРКА CRYPTO PAY ПЛАТЕЖА =================
-  bot.action(/check_crypto_(.+)/, async (ctx) => {
-    const paymentId = ctx.match[1];
-
-    try {
-      await ctx.answerCbQuery("🔍 Проверяем платеж...");
-
-      const paymentDoc = await db
-        .collection("cryptoPayPayments")
-        .doc(paymentId)
-        .get();
-
-      if (!paymentDoc.exists) {
-        await ctx.answerCbQuery("❌ Платеж не найден");
-        return;
-      }
-
-      const payment = paymentDoc.data();
-
-      if (payment.userId !== ctx.from.id) {
-        await ctx.answerCbQuery("❌ Это не ваш платеж");
-        return;
-      }
-
-      let invoice;
-      try {
-        invoice = await cryptoPay.getInvoice(payment.invoiceId);
-      } catch (error) {
-        console.error("Ошибка получения инвойса:", error);
-        await ctx.answerCbQuery("❌ Ошибка проверки счета");
-        return;
-      }
-
-      if (!invoice) {
-        await ctx.answerCbQuery("❌ Счет не найден или истек");
-        return;
-      }
-
-      console.log(`Статус инвойса ${payment.invoiceId}:`, invoice.status);
-
-      if (invoice.status === "paid") {
-        const planId = payment.plan;
-        const subRef = db
-          .collection("subscriptions")
-          .doc(ctx.from.id.toString());
-        const subData = {
-          userId: ctx.from.id,
-          plan: planId,
-          subscriptionType: planId,
-          startDate: admin.firestore.FieldValue.serverTimestamp(),
-          status: "active",
-          isActive: true,
-          lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
-          paymentMethod: payment.asset === "TON" ? "ton" : "crypto",
-        };
-
-        if (planId === "1day") {
-          subData.endDate = admin.firestore.Timestamp.fromDate(
-            new Date(Date.now() + 86400000)
-          );
-        } else if (planId === "1month") {
-          subData.endDate = admin.firestore.Timestamp.fromDate(
-            new Date(Date.now() + 2592000000)
-          );
-        } else if (planId === "forever") {
-          subData.endDate = admin.firestore.Timestamp.fromDate(
-            new Date(Date.now() + 365 * 86400000)
-          );
-        }
-
-        await subRef.set(subData, { merge: true });
-        await paymentDoc.ref.update({
-          status: "paid",
-          paidAt: admin.firestore.FieldValue.serverTimestamp(),
-        });
-
-        const subscription = await checkSubscription(ctx.from.id);
-        const keyboard = {
-          inline_keyboard: [
-            [{ text: "🌍 Все страны", callback_data: "all_countries" }],
-            [{ text: "🧹 Очистить экран", callback_data: "clear_screen" }],
-          ],
-        };
-
-        await ctx.reply(
-          `🎉 <b>ПЛАТЕЖ ПОДТВЕРЖДЕН!</b>\n\n` +
-            `✅ Подписка успешно активирована!\n\n` +
-            `${subscription.message}`,
-          {
-            parse_mode: "HTML",
-            reply_markup: keyboard,
-          }
-        );
-      } else {
-        let statusText = "не оплачен";
-        if (invoice.status === "active") statusText = "ожидает оплаты";
-        if (invoice.status === "expired") statusText = "истек";
-
-        await ctx.answerCbQuery(
-          `❌ Счет ${statusText}. Попробуй через минуту.`
-        );
-      }
-    } catch (error) {
-      console.error("Payment check error:", error);
-      await ctx.answerCbQuery("❌ Ошибка проверки платежа");
-    }
-  });
+  } catch (error) {
+    console.error("Payment check error:", error);
+    await ctx.answerCbQuery("❌ Ошибка проверки платежа");
+  }
+});
 
   // ================= 16. ОБРАБОТЧИКИ ПОДПИСОК STARS =================
   const handleSubscriptionPurchase = async (ctx, planId, amount, duration) => {
