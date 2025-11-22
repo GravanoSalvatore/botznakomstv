@@ -1007,55 +1007,49 @@ const ensureUserCache = async (ctx) => {
     };
 
     // ФУНКЦИЯ ДЛЯ ПОЛУЧЕНИЯ СТРАН
+// ФУНКЦИЯ ДЛЯ ПОЛУЧЕНИЯ СТРАН
 const getUniqueCountries = async (isDemo = false) => {
     try {
         const cachedCountries = cacheManager.getCachedCountries(isDemo);
         if (cachedCountries && cachedCountries.length > 0) {
+            console.log(`✅ [COUNTRIES] Страны из кэша: ${cachedCountries.length}`);
             return cachedCountries;
         }
         
-        // Если в кэше нет, используем быстрый запрос
-        console.log(`🔍 Быстрая загрузка стран... (демо: ${isDemo})`);
+        console.log(`🔍 Загрузка ВСЕХ стран... (демо: ${isDemo})`);
         
-        // Используем только популярные страны для быстрого ответа
-        const popularCountries = POPULAR_COUNTRIES.map(c => c.name);
+        // ЗАГРУЖАЕМ ВСЕ СТРАНЫ БЕЗ ОГРАНИЧЕНИЙ
+        const snapshot = await db.collection("profiles")
+            .select("country")
+            .get();
+
+        const countriesSet = new Set();
+        let processedCount = 0;
         
-        // А полную загрузку делаем в фоне
-        setTimeout(async () => {
-            try {
-                const snapshot = await db.collection("profiles")
-                    .select("country")
-                    .limit(1000) // Ограничиваем для скорости
-                    .get();
-
-                const countriesSet = new Set();
-                
-                snapshot.forEach(doc => {
-                    const data = doc.data();
-                    if (data.country && data.country.trim() !== "") {
-                        countriesSet.add(data.country.trim());
-                    }
-                });
-
-                const uniqueCountries = Array.from(countriesSet).sort();
-                console.log(`✅ Фоновая загрузка: ${uniqueCountries.length} стран`);
-                
-                // Сохраняем в кэш
-                if (isDemo) {
-                    demoCache.set("demo:countries", uniqueCountries);
-                } else {
-                    profilesCache.set("profiles:countries", uniqueCountries);
-                }
-            } catch (error) {
-                console.error("❌ Ошибка фоновой загрузки стран:", error);
+        snapshot.forEach(doc => {
+            processedCount++;
+            const data = doc.data();
+            if (data.country && data.country.trim() !== "") {
+                countriesSet.add(data.country.trim());
             }
-        }, 100);
+        });
+
+        const allCountries = Array.from(countriesSet).sort();
+        console.log(`✅ [COUNTRIES] Загружено стран: ${allCountries.length} (обработано ${processedCount} записей)`);
         
-        return popularCountries; // Сразу возвращаем популярные страны
+        // Сохраняем в кэш
+        if (isDemo) {
+            demoCache.set("demo:countries", allCountries);
+        } else {
+            profilesCache.set("profiles:countries", allCountries);
+        }
+        
+        return allCountries;
         
     } catch (error) {
         console.error("❌ Ошибка загрузки стран:", error);
-        return POPULAR_COUNTRIES.map(c => c.name); // Возвращаем популярные страны при ошибке
+        // При ошибке возвращаем популярные страны как запасной вариант
+        return POPULAR_COUNTRIES.map(c => c.name);
     }
 };
 
@@ -1305,7 +1299,7 @@ const createEnhancedPaginationKeyboard = (currentPage, totalPages, filterKey, cu
   });
 },
         
-     sendCountriesKeyboard: async function (ctx, isDemo = false) {
+   sendCountriesKeyboard: async function (ctx, isDemo = false) {
     return messageQueue.add(async () => {
         const chatId = ctx.chat.id;
         const self = this;
@@ -1321,8 +1315,16 @@ const createEnhancedPaginationKeyboard = (currentPage, totalPages, filterKey, cu
                 }
             }
 
+            // 🔥 ДОБАВЛЯЕМ ПРЕЛОАДЕР ДЛЯ ЗАГРУЗКИ СТРАН
+            const preloaderMsg = await sendPreloader(ctx, 'country');
+            
             const uniqueCountries = await getUniqueCountries(isDemo);
-            const countriesToShow = uniqueCountries.length > 0 && uniqueCountries.length <= 50 ? uniqueCountries : POPULAR_COUNTRIES.map((c) => c.name);
+            
+            // 🔥 УДАЛЯЕМ ПРЕЛОАДЕР ПОСЛЕ ЗАГРУЗКИ
+            await removePreloader(ctx, preloaderMsg);
+            
+            // Всегда показываем реальные страны
+            const countriesToShow = uniqueCountries;
 
             const keyboard = [];
             let row = [];
@@ -1337,10 +1339,9 @@ const createEnhancedPaginationKeyboard = (currentPage, totalPages, filterKey, cu
                 }
             });
 
-            // 🔥 ДОБАВЛЯЕМ КНОПКУ СОЗДАНИЯ АНКЕТЫ ПЕРЕД КНОПКОЙ "НАЗАД"
+            // 🔥 КНОПКА СОЗДАНИЯ АНКЕТЫ
             keyboard.push([{ text: "📝 СОЗДАТЬ АНКЕТУ", web_app: { url: "https://bot-vai-web-app.web.app/?tab=catalog" } }]);
 
-            // Добавляем кнопку для получения полного доступа в демо-режиме
             if (isDemo) {
                 keyboard.push([{ text: "💎 ПОЛУЧИТЬ ПОЛНЫЙ ДОСТУП", callback_data: "get_full_access" }]);
             }
@@ -1349,7 +1350,7 @@ const createEnhancedPaginationKeyboard = (currentPage, totalPages, filterKey, cu
 
             const msgText = isDemo ? 
                 "👀 ДЕМО-РЕЖИМ: Выберите страну (показано по 3 анкеты на город)\n\n💎 Для полного доступа Вы должны быть подписаны на наш канал @MagicYourClub и оплатить подписку" : 
-                "Выберите страну:";
+                `Выберите страну (${countriesToShow.length} стран):`;
 
             const msg = await ctx.reply(msgText, { reply_markup: { inline_keyboard: keyboard } });
             chatStorage.countryKeyboard.set(chatId, msg.message_id);
@@ -1359,7 +1360,7 @@ const createEnhancedPaginationKeyboard = (currentPage, totalPages, filterKey, cu
             throw error;
         }
     });
-},
+}, 
 
      sendCitiesKeyboard: async function (ctx, country, isDemo = false) {
     return messageQueue.add(async () => {
