@@ -409,9 +409,12 @@ async createDemoCache(profiles) {
         
         // 🔥 ИЗМЕНЕНИЕ: 3 анкеты на город вместо 1
         const demoProfiles = [];
-        const citiesCounter = new Map(); // Счетчик для каждого города
+        const citiesCounter = new Map(); 
+        const allCities = new Set(); // 🔥 ДЛЯ ДИАГНОСТИКИ
+
         
         profiles.forEach(profile => {
+            console.log(`🏙️ [NORMALIZE] "${profile.city}" → "${this.normalizeCityName(profile.city)}"`);
             const normalizedCity = this.normalizeCityName(profile.city);
             const cityKey = `${profile.country}_${normalizedCity}`;
             
@@ -440,6 +443,15 @@ async createDemoCache(profiles) {
                 demoProfiles.push(demoProfile);
             }
         });
+        // 🔥 ДИАГНОСТИКА:
+        console.log(`🔍 [DEMO CACHE ДИАГНОСТИКА]`);
+        console.log(`   - Всего уникальных городов в БД: ${allCities.size}`);
+        console.log(`   - Городов в демо-кэше: ${citiesCounter.size}`);
+        console.log(`   - Анкет в демо-кэше: ${demoProfiles.length}`);
+        
+        // 🔥 ПРОВЕРКА: Какие города попали в демо-кэш?
+        const demoCities = Array.from(citiesCounter.keys());
+        console.log(`   - Примеры городов в демо-кэше: ${demoCities.slice(0, 10).join(', ')}`);
         
         await this.cacheProfiles(demoProfiles, true);
         
@@ -762,6 +774,7 @@ module.exports = (bot, db) => {
             
             const snapshot = await db.collection("profiles")
                 .orderBy("createdAt", "desc")
+                .limit(10000) // 🔥 ДОБАВИТЬ ЛИМИТ
                 .select("id", "name", "age", "country", "city", "about", "photoUrl", "telegram", "phone", "whatsapp", "photos", "createdAt")
                 .get();
 
