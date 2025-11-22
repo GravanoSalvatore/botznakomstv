@@ -297,107 +297,25 @@ module.exports = (bot, db) => {
   };
 
   // ================= 9. ФУНКЦИЯ ОЧИСТКИ ЭКРАНА =================
-  const clearScreen = async (ctx) => {
-    try {
-      await clearChat(ctx);
+const clearScreen = async (ctx) => {
+  try {
+    await clearChat(ctx);
 
-      // Обновляем статистику посещений
-      await updateUserVisit(ctx.from.id);
-
-      // Отправляем главное меню
-      const hasFullAccess = await checkFullAccess(ctx);
-
-      const baseKeyboard = [];
-
-      baseKeyboard.push([
-        { text: "🌍 Все страны", callback_data: "all_countries_with_check" },
-      ]);
-
-      baseKeyboard.push([
-        { text: "💎 Купить подписку", callback_data: "choose_payment_method" },
-      ]);
-      baseKeyboard.push([
-        { text: "👨‍💻 Связаться с админом", url: "https://t.me/MagicAdd" },
-      ]);
-      baseKeyboard.push([
-        { text: "🧹 Очистить экран", callback_data: "clear_screen" },
-      ]);
-
-      let welcomeText = `👋<b> Привет, ${ctx.from.first_name}!
-Добро пожаловать в клуб  ✨Magic</b> 
-<em>Здесь ты найдёшь каталог анкет со всего мира для общения, флирта и серьёзных отношений.
-🎉 Каталог обновляется каждый день — всегда свежие профили!
-Начни поиск или размести свою анкету — возможно, твоя вторая половинка уже здесь!</em>\n
-<a href="http://t.me/MagicYourClub"><b>Подпишись на новости и обновления ✨</b></a>\n`;
-
-      // Добавляем информацию о демо-режиме если нет полного доступа
-      if (!hasFullAccess) {
-        welcomeText += `\n👀 <b>Сейчас вы в демо-режиме:</b>
-• Показано по 1 анкете на город  
-• Контакты скрыты
-• ✨ Для полного доступа Вы должны быть подписаны на наш канал @MagicYourClub и оплатить подписку
-`;
-      }
-
-      try {
-        if (welcomeImage.fileId) {
-          await ctx.replyWithPhoto(welcomeImage.fileId, {
-            caption: welcomeText,
-            parse_mode: "HTML",
-            reply_markup: { inline_keyboard: baseKeyboard },
-          });
-        } else if (welcomeImage.buffer) {
-          const msg = await ctx.replyWithPhoto(
-            { source: welcomeImage.buffer },
-            {
-              caption: welcomeText,
-              parse_mode: "HTML",
-              reply_markup: { inline_keyboard: baseKeyboard },
-            }
-          );
-          welcomeImage.fileId = msg.photo[0].file_id;
-        } else {
-          await ctx.reply(welcomeText, {
-            parse_mode: "HTML",
-            reply_markup: { inline_keyboard: baseKeyboard },
-          });
-        }
-      } catch (e) {
-        console.error("Ошибка отправки welcome:", e);
-        await ctx.reply(welcomeText, {
-          parse_mode: "HTML",
-          reply_markup: { inline_keyboard: baseKeyboard },
-        });
-      }
-
-      // Показываем статус подписки если есть
-      const subscription = await checkSubscription(ctx.from.id);
-      if (subscription.active) {
-        setTimeout(async () => {
-          try {
-            await ctx.reply(subscription.message, { parse_mode: "HTML" });
-          } catch (e) {
-            console.error("Ошибка отправки статуса подписки:", e);
-          }
-        }, 500);
-      }
-    } catch (error) {
-      console.error("Ошибка при очистке экрана:", error);
-      await showMainMenu(ctx);
-    }
-  };
-
-  // ================= 10. ФУНКЦИЯ ОТОБРАЖЕНИЯ ГЛАВНОГО МЕНЮ =================
-  const showMainMenu = async (ctx) => {
     // Обновляем статистику посещений
     await updateUserVisit(ctx.from.id);
 
+    // Отправляем главное меню
     const hasFullAccess = await checkFullAccess(ctx);
 
     const baseKeyboard = [];
 
     baseKeyboard.push([
       { text: "🌍 Все страны", callback_data: "all_countries_with_check" },
+    ]);
+
+    // 🔥 ДОБАВЛЯЕМ КНОПКУ СОЗДАНИЯ АНКЕТЫ ПЕРЕД КНОПКОЙ "НАЗАД"
+    baseKeyboard.push([
+      { text: "📝 СОЗДАТЬ АНКЕТУ", web_app: { url: "https://bot-vai-web-app.web.app/?tab=catalog" } }
     ]);
 
     baseKeyboard.push([
@@ -411,11 +329,11 @@ module.exports = (bot, db) => {
     ]);
 
     let welcomeText = `👋<b> Привет, ${ctx.from.first_name}!
-Добро пожаловать в клуб знакомств ✨Magic!</b> 
-<em>Здесь ты найдёшь базу данных анкет со всего мира для общения и не только. 
-🗄️ База обновляется и пополняется каждый день — всегда свежие профили!
+Добро пожаловать в клуб  ✨Magic</b> 
+<em>Здесь ты найдёшь каталог анкет со всего мира для общения, флирта и серьёзных отношений.
+🎉 Каталог обновляется каждый день — всегда свежие профили!
 Начни поиск или размести свою анкету — возможно, твоя вторая половинка уже здесь!</em>\n
-<a href="http://t.me/MagicYourClub"><b>✨ Подпишись на новости и обновления </b></a>\n`;
+<a href="http://t.me/MagicYourClub"><b>Подпишись на новости и обновления ✨</b></a>\n`;
 
     // Добавляем информацию о демо-режиме если нет полного доступа
     if (!hasFullAccess) {
@@ -457,6 +375,7 @@ module.exports = (bot, db) => {
       });
     }
 
+    // Показываем статус подписки если есть
     const subscription = await checkSubscription(ctx.from.id);
     if (subscription.active) {
       setTimeout(async () => {
@@ -467,7 +386,98 @@ module.exports = (bot, db) => {
         }
       }, 500);
     }
-  };
+  } catch (error) {
+    console.error("Ошибка при очистке экрана:", error);
+    await showMainMenu(ctx);
+  }
+};
+
+  // ================= 10. ФУНКЦИЯ ОТОБРАЖЕНИЯ ГЛАВНОГО МЕНЮ =================
+const showMainMenu = async (ctx) => {
+  // Обновляем статистику посещений
+  await updateUserVisit(ctx.from.id);
+
+  const hasFullAccess = await checkFullAccess(ctx);
+
+  const baseKeyboard = [];
+
+  baseKeyboard.push([
+    { text: "🌍 Все страны", callback_data: "all_countries_with_check" },
+  ]);
+
+  // 🔥 ДОБАВЛЯЕМ КНОПКУ СОЗДАНИЯ АНКЕТЫ ПЕРЕД КНОПКОЙ "НАЗАД"
+  baseKeyboard.push([
+    { text: "📝 СОЗДАТЬ АНКЕТУ", web_app: { url: "https://bot-vai-web-app.web.app/?tab=catalog" } }
+  ]);
+
+  baseKeyboard.push([
+    { text: "💎 Купить подписку", callback_data: "choose_payment_method" },
+  ]);
+  baseKeyboard.push([
+    { text: "👨‍💻 Связаться с админом", url: "https://t.me/MagicAdd" },
+  ]);
+  baseKeyboard.push([
+    { text: "🧹 Очистить экран", callback_data: "clear_screen" },
+  ]);
+
+  let welcomeText = `👋<b> Привет, ${ctx.from.first_name}!
+Добро пожаловать в клуб знакомств ✨Magic!</b> 
+<em>Здесь ты найдёшь базу данных анкет со всего мира для общения и не только. 
+🗄️ База обновляется и пополняется каждый день — всегда свежие профили!
+Начни поиск или размести свою анкету — возможно, твоя вторая половинка уже здесь!</em>\n
+<a href="http://t.me/MagicYourClub"><b>✨ Подпишись на новости и обновления </b></a>\n`;
+
+  // Добавляем информацию о демо-режиме если нет полного доступа
+  if (!hasFullAccess) {
+    welcomeText += `\n👀 <b>Сейчас вы в демо-режиме:</b>
+• Показано по 1 анкете на город  
+• Контакты скрыты
+• ✨ Для полного доступа Вы должны быть подписаны на наш канал @MagicYourClub и оплатить подписку
+`;
+  }
+
+  try {
+    if (welcomeImage.fileId) {
+      await ctx.replyWithPhoto(welcomeImage.fileId, {
+        caption: welcomeText,
+        parse_mode: "HTML",
+        reply_markup: { inline_keyboard: baseKeyboard },
+      });
+    } else if (welcomeImage.buffer) {
+      const msg = await ctx.replyWithPhoto(
+        { source: welcomeImage.buffer },
+        {
+          caption: welcomeText,
+          parse_mode: "HTML",
+          reply_markup: { inline_keyboard: baseKeyboard },
+        }
+      );
+      welcomeImage.fileId = msg.photo[0].file_id;
+    } else {
+      await ctx.reply(welcomeText, {
+        parse_mode: "HTML",
+        reply_markup: { inline_keyboard: baseKeyboard },
+      });
+    }
+  } catch (e) {
+    console.error("Ошибка отправки welcome:", e);
+    await ctx.reply(welcomeText, {
+      parse_mode: "HTML",
+      reply_markup: { inline_keyboard: baseKeyboard },
+    });
+  }
+
+  const subscription = await checkSubscription(ctx.from.id);
+  if (subscription.active) {
+    setTimeout(async () => {
+      try {
+        await ctx.reply(subscription.message, { parse_mode: "HTML" });
+      } catch (e) {
+        console.error("Ошибка отправки статуса подписки:", e);
+      }
+    }, 500);
+  }
+};
 
   // ================= 11. ИНИЦИАЛИЗАЦИЯ КОЛЛЕКЦИЙ =================
   const initCollections = async () => {

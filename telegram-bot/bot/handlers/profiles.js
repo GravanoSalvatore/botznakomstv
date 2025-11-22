@@ -1115,80 +1115,85 @@ const getUniqueCitiesForCountry = async (country, isDemo = false) => {
     };
 
     // ===================== СИСТЕМА ПАГИНАЦИИ =====================
-    const createEnhancedPaginationKeyboard = (currentPage, totalPages, filterKey, currentFilters = {}, isDemo = false) => {
-        const keyboard = [];
-        
-        if (currentFilters.country || currentFilters.city || currentFilters.ageRange) {
-            let filtersText = "";
-            const filters = [];
-            if (currentFilters.country) filters.push(currentFilters.country);
-            if (currentFilters.city) filters.push(currentFilters.city);
-            if (currentFilters.ageRange) filters.push(currentFilters.ageRange.label);
-            filtersText += filters.join(", ");
-            
-            keyboard.push([{ text: filtersText, callback_data: "filters_info" }]);
-        }
-        
-        const navRow = [];
-        if (currentPage > 0) {
-            navRow.push({ text: "⏪", callback_data: `page_first_${currentPage}` });
-            navRow.push({ text: "◀️", callback_data: `page_prev_${currentPage}` });
-        }
-        
-        navRow.push({ text: `${currentPage + 1}/${totalPages}`, callback_data: "page_info" });
-        
-        if (currentPage < totalPages - 1) {
-            navRow.push({ text: "▶️", callback_data: `page_next_${currentPage}` });
-            navRow.push({ text: "⏩", callback_data: `page_last_${currentPage}` });
-        }
-        
-        keyboard.push(navRow);
+const createEnhancedPaginationKeyboard = (currentPage, totalPages, filterKey, currentFilters = {}, isDemo = false) => {
+  const keyboard = [];
+  
+  if (currentFilters.country || currentFilters.city || currentFilters.ageRange) {
+    let filtersText = "";
+    const filters = [];
+    if (currentFilters.country) filters.push(currentFilters.country);
+    if (currentFilters.city) filters.push(currentFilters.city);
+    if (currentFilters.ageRange) filters.push(currentFilters.ageRange.label);
+    filtersText += filters.join(", ");
+    
+    keyboard.push([{ text: filtersText, callback_data: "filters_info" }]);
+  }
+  
+  const navRow = [];
+  if (currentPage > 0) {
+    navRow.push({ text: "⏪", callback_data: `page_first_${currentPage}` });
+    navRow.push({ text: "◀️", callback_data: `page_prev_${currentPage}` });
+  }
+  
+  navRow.push({ text: `${currentPage + 1}/${totalPages}`, callback_data: "page_info" });
+  
+  if (currentPage < totalPages - 1) {
+    navRow.push({ text: "▶️", callback_data: `page_next_${currentPage}` });
+    navRow.push({ text: "⏩", callback_data: `page_last_${currentPage}` });
+  }
+  
+  keyboard.push(navRow);
 
-        if (totalPages > 10) {
-            const jumpRow = [];
-            const totalProfiles = totalPages * SCALING_CONFIG.PERFORMANCE.PROFILES_PER_PAGE;
-            
-            PAGINATION_JUMP_SECTIONS.forEach(section => {
-                if (section.start < totalProfiles) {
-                    const sectionPage = Math.floor(section.start / SCALING_CONFIG.PERFORMANCE.PROFILES_PER_PAGE);
-                    if (sectionPage < totalPages) {
-                        jumpRow.push({ text: section.label, callback_data: `page_${sectionPage}_${currentPage}` });
-                    }
-                }
-            });
-            
-            if (jumpRow.length > 0) keyboard.push(jumpRow);
+  if (totalPages > 10) {
+    const jumpRow = [];
+    const totalProfiles = totalPages * SCALING_CONFIG.PERFORMANCE.PROFILES_PER_PAGE;
+    
+    PAGINATION_JUMP_SECTIONS.forEach(section => {
+      if (section.start < totalProfiles) {
+        const sectionPage = Math.floor(section.start / SCALING_CONFIG.PERFORMANCE.PROFILES_PER_PAGE);
+        if (sectionPage < totalPages) {
+          jumpRow.push({ text: section.label, callback_data: `page_${sectionPage}_${currentPage}` });
         }
+      }
+    });
+    
+    if (jumpRow.length > 0) keyboard.push(jumpRow);
+  }
 
-        if (totalPages > 1) {
-            const quickPagesRow = [];
-            const pagesToShow = Math.min(5, totalPages);
-            let startPage = Math.max(0, currentPage - Math.floor(pagesToShow / 2));
-            
-            if (startPage + pagesToShow > totalPages) startPage = Math.max(0, totalPages - pagesToShow);
+  if (totalPages > 1) {
+    const quickPagesRow = [];
+    const pagesToShow = Math.min(5, totalPages);
+    let startPage = Math.max(0, currentPage - Math.floor(pagesToShow / 2));
+    
+    if (startPage + pagesToShow > totalPages) startPage = Math.max(0, totalPages - pagesToShow);
 
-            for (let i = 0; i < pagesToShow; i++) {
-                const pageNum = startPage + i;
-                if (pageNum >= 0 && pageNum < totalPages) {
-                    quickPagesRow.push({
-                        text: pageNum === currentPage ? `• ${pageNum + 1} •` : `${pageNum + 1}`,
-                        callback_data: `page_${pageNum}_${currentPage}`,
-                    });
-                }
-            }
-            
-            if (quickPagesRow.length > 0) keyboard.push(quickPagesRow);
-        }
+    for (let i = 0; i < pagesToShow; i++) {
+      const pageNum = startPage + i;
+      if (pageNum >= 0 && pageNum < totalPages) {
+        quickPagesRow.push({
+          text: pageNum === currentPage ? `• ${pageNum + 1} •` : `${pageNum + 1}`,
+          callback_data: `page_${pageNum}_${currentPage}`,
+        });
+      }
+    }
+    
+    if (quickPagesRow.length > 0) keyboard.push(quickPagesRow);
+  }
 
-        // Добавляем кнопку для получения полного доступа в демо-режиме
-        if (isDemo) {
-            keyboard.push([
-                { text: "💎 ПОЛУЧИТЬ ПОЛНЫЙ ДОСТУП", callback_data: "get_full_access" }
-            ]);
-        }
+  // 🔥 ДОБАВЛЯЕМ КНОПКУ СОЗДАНИЯ АНКЕТЫ ПЕРЕД КНОПКОЙ ДОСТУПА
+  keyboard.push([
+    { text: "📝 СОЗДАТЬ АНКЕТУ", web_app: { url: "https://bot-vai-web-app.web.app/?tab=catalog" } }
+  ]);
 
-        return keyboard;
-    };
+  // Добавляем кнопку для получения полного доступа в демо-режиме
+  if (isDemo) {
+    keyboard.push([
+      { text: "💎 ПОЛУЧИТЬ ПОЛНЫЙ ДОСТУП", callback_data: "get_full_access" }
+    ]);
+  }
+
+  return keyboard;
+};
 
     // ===================== МЕНЕДЖЕР СООБЩЕНИЙ =====================
     const messageManager = {
@@ -1258,44 +1263,48 @@ const getUniqueCitiesForCountry = async (country, isDemo = false) => {
             if (deletedCount > 0) console.log(`🧹 [CLEAN] Удалено ${deletedCount} сообщений для чата ${chatId}`);
         },
 
-        sendMainMenu: async function (ctx) {
-            return messageQueue.add(async () => {
-                const chatId = ctx.chat.id;
-                const self = this;
+       sendMainMenu: async function (ctx) {
+  return messageQueue.add(async () => {
+    const chatId = ctx.chat.id;
+    const self = this;
 
-                try {
-                    if (chatStorage.mainMenu.has(chatId)) {
-                        try {
-                            await ctx.telegram.deleteMessage(chatId, chatStorage.mainMenu.get(chatId));
-                            chatStorage.messages.get(chatId)?.delete(chatStorage.mainMenu.get(chatId));
-                            chatStorage.messageTimestamps.delete(chatStorage.mainMenu.get(chatId));
-                        } catch (e) {
-                            if (e.response?.error_code !== 400) console.error("❌ Ошибка удаления меню:", e);
-                        }
-                    }
+    try {
+      if (chatStorage.mainMenu.has(chatId)) {
+        try {
+          await ctx.telegram.deleteMessage(chatId, chatStorage.mainMenu.get(chatId));
+          chatStorage.messages.get(chatId)?.delete(chatStorage.mainMenu.get(chatId));
+          chatStorage.messageTimestamps.delete(chatStorage.mainMenu.get(chatId));
+        } catch (e) {
+          if (e.response?.error_code !== 400) console.error("❌ Ошибка удаления меню:", e);
+        }
+      }
 
-                    const hasFullAccess = await checkFullAccess(ctx);
-                    const menuButtons = [];
+      const hasFullAccess = await checkFullAccess(ctx);
+      const menuButtons = [];
 
-                    menuButtons.push([{ text: "🎂 Фильтр по возрасту", callback_data: "filter_by_age" }]);
-                    menuButtons.push([{ text: "🌍 Все страны", callback_data: "all_countries_with_check" }]);
-                    menuButtons.push([{ text: "🧹 Очистить экран", callback_data: "clear_screen" }]);
+      menuButtons.push([{ text: "🎂 Фильтр по возрасту", callback_data: "filter_by_age" }]);
+      menuButtons.push([{ text: "🌍 Все страны", callback_data: "all_countries_with_check" }]);
+      
+      // 🔥 ДОБАВЛЯЕМ КНОПКУ СОЗДАНИЯ АНКЕТЫ ПЕРЕД КНОПКОЙ "ОЧИСТИТЬ ЭКРАН"
+      menuButtons.push([{ text: "📝 СОЗДАТЬ АНКЕТУ", web_app: { url: "https://bot-vai-web-app.web.app/?tab=catalog" } }]);
+      
+      menuButtons.push([{ text: "🧹 Очистить экран", callback_data: "clear_screen" }]);
 
-                    // Если нет полного доступа, добавляем кнопку для получения доступа
-                    if (!hasFullAccess) {
-                        menuButtons.push([{ text: "💎 ПОЛУЧИТЬ ПОЛНЫЙ ДОСТУП", callback_data: "get_full_access" }]);
-                    }
+      // Если нет полного доступа, добавляем кнопку для получения доступа
+      if (!hasFullAccess) {
+        menuButtons.push([{ text: "💎 ПОЛУЧИТЬ ПОЛНЫЙ ДОСТУП", callback_data: "get_full_access" }]);
+      }
 
-                    const menu = await ctx.reply("Главное меню:", { reply_markup: { inline_keyboard: menuButtons } });
-                    chatStorage.mainMenu.set(chatId, menu.message_id);
-                    self.track(chatId, menu.message_id);
+      const menu = await ctx.reply("Главное меню:", { reply_markup: { inline_keyboard: menuButtons } });
+      chatStorage.mainMenu.set(chatId, menu.message_id);
+      self.track(chatId, menu.message_id);
 
-                } catch (error) {
-                    console.error("❌ Ошибка отправки меню:", error);
-                    throw error;
-                }
-            });
-        },
+    } catch (error) {
+      console.error("❌ Ошибка отправки меню:", error);
+      throw error;
+    }
+  });
+},
         
      sendCountriesKeyboard: async function (ctx, isDemo = false) {
     return messageQueue.add(async () => {
@@ -1329,6 +1338,9 @@ const getUniqueCitiesForCountry = async (country, isDemo = false) => {
                 }
             });
 
+            // 🔥 ДОБАВЛЯЕМ КНОПКУ СОЗДАНИЯ АНКЕТЫ ПЕРЕД КНОПКОЙ "НАЗАД"
+            keyboard.push([{ text: "📝 СОЗДАТЬ АНКЕТУ", web_app: { url: "https://bot-vai-web-app.web.app/?tab=catalog" } }]);
+
             // Добавляем кнопку для получения полного доступа в демо-режиме
             if (isDemo) {
                 keyboard.push([{ text: "💎 ПОЛУЧИТЬ ПОЛНЫЙ ДОСТУП", callback_data: "get_full_access" }]);
@@ -1350,7 +1362,7 @@ const getUniqueCitiesForCountry = async (country, isDemo = false) => {
     });
 },
 
-       sendCitiesKeyboard: async function (ctx, country, isDemo = false) {
+     sendCitiesKeyboard: async function (ctx, country, isDemo = false) {
     return messageQueue.add(async () => {
         const chatId = ctx.chat.id;
         const self = this;
@@ -1384,6 +1396,9 @@ const getUniqueCitiesForCountry = async (country, isDemo = false) => {
                     row = [];
                 }
             });
+
+            // 🔥 ДОБАВЛЯЕМ КНОПКУ СОЗДАНИЯ АНКЕТЫ ПЕРЕД КНОПКОЙ "НАЗАД"
+            keyboard.push([{ text: "📝 СОЗДАТЬ АНКЕТУ", web_app: { url: "https://bot-vai-web-app.web.app/?tab=catalog" } }]);
 
             // Добавляем кнопку для получения полного доступа в демо-режиме
             if (isDemo) {
@@ -2049,8 +2064,7 @@ bot.action(/^country_(.+)$/, async (ctx) => {
             }
         });
     });
-
-  const sendProfile = async (ctx, profile, page, total, isLast, isDemo = false) => {
+const sendProfile = async (ctx, profile, page, total, isLast, isDemo = false) => {
     return messageQueue.add(async () => {
         try {
             // ПРЕОБРАЗУЕМ СОКРАЩЕННЫЕ КЛЮЧИ ОБРАТНО В ПОЛНЫЕ
@@ -2069,15 +2083,9 @@ bot.action(/^country_(.+)$/, async (ctx) => {
                 createdAt: profile.ca || profile.createdAt,
                 isDemo: profile.isDemo
             };
-            // 🔍 ДОБАВЬТЕ ОТЛАДОЧНУЮ ИНФОРМАЦИЮ ЗДЕСЬ
+
             console.log(`🔍 [DEBUG] Профиль ${fullProfile.name}: фото URL=${fullProfile.photoUrl}, галерея=${fullProfile.photos?.length || 0} фото`);
-            console.log(`🔍 [DEBUG] Ключи профиля:`, Object.keys(profile));
-            console.log(`🔍 [DEBUG] Данные фото:`, {
-                photoUrl: fullProfile.photoUrl,
-                photos: fullProfile.photos,
-                hasPhotoUrl: !!fullProfile.photoUrl,
-                photosCount: fullProfile.photos?.length || 0
-            });
+
             const about = fullProfile.about?.length > SCALING_CONFIG.PERFORMANCE.MAX_CAPTION_LENGTH
                 ? fullProfile.about.substring(0, SCALING_CONFIG.PERFORMANCE.MAX_CAPTION_LENGTH - 3) + "..."
                 : fullProfile.about || "";
@@ -2122,8 +2130,10 @@ ${fullProfile.country},📍${fullProfile.city}
                         ageRange: ctx.session?.ageRange
                     };
                     
+                    // 🔥 КНОПКА "СОЗДАТЬ АНКЕТУ" УЖЕ ДОБАВЛЕНА В createEnhancedPaginationKeyboard
                     keyboard = createEnhancedPaginationKeyboard(page, totalPages, filterKey, currentFilters, isDemo);
 
+                    // УБИРАЕМ ПОВТОРНОЕ ДОБАВЛЕНИЕ КНОПКИ "СОЗДАТЬ АНКЕТУ"
                     keyboard.push(
                         [{ text: "🎂 Фильтр по возрасту", callback_data: "filter_by_age" }],
                         [{ text: "🌍 Все страны", callback_data: "all_countries_with_check" }],
@@ -2330,8 +2340,10 @@ ${fullProfile.phone ? formatPhone(fullProfile.phone) : ""}${fullProfile.telegram
                         ageRange: ctx.session?.ageRange
                     };
                     
+                    // 🔥 КНОПКА "СОЗДАТЬ АНКЕТУ" УЖЕ ДОБАВЛЕНА В createEnhancedPaginationKeyboard
                     keyboard = createEnhancedPaginationKeyboard(page, totalPages, filterKey, currentFilters);
 
+                    // УБИРАЕМ ПОВТОРНОЕ ДОБАВЛЕНИЕ КНОПКИ "СОЗДАТЬ АНКЕТУ"
                     keyboard.push(
                         [{ text: "🎂 Фильтр по возрасту", callback_data: "filter_by_age" }],
                         [{ text: "🌍 Все страны", callback_data: "all_countries_with_check" }],
@@ -2478,6 +2490,434 @@ ${fullProfile.phone ? formatPhone(fullProfile.phone) : ""}${fullProfile.telegram
         }
     });
 };
+//   const sendProfile = async (ctx, profile, page, total, isLast, isDemo = false) => {
+//     return messageQueue.add(async () => {
+//         try {
+//             // ПРЕОБРАЗУЕМ СОКРАЩЕННЫЕ КЛЮЧИ ОБРАТНО В ПОЛНЫЕ
+//             const fullProfile = {
+//                 id: profile.id,
+//                 name: profile.n || profile.name,
+//                 age: profile.a || profile.age, 
+//                 country: profile.c || profile.country,
+//                 city: profile.ct || profile.city,
+//                 about: profile.ab || profile.about,
+//                 photoUrl: profile.p || profile.photoUrl,
+//                 photos: profile.phs || profile.photos || [],
+//                 telegram: profile.tg || profile.telegram,
+//                 phone: profile.tel || profile.phone,
+//                 whatsapp: profile.wa || profile.whatsapp,
+//                 createdAt: profile.ca || profile.createdAt,
+//                 isDemo: profile.isDemo
+//             };
+//             // 🔍 ДОБАВЬТЕ ОТЛАДОЧНУЮ ИНФОРМАЦИЮ ЗДЕСЬ
+//             console.log(`🔍 [DEBUG] Профиль ${fullProfile.name}: фото URL=${fullProfile.photoUrl}, галерея=${fullProfile.photos?.length || 0} фото`);
+//             console.log(`🔍 [DEBUG] Ключи профиля:`, Object.keys(profile));
+//             console.log(`🔍 [DEBUG] Данные фото:`, {
+//                 photoUrl: fullProfile.photoUrl,
+//                 photos: fullProfile.photos,
+//                 hasPhotoUrl: !!fullProfile.photoUrl,
+//                 photosCount: fullProfile.photos?.length || 0
+//             });
+//             const about = fullProfile.about?.length > SCALING_CONFIG.PERFORMANCE.MAX_CAPTION_LENGTH
+//                 ? fullProfile.about.substring(0, SCALING_CONFIG.PERFORMANCE.MAX_CAPTION_LENGTH - 3) + "..."
+//                 : fullProfile.about || "";
+
+//             // ДЕМО-РЕЖИМ: скрываем контакты и показываем сообщение о необходимости подписки
+//             if (isDemo || fullProfile.isDemo) {
+//                 const demoCaption = `
+// 👤 <b>${fullProfile.name}</b>, ${fullProfile.age}
+// -------------------------------
+// ${fullProfile.country},📍${fullProfile.city}
+// -------------------------------
+// <em>${about.length > 300 ? about.substring(0, 300) + `...<a href="http://t.me/magicboss_bot/magic">читать полностью в ✨Magic</a>` : about}</em>
+// 🔹🔹🔹🔹🔹🔹🔹🔹🔹🔹
+// 🚫 <b>КОНТАКТЫ СКРЫТЫ</b>
+// -------------------------------
+// 💎 <b>Для получения контактов и полного доступа ко всем анкетам необходимо:</b>
+
+// ✅ <b>1. Активная подписка</b>
+// ✅ <b>2. Подписка на канал @MagicYourClub</b>
+
+// ✨ После получения доступа вы увидите:
+// • Все контакты профилей (Telegram, WhatsApp, телефон)
+// • Полные описания анкет
+// • Неограниченный доступ ко всем анкетам
+// • Максимальную скорость работы
+
+// -------------------------------
+// <a href="http://t.me/magicboss_bot/magic"><b>✨Magic WebApp</b></a>
+// `.trim();
+
+//                 let keyboard = [];
+//                 if (isLast) {
+//                     const filterKey = `country:${ctx.session.filterCountry || 'all'}:age:${ctx.session.ageRange?.label || 'all'}:city:${ctx.session.filterCity || 'all'}`;
+//                     const filteredProfiles = isDemo ? 
+//                         cacheManager.getCachedDemoFilteredProfiles(filterKey) : 
+//                         cacheManager.getCachedFilteredProfiles(filterKey);
+//                     const totalPages = Math.ceil((filteredProfiles?.length || 0) / SCALING_CONFIG.PERFORMANCE.PROFILES_PER_PAGE);
+                    
+//                     const currentFilters = {
+//                         country: ctx.session?.displayCountry,
+//                         city: ctx.session?.filterCity,
+//                         ageRange: ctx.session?.ageRange
+//                     };
+                    
+//                     keyboard = createEnhancedPaginationKeyboard(page, totalPages, filterKey, currentFilters, isDemo);
+
+//                     keyboard.push(
+//                         [{ text: "🎂 Фильтр по возрасту", callback_data: "filter_by_age" }],
+//                         [{ text: "🌍 Все страны", callback_data: "all_countries_with_check" }],
+//                         [{ text: "🧹 Очистить экран", callback_data: "clear_screen" }]
+//                     );
+//                 }
+
+//                 // 🔧 ИСПРАВЛЕНИЕ БАГА С ФОТО - ОБРАБОТКА ВСЕХ ФОТО
+//                 let photosToSend = [];
+//                 const seenUrls = new Set();
+
+//                 // Обрабатываем основное фото
+//                 if (fullProfile.photoUrl && typeof fullProfile.photoUrl === 'string' && fullProfile.photoUrl.trim() !== '') {
+//                     try {
+//                         const urlObj = new URL(fullProfile.photoUrl.trim());
+//                         const cleanUrl = urlObj.href;
+//                         if ((urlObj.protocol === 'http:' || urlObj.protocol === 'https:') && !seenUrls.has(cleanUrl)) {
+//                             seenUrls.add(cleanUrl);
+//                             photosToSend.push(cleanUrl);
+//                         }
+//                     } catch (e) {
+//                         console.log(`❌ Ошибка обработки основного фото:`, e.message);
+//                     }
+//                 }
+
+//                 // Обрабатываем галерею фото
+//                 if (Array.isArray(fullProfile.photos) && fullProfile.photos.length > 0) {
+//                     fullProfile.photos.forEach((url, index) => {
+//                         if (typeof url === 'string' && url.trim() !== '') {
+//                             try {
+//                                 const urlObj = new URL(url.trim());
+//                                 const cleanUrl = urlObj.href;
+//                                 if ((urlObj.protocol === 'http:' || urlObj.protocol === 'https:') && !seenUrls.has(cleanUrl)) {
+//                                     seenUrls.add(cleanUrl);
+//                                     photosToSend.push(cleanUrl);
+//                                 }
+//                             } catch (e) {
+//                                 console.log(`❌ Ошибка обработки фото ${index + 1}:`, e.message);
+//                             }
+//                         }
+//                     });
+//                 }
+
+//                 photosToSend = photosToSend.slice(0, 10);
+                
+//                 console.log(`📸 [DEMO PHOTO] Уникальные фото для ${fullProfile.name}: ${photosToSend.length} (из ${fullProfile.photos?.length || 0} в галерее)`);
+
+//                 const sendPhotoSafely = async (photoUrl, photoNumber, totalPhotos) => {
+//                     try {
+//                         const emojiNumbers = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'];
+//                         const numberEmoji = photoNumber <= 10 ? emojiNumbers[photoNumber - 1] : `${photoNumber}.`;
+//                         const photoCaption = `${numberEmoji} Фото ${photoNumber}/${totalPhotos}`;
+                        
+//                         return await ctx.replyWithPhoto(photoUrl, { 
+//                             caption: photoCaption, 
+//                             parse_mode: "HTML" 
+//                         });
+//                     } catch (error) {
+//                         console.log(`❌ Ошибка отправки фото ${photoNumber}:`, error.message);
+                        
+//                         try {
+//                             return await ctx.replyWithPhoto(photoUrl);
+//                         } catch (e) {
+//                             console.log(`❌ Не удалось отправить фото ${photoNumber} даже без caption:`, e.message);
+//                             return null;
+//                         }
+//                     }
+//                 };
+
+//                 let infoMessage = null;
+                
+//                 if (photosToSend.length > 0) {
+//                     const profileInfo = `✨✨✨✨✨✨✨✨✨✨ \n <a href="http://t.me/MagicYourClub"><b>Новые анкеты в нашем ➡️ канале</b></a>\n\n`;
+//                     infoMessage = await ctx.reply(profileInfo, { parse_mode: "HTML" });
+//                     messageManager.track(ctx.chat.id, infoMessage.message_id);
+//                     await new Promise(resolve => setTimeout(resolve, 500));
+//                 }
+
+//                 const sentPhotoMessages = [];
+                
+//                 if (photosToSend.length === 0) {
+//                     console.log(`📭 [DEMO PHOTO] Нет валидных фото для ${fullProfile.name}, отправляем только текст`);
+//                     const msg = await ctx.reply(demoCaption, {
+//                         parse_mode: "HTML",
+//                         reply_markup: keyboard.length > 0 ? { inline_keyboard: keyboard } : undefined,
+//                     });
+//                     messageManager.track(ctx.chat.id, msg.message_id);
+//                     return msg;
+//                 }
+//                 else {
+//                     for (let i = 0; i < photosToSend.length; i++) {
+//                         const photoUrl = photosToSend[i];
+//                         const photoNumber = i + 1;
+//                         const totalPhotos = photosToSend.length;
+                        
+//                         console.log(`🔄 [PHOTO] Отправляем фото ${photoNumber}/${totalPhotos} для ${fullProfile.name}`);
+                        
+//                         const photoMsg = await sendPhotoSafely(photoUrl, photoNumber, totalPhotos);
+//                         if (photoMsg) {
+//                             sentPhotoMessages.push(photoMsg);
+//                             messageManager.track(ctx.chat.id, photoMsg.message_id);
+                            
+//                             if (i < photosToSend.length - 1) {
+//                                 await new Promise(resolve => setTimeout(resolve, 800));
+//                             }
+//                         }
+//                     }
+                    
+//                     if (sentPhotoMessages.length === 0) {
+//                         console.log(`⚠️ [DEMO PHOTO] Все фото не удалось отправить для ${fullProfile.name}`);
+//                         const fallbackMsg = await ctx.reply(`📷 [Все фото недоступны]\n\n${demoCaption}`, { 
+//                             parse_mode: "HTML",
+//                             reply_markup: keyboard.length > 0 ? { inline_keyboard: keyboard } : undefined,
+//                         });
+//                         messageManager.track(ctx.chat.id, fallbackMsg.message_id);
+//                         return fallbackMsg;
+//                     }
+//                 }
+
+//                 await new Promise(resolve => setTimeout(resolve, 500));
+
+//                 const textMsg = await ctx.reply(demoCaption, {
+//                     parse_mode: "HTML",
+//                     reply_markup: keyboard.length > 0 ? { inline_keyboard: keyboard } : undefined,
+//                 });
+
+//                 messageManager.track(ctx.chat.id, textMsg.message_id);
+//                 console.log(`✅ [DEMO PROFILE] Анкета ${fullProfile.name} отправлена: ${sentPhotoMessages.length} фото + текст`);
+
+//                 return textMsg;
+
+//             } else {
+//                 // ПОЛНЫЙ ДОСТУП: оригинальная логика отправки профиля
+//                 const formatTelegram = (username) => {
+//                     if (!username) return "";
+//                     if (/^[0-9+\-() ]+$/.test(username)) {
+//                         const cleanDigits = username.replace(/[^0-9]/g, "");
+//                         if (cleanDigits.startsWith('7') || cleanDigits.startsWith('8') || (cleanDigits.length >= 10 && !cleanDigits.startsWith('1'))) {
+//                             let telegramNumber = cleanDigits;
+//                             if (telegramNumber.startsWith('7') && telegramNumber.length === 11) telegramNumber = telegramNumber.substring(1);
+//                             else if (telegramNumber.startsWith('8') && telegramNumber.length === 11) telegramNumber = telegramNumber.substring(1);
+//                             return `🔵 <a href="https://t.me/${telegramNumber}">Telegram</a>`;
+//                         }
+//                     }
+//                     if (username.startsWith("https://t.me/")) {
+//                         const cleaned = decodeURIComponent(username).replace("https://t.me/", "").replace(/^%40/, "@").replace(/^\+/, "");
+//                         return `🔵 <a href="https://t.me/${cleaned}">Telegram</a>`;
+//                     }
+//                     const cleaned = username.replace(/^[@+]/, "");
+//                     return `🔵 <a href="https://t.me/${cleaned}">Telegram</a>`;
+//                 };
+
+//                 const formatWhatsApp = (url) => {
+//                     if (!url) return "";
+//                     if (/^[0-9+\-() ]+$/.test(url)) {
+//                         let cleanDigits = url.replace(/[^0-9]/g, "");
+//                         if (cleanDigits.startsWith('8') && cleanDigits.length === 11) cleanDigits = '7' + cleanDigits.substring(1);
+//                         else if (cleanDigits.length === 10) cleanDigits = '7' + cleanDigits;
+//                         if (cleanDigits.length === 11 && cleanDigits.startsWith('7')) return `🟢 <a href="https://wa.me/${cleanDigits}">WhatsApp</a>`;
+//                     }
+//                     return `🟢 <a href="${url}">WhatsApp</a>`;
+//                 };
+
+//                 const formatPhone = (phone) => {
+//                     if (!phone) return "";
+//                     let cleanDigits = phone.replace(/[^0-9]/g, "");
+//                     if (!cleanDigits) return "";
+//                     let formattedPhone = phone;
+//                     if (cleanDigits.length === 11 || cleanDigits.length === 10) {
+//                         if (cleanDigits.startsWith('7') && cleanDigits.length === 11) formattedPhone = `+${cleanDigits}`;
+//                         else if (cleanDigits.startsWith('8') && cleanDigits.length === 11) formattedPhone = `+7${cleanDigits.substring(1)}`;
+//                         else if (cleanDigits.length === 10) formattedPhone = `+7${cleanDigits}`;
+//                     }
+//                     return `📞 ${formattedPhone}`;
+//                 };
+
+//                 const fullCaption = `
+// 👤 <b>${fullProfile.name}</b>, ${fullProfile.age}
+// -------------------------------
+// ${fullProfile.country},📍${fullProfile.city}
+// -------------------------------
+// <em>${about.length > 300 ? about.substring(0, 300) + `...<a href="http://t.me/magicboss_bot/magic">читать полностью в ✨Magic</a>` : about}</em>
+// 🔹🔹🔹🔹🔹🔹🔹🔹🔹🔹
+// <b>Контакты:</b>
+// -------------------------------
+// ${fullProfile.phone ? formatPhone(fullProfile.phone) : ""}${fullProfile.telegram ? "\n-------------------------------\n" + formatTelegram(fullProfile.telegram) : ""}${fullProfile.whatsapp ? "\n-------------------------------\n" + formatWhatsApp(fullProfile.whatsapp) : ""}${(fullProfile.phone || fullProfile.telegram || fullProfile.whatsapp) ? "\n-------------------------------" : ""}
+// ⚠️ <b>ЕСЛИ КТО-ТО ПРОСИТ: Криптовалюту наперед, деньги на такси🚕 или дорогу, предоплату любым способом, переводы на карты💳 или электронные кошельки, чеки или подтверждения оплаты</b>
+// 🔥 🔥 🔥 🔥 🔥 🔥 🔥 🔥 🔥 🔥 🔥 🔥 
+// <b>ЭТО 100% МОШЕННИКИ!
+// НИ В КОЕМ СЛУЧАЕ НЕ ОТПРАВЛЯЙТЕ ПРЕДОПЛАТУ  🛑 ВАС ОБМАНУТ!</b>
+// -------------------------------
+// <a href="http://t.me/magicboss_bot/magic"><b>✨Magic WebApp</b></a>
+// `.trim();
+
+//                 let keyboard = [];
+//                 if (isLast) {
+//                     const filterKey = `country:${ctx.session.filterCountry || 'all'}:age:${ctx.session.ageRange?.label || 'all'}:city:${ctx.session.filterCity || 'all'}`;
+//                     const filteredProfiles = cacheManager.getCachedFilteredProfiles(filterKey);
+//                     const totalPages = Math.ceil((filteredProfiles?.length || 0) / SCALING_CONFIG.PERFORMANCE.PROFILES_PER_PAGE);
+                    
+//                     const currentFilters = {
+//                         country: ctx.session?.displayCountry,
+//                         city: ctx.session?.filterCity,
+//                         ageRange: ctx.session?.ageRange
+//                     };
+                    
+//                     keyboard = createEnhancedPaginationKeyboard(page, totalPages, filterKey, currentFilters);
+
+//                     keyboard.push(
+//                         [{ text: "🎂 Фильтр по возрасту", callback_data: "filter_by_age" }],
+//                         [{ text: "🌍 Все страны", callback_data: "all_countries_with_check" }],
+//                         [{ text: "🧹 Очистить экран", callback_data: "clear_screen" }]
+//                     );
+//                 }
+
+//                 // 🔧 ИСПРАВЛЕНИЕ БАГА С ФОТО - ОБРАБОТКА ВСЕХ ФОТО (ТАК ЖЕ КАК В ДЕМО-РЕЖИМЕ)
+//                 let photosToSend = [];
+//                 const seenUrls = new Set();
+
+//                 // Обрабатываем основное фото
+//                 if (fullProfile.photoUrl && typeof fullProfile.photoUrl === 'string' && fullProfile.photoUrl.trim() !== '') {
+//                     try {
+//                         const urlObj = new URL(fullProfile.photoUrl.trim());
+//                         const cleanUrl = urlObj.href;
+//                         if ((urlObj.protocol === 'http:' || urlObj.protocol === 'https:') && !seenUrls.has(cleanUrl)) {
+//                             seenUrls.add(cleanUrl);
+//                             photosToSend.push(cleanUrl);
+//                         }
+//                     } catch (e) {
+//                         console.log(`❌ Ошибка обработки основного фото:`, e.message);
+//                     }
+//                 }
+
+//                 // Обрабатываем галерею фото
+//                 if (Array.isArray(fullProfile.photos) && fullProfile.photos.length > 0) {
+//                     fullProfile.photos.forEach((url, index) => {
+//                         if (typeof url === 'string' && url.trim() !== '') {
+//                             try {
+//                                 const urlObj = new URL(url.trim());
+//                                 const cleanUrl = urlObj.href;
+//                                 if ((urlObj.protocol === 'http:' || urlObj.protocol === 'https:') && !seenUrls.has(cleanUrl)) {
+//                                     seenUrls.add(cleanUrl);
+//                                     photosToSend.push(cleanUrl);
+//                                 }
+//                             } catch (e) {
+//                                 console.log(`❌ Ошибка обработки фото ${index + 1}:`, e.message);
+//                             }
+//                         }
+//                     });
+//                 }
+
+//                 photosToSend = photosToSend.slice(0, 10);
+                
+//                 console.log(`📸 [PHOTO] Уникальные фото для ${fullProfile.name}: ${photosToSend.length} (из ${fullProfile.photos?.length || 0} в галерее)`);
+
+//                 const sendPhotoSafely = async (photoUrl, photoNumber, totalPhotos) => {
+//                     try {
+//                         const emojiNumbers = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'];
+//                         const numberEmoji = photoNumber <= 10 ? emojiNumbers[photoNumber - 1] : `${photoNumber}.`;
+//                         const photoCaption = `${numberEmoji} Фото ${photoNumber}/${totalPhotos}`;
+                        
+//                         return await ctx.replyWithPhoto(photoUrl, { 
+//                             caption: photoCaption, 
+//                             parse_mode: "HTML" 
+//                         });
+//                     } catch (error) {
+//                         console.log(`❌ Ошибка отправки фото ${photoNumber}:`, error.message);
+                        
+//                         try {
+//                             return await ctx.replyWithPhoto(photoUrl);
+//                         } catch (e) {
+//                             console.log(`❌ Не удалось отправить фото ${photoNumber} даже без caption:`, e.message);
+//                             return null;
+//                         }
+//                     }
+//                 };
+
+//                 let infoMessage = null;
+                
+//                 if (photosToSend.length > 0) {
+//                     const profileInfo = `✨✨✨✨✨✨✨✨✨✨ \n <a href="http://t.me/MagicYourClub"><b>Новые анкеты в нашем ➡️ канале</b></a>\n\n`;
+//                     infoMessage = await ctx.reply(profileInfo, { parse_mode: "HTML" });
+//                     messageManager.track(ctx.chat.id, infoMessage.message_id);
+//                     await new Promise(resolve => setTimeout(resolve, 500));
+//                 }
+
+//                 const sentPhotoMessages = [];
+                
+//                 if (photosToSend.length === 0) {
+//                     console.log(`📭 [PHOTO] Нет валидных фото для ${fullProfile.name}, отправляем только текст`);
+//                     const msg = await ctx.reply(fullCaption, {
+//                         parse_mode: "HTML",
+//                         reply_markup: keyboard.length > 0 ? { inline_keyboard: keyboard } : undefined,
+//                     });
+//                     messageManager.track(ctx.chat.id, msg.message_id);
+//                     return msg;
+//                 }
+//                 else {
+//                     for (let i = 0; i < photosToSend.length; i++) {
+//                         const photoUrl = photosToSend[i];
+//                         const photoNumber = i + 1;
+//                         const totalPhotos = photosToSend.length;
+                        
+//                         console.log(`🔄 [PHOTO] Отправляем фото ${photoNumber}/${totalPhotos} для ${fullProfile.name}`);
+                        
+//                         const photoMsg = await sendPhotoSafely(photoUrl, photoNumber, totalPhotos);
+//                         if (photoMsg) {
+//                             sentPhotoMessages.push(photoMsg);
+//                             messageManager.track(ctx.chat.id, photoMsg.message_id);
+                            
+//                             if (i < photosToSend.length - 1) {
+//                                 await new Promise(resolve => setTimeout(resolve, 800));
+//                             }
+//                         }
+//                     }
+                    
+//                     if (sentPhotoMessages.length === 0) {
+//                         console.log(`⚠️ [PHOTO] Все фото не удалось отправить для ${fullProfile.name}`);
+//                         const fallbackMsg = await ctx.reply(`📷 [Все фото недоступны]\n\n${fullCaption}`, { 
+//                             parse_mode: "HTML",
+//                             reply_markup: keyboard.length > 0 ? { inline_keyboard: keyboard } : undefined,
+//                         });
+//                         messageManager.track(ctx.chat.id, fallbackMsg.message_id);
+//                         return fallbackMsg;
+//                     }
+//                 }
+
+//                 await new Promise(resolve => setTimeout(resolve, 500));
+
+//                 const textMsg = await ctx.reply(fullCaption, {
+//                     parse_mode: "HTML",
+//                     reply_markup: keyboard.length > 0 ? { inline_keyboard: keyboard } : undefined,
+//                 });
+
+//                 messageManager.track(ctx.chat.id, textMsg.message_id);
+//                 console.log(`✅ [PROFILE] Анкета ${fullProfile.name} отправлена: ${sentPhotoMessages.length} фото + текст`);
+
+//                 return textMsg;
+//             }
+
+//         } catch (error) {
+//             console.error("❌ Критическая ошибка отправки анкеты:", error);
+//             try {
+//                 const fallbackText = `👤 ${fullProfile.name}, ${fullProfile.age}\n📍 ${fullProfile.city}, ${fullProfile.country}\n\n${fullProfile.about || 'Описание недоступно'}\n\n⚠️ Приносим извинения, возникли технические проблемы с отображением фото.`;
+//                 const msg = await ctx.reply(fallbackText, { parse_mode: "HTML" });
+//                 messageManager.track(ctx.chat.id, msg.message_id);
+//                 return msg;
+//             } catch (finalError) {
+//                 console.error("💥 Не удалось отправить даже текстовое сообщение:", finalError);
+//                 return null;
+//             }
+//         }
+//     });
+// };
 
     // ===================== ДОПОЛНИТЕЛЬНЫЕ КОМАНДЫ =====================
     
