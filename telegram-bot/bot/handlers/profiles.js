@@ -402,47 +402,56 @@ getCachedProfiles(isDemo = false) {
     }
 },
     // ФУНКЦИЯ СОЗДАНИЯ ДЕМО-КЭША (1 анкета на город)
-    async createDemoCache(profiles) {
-        try {
-            console.log(`🔄 [DEMO CACHE] Создание демо-кэша из ${profiles.length} анкет...`);
+    // profiles.js - ИСПРАВЛЕННАЯ функция createDemoCache
+async createDemoCache(profiles) {
+    try {
+        console.log(`🔄 [DEMO CACHE] Создание демо-кэша из ${profiles.length} анкет...`);
+        
+        // 🔥 ИЗМЕНЕНИЕ: 3 анкеты на город вместо 1
+        const demoProfiles = [];
+        const citiesCounter = new Map(); // Счетчик для каждого города
+        
+        profiles.forEach(profile => {
+            const normalizedCity = this.normalizeCityName(profile.city);
+            const cityKey = `${profile.country}_${normalizedCity}`;
             
-            // Создаем демо-профили: 1 анкета на город
-            const demoProfiles = [];
-            const seenCities = new Set();
+            // Инициализируем счетчик для города если нужно
+            if (!citiesCounter.has(cityKey)) {
+                citiesCounter.set(cityKey, 0);
+            }
             
-            profiles.forEach(profile => {
-                const normalizedCity = this.normalizeCityName(profile.city);
-                const cityKey = `${profile.country}_${normalizedCity}`;
+            const currentCount = citiesCounter.get(cityKey);
+            
+            // 🔥 ИЗМЕНЕНИЕ: Берем до 3 анкет на город
+            if (currentCount < 3) {
+                citiesCounter.set(cityKey, currentCount + 1);
                 
-                if (!seenCities.has(cityKey)) {
-                    seenCities.add(cityKey);
-                    // Создаем демо-профиль с скрытыми контактами
-                    const demoProfile = {
-                        ...profile,
-                        city: normalizedCity,
-                        about: replaceSitesInAbout(profile.about),
-                        // Заменяем контакты на сообщение о необходимости подписки
-                        phone: null,
-                        telegram: null,
-                        whatsapp: null,
-                        isDemo: true // Маркер демо-профиля
-                    };
-                    demoProfiles.push(demoProfile);
-                }
-            });
-            
-            await this.cacheProfiles(demoProfiles, true);
-            
-            console.log(`✅ [DEMO CACHE] Создан демо-кэш: ${demoProfiles.length} профилей`);
-            
-            return demoProfiles;
-            
-        } catch (error) {
-            console.error('❌ [DEMO CACHE] Ошибка создания демо-кэша:', error);
-            return [];
-        }
-    },
-
+                // Создаем демо-профиль с скрытыми контактами
+                const demoProfile = {
+                    ...profile,
+                    city: normalizedCity,
+                    about: replaceSitesInAbout(profile.about),
+                    // Заменяем контакты на сообщение о необходимости подписки
+                    phone: null,
+                    telegram: null,
+                    whatsapp: null,
+                    isDemo: true // Маркер демо-профиля
+                };
+                demoProfiles.push(demoProfile);
+            }
+        });
+        
+        await this.cacheProfiles(demoProfiles, true);
+        
+        console.log(`✅ [DEMO CACHE] Создан демо-кэш: ${demoProfiles.length} профилей из ${citiesCounter.size} городов`);
+        
+        return demoProfiles;
+        
+    } catch (error) {
+        console.error('❌ [DEMO CACHE] Ошибка создания демо-кэша:', error);
+        return [];
+    }
+},
     normalizeCityName(cityName) {
         if (!cityName || typeof cityName !== 'string') return cityName;
         const trimmedCity = cityName.trim();
@@ -1349,7 +1358,7 @@ const createEnhancedPaginationKeyboard = (currentPage, totalPages, filterKey, cu
             keyboard.push([{ text: "🔙 Назад", callback_data: "back_to_menu" }]);
 
             const msgText = isDemo ? 
-                "👀 ДЕМО-РЕЖИМ: Выберите страну (показано по 1 анкете на город)\n\n💎 Для полного доступа Вы должны быть подписаны на наш канал @MagicYourClub и оплатить подписку" : 
+                "👀 ДЕМО-РЕЖИМ: Выберите страну (показано по 3 анкеты на город)\n\n💎 Для полного доступа Вы должны быть подписаны на наш канал @MagicYourClub и оплатить подписку" : 
                 "Выберите страну:";
 
             const msg = await ctx.reply(msgText, { reply_markup: { inline_keyboard: keyboard } });
@@ -1408,7 +1417,7 @@ const createEnhancedPaginationKeyboard = (currentPage, totalPages, filterKey, cu
             keyboard.push([{ text: "🔙 Назад к странам", callback_data: "back_to_countries" }]);
 
             const msgText = isDemo ?
-                `👀 ДЕМО-РЕЖИМ: Выберите город в ${country} (показано по 1 анкете на город)\n\n💎 Для полного доступа ко всем анкетам получите подписку!` :
+                `👀 ДЕМО-РЕЖИМ: Выберите город в ${country} (показано по 3 анкеты на город)\n\n💎 Для полного доступа ко всем анкетам получите подписку!` :
                 `🏙️ Выберите город в ${country}:`;
 
             const msg = await ctx.reply(msgText, { 
