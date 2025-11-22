@@ -774,7 +774,7 @@ module.exports = (bot, db) => {
             
             const snapshot = await db.collection("profiles")
                 .orderBy("createdAt", "desc")
-                .limit(10000) // 🔥 ДОБАВИТЬ ЛИМИТ
+                
                 .select("id", "name", "age", "country", "city", "about", "photoUrl", "telegram", "phone", "whatsapp", "photos", "createdAt")
                 .get();
 
@@ -1059,27 +1059,29 @@ const getUniqueCountries = async (isDemo = false) => {
     }
 };
 
+
 // ФУНКЦИЯ ДЛЯ ПОЛУЧЕНИЯ ГОРОДОВ
 const getUniqueCitiesForCountry = async (country, isDemo = false) => {
     try {
         const cachedCities = cacheManager.getCachedCities(country, isDemo);
         if (cachedCities && cachedCities.length > 0) {
+            console.log(`✅ [CITIES] Города из кэша для ${country}: ${cachedCities.length}`);
             return cachedCities;
         }
         
-        // Если в кэше нет, используем быстрый запрос
-        console.log(`🔍 Быстрая загрузка городов для: ${country} (демо: ${isDemo})`);
+        console.log(`🔍 Загрузка ВСЕХ городов для: ${country} (демо: ${isDemo})`);
         
-        // Ограничиваем количество городов для быстрого ответа
-        const quickSnapshot = await db.collection("profiles")
+        // ЗАГРУЖАЕМ ВСЕ ГОРОДА БЕЗ ОГРАНИЧЕНИЙ
+        const snapshot = await db.collection("profiles")
             .where("country", "==", country)
             .select("city")
-            .limit(100) // Увеличили лимит для лучшего покрытия
             .get();
 
         const citiesSet = new Set();
+        let processedCount = 0;
         
-        quickSnapshot.forEach(doc => {
+        snapshot.forEach(doc => {
+            processedCount++;
             const data = doc.data();
             if (data.city && data.city.trim() !== "") {
                 const normalizedCity = cacheManager.normalizeCityName(data.city.trim());
@@ -1087,42 +1089,17 @@ const getUniqueCitiesForCountry = async (country, isDemo = false) => {
             }
         });
 
-        const quickCities = Array.from(citiesSet).sort();
-        console.log(`✅ Быстрая загрузка: ${quickCities.length} городов для ${country}`);
+        const allCities = Array.from(citiesSet).sort();
+        console.log(`✅ [CITIES] Загружено городов для ${country}: ${allCities.length} (обработано ${processedCount} записей)`);
         
-        // Полную загрузку делаем в фоне
-        setTimeout(async () => {
-            try {
-                const fullSnapshot = await db.collection("profiles")
-                    .where("country", "==", country)
-                    .select("city")
-                    .get();
-
-                const fullCitiesSet = new Set();
-                
-                fullSnapshot.forEach(doc => {
-                    const data = doc.data();
-                    if (data.city && data.city.trim() !== "") {
-                        const normalizedCity = cacheManager.normalizeCityName(data.city.trim());
-                        fullCitiesSet.add(normalizedCity);
-                    }
-                });
-
-                const fullCities = Array.from(fullCitiesSet).sort();
-                console.log(`✅ Фоновая загрузка: ${fullCities.length} городов для ${country}`);
-                
-                // Сохраняем в кэш
-                if (isDemo) {
-                    demoCache.set(`demo:cities:${country}`, fullCities);
-                } else {
-                    profilesCache.set(`profiles:cities:${country}`, fullCities);
-                }
-            } catch (error) {
-                console.error(`❌ Ошибка фоновой загрузки городов для ${country}:`, error);
-            }
-        }, 100);
+        // Сохраняем в кэш
+        if (isDemo) {
+            demoCache.set(`demo:cities:${country}`, allCities);
+        } else {
+            profilesCache.set(`profiles:cities:${country}`, allCities);
+        }
         
-        return quickCities; // Сразу возвращаем быстрый результат
+        return allCities;
         
     } catch (error) {
         console.error(`❌ Ошибка загрузки городов для ${country}:`, error);
@@ -1400,7 +1377,13 @@ const createEnhancedPaginationKeyboard = (currentPage, totalPages, filterKey, cu
                 }
             }
 
+            // ПОКАЗЫВАЕМ ПРЕЛОАДЕР ПЕРЕД ЗАГРУЗКОЙ ГОРОДОВ
+            const preloaderMsg = await sendPreloader(ctx, 'profiles');
+            
             const cities = await getUniqueCitiesForCountry(country, isDemo);
+            
+            // УДАЛЯЕМ ПРЕЛОАДЕР ПОСЛЕ ЗАГРУЗКИ
+            await removePreloader(ctx, preloaderMsg);
             
             if (!cities || cities.length === 0) {
                 const msg = await ctx.reply(`❌ Для страны "${country}" нет доступных городов`);
@@ -1408,33 +1391,88 @@ const createEnhancedPaginationKeyboard = (currentPage, totalPages, filterKey, cu
                 return;
             }
 
+            console.log(`🏙️ [CITIES] Показано городов для ${country}: ${cities.length}`);
+
             const keyboard = [];
             let row = [];
 
-            cities.forEach((city, index) => {
-                row.push({ text: city, callback_data: `city_${city}` });
-                if (row.length === 3 || index === cities.length - 1) {
-                    keyboard.push(row);
-                    row = [];
+            // СОЗДАЕМ ПАГИНАЦИЮ ДЛЯ ГОРОДОВ ЕСЛИ ИХ МНОГО
+            const citiesPerPage = 50; // Городов на страницу
+            let currentPage = 0;
+            const totalPages = Math.ceil(cities.length / citiesPerPage);
+
+            // Функция для создания клавиатуры с пагинацией
+            const createCitiesKeyboard = (page) => {
+                const startIndex = page * citiesPerPage;
+                const endIndex = Math.min(startIndex + citiesPerPage, cities.length);
+                const pageCities = cities.slice(startIndex, endIndex);
+                
+                const keyboard = [];
+                let row = [];
+
+                pageCities.forEach((city, index) => {
+                    row.push({ text: city, callback_data: `city_${city}` });
+                    if (row.length === 3 || index === pageCities.length - 1) {
+                        keyboard.push(row);
+                        row = [];
+                    }
+                });
+
+                // ДОБАВЛЯЕМ ПАГИНАЦИЮ ЕСЛИ НУЖНО
+                const paginationRow = [];
+                if (totalPages > 1) {
+                    if (page > 0) {
+                        paginationRow.push({ 
+                            text: "◀️ Предыдущие", 
+                            callback_data: `cities_page_${country}_${page - 1}` 
+                        });
+                    }
+                    
+                    paginationRow.push({ 
+                        text: `${page + 1}/${totalPages}`, 
+                        callback_data: "cities_page_info" 
+                    });
+                    
+                    if (page < totalPages - 1) {
+                        paginationRow.push({ 
+                            text: "Следующие ▶️", 
+                            callback_data: `cities_page_${country}_${page + 1}` 
+                        });
+                    }
+                    
+                    if (paginationRow.length > 0) {
+                        keyboard.push(paginationRow);
+                    }
                 }
-            });
 
-            // 🔥 ДОБАВЛЯЕМ КНОПКУ СОЗДАНИЯ АНКЕТЫ ПЕРЕД КНОПКОЙ "НАЗАД"
-            keyboard.push([{ text: "📝 СОЗДАТЬ АНКЕТУ", web_app: { url: "https://bot-vai-web-app.web.app/?tab=catalog" } }]);
+                // 🔥 КНОПКА СОЗДАНИЯ АНКЕТЫ
+                keyboard.push([{ 
+                    text: "📝 СОЗДАТЬ АНКЕТУ", 
+                    web_app: { url: "https://bot-vai-web-app.web.app/?tab=catalog" } 
+                }]);
 
-            // Добавляем кнопку для получения полного доступа в демо-режиме
-            if (isDemo) {
-                keyboard.push([{ text: "💎 ПОЛУЧИТЬ ПОЛНЫЙ ДОСТУП", callback_data: "get_full_access" }]);
-            }
+                // КНОПКА ДОСТУПА В ДЕМО-РЕЖИМЕ
+                if (isDemo) {
+                    keyboard.push([{ 
+                        text: "💎 ПОЛУЧИТЬ ПОЛНЫЙ ДОСТУП", 
+                        callback_data: "get_full_access" 
+                    }]);
+                }
 
-            keyboard.push([{ text: "🔙 Назад к странам", callback_data: "back_to_countries" }]);
+                keyboard.push([{ 
+                    text: "🔙 Назад к странам", 
+                    callback_data: "back_to_countries" 
+                }]);
+
+                return keyboard;
+            };
 
             const msgText = isDemo ?
-                `👀 ДЕМО-РЕЖИМ: Выберите город в ${country} (показано по 3 анкеты на город)\n\n💎 Для полного доступа ко всем анкетам получите подписку!` :
-                `🏙️ Выберите город в ${country}:`;
+                `👀 ДЕМО-РЕЖИМ: Выберите город в ${country} (${cities.length} городов, показано по 3 анкеты на город)\n\n💎 Для полного доступа ко всем анкетам получите подписку!` :
+                `🏙️ Выберите город в ${country} (всего ${cities.length} городов):`;
 
             const msg = await ctx.reply(msgText, { 
-                reply_markup: { inline_keyboard: keyboard } 
+                reply_markup: { inline_keyboard: createCitiesKeyboard(currentPage) } 
             });
             
             chatStorage.cityKeyboard.set(chatId, msg.message_id);
@@ -1697,7 +1735,7 @@ bot.action(/^country_(.+)$/, async (ctx) => {
 
                 `📍 <b>Город:</b> ${city}\n` +
                 `🌍 <b>Страна:</b> ${ctx.session.filterCountry}\n` +
-                `👀 <b>Режим:</b> ${isDemo ? 'Демо (1 анкета на город)' : 'Полный доступ'}`,
+                `👀 <b>Режим:</b> ${isDemo ? 'Демо (3 анкеты на город)' : 'Полный доступ'}`,
                 { parse_mode: "HTML" }
             );
             messageManager.track(ctx.chat.id, foundMsg.message_id);
@@ -1744,7 +1782,122 @@ bot.action(/^country_(.+)$/, async (ctx) => {
         }
     });
 });
+// ОБРАБОТЧИК ПАГИНАЦИИ ГОРОДОВ
+bot.action(/^cities_page_(.+)_(\d+)$/, async (ctx) => {
+    const userId = ctx.from.id;
+    
+    if (!acquireUserLock(userId, 2000)) {
+        await ctx.answerCbQuery("⏳ Подождите, обрабатываем предыдущий запрос...");
+        return;
+    }
+    
+    await messageQueue.add(async () => {
+        try {
+            const [_, country, page] = ctx.match;
+            const pageNum = parseInt(page);
+            
+            // ПРОВЕРЯЕМ И ОБНОВЛЯЕМ КЭШ
+            const cacheType = await ensureProperCache(ctx);
+            const isDemo = cacheType === 'demo';
+            
+            const cities = await getUniqueCitiesForCountry(country, isDemo);
+            
+            if (!cities || cities.length === 0) {
+                await ctx.answerCbQuery("❌ Нет доступных городов");
+                return;
+            }
 
+            const citiesPerPage = 50;
+            const totalPages = Math.ceil(cities.length / citiesPerPage);
+            
+            if (pageNum < 0 || pageNum >= totalPages) {
+                await ctx.answerCbQuery("❌ Неверная страница");
+                return;
+            }
+
+            // Обновляем сообщение с новой страницей
+            const keyboard = [];
+            let row = [];
+
+            const startIndex = pageNum * citiesPerPage;
+            const endIndex = Math.min(startIndex + citiesPerPage, cities.length);
+            const pageCities = cities.slice(startIndex, endIndex);
+
+            pageCities.forEach((city, index) => {
+                row.push({ text: city, callback_data: `city_${city}` });
+                if (row.length === 3 || index === pageCities.length - 1) {
+                    keyboard.push(row);
+                    row = [];
+                }
+            });
+
+            // ПАГИНАЦИЯ
+            const paginationRow = [];
+            if (totalPages > 1) {
+                if (pageNum > 0) {
+                    paginationRow.push({ 
+                        text: "◀️ Предыдущие", 
+                        callback_data: `cities_page_${country}_${pageNum - 1}` 
+                    });
+                }
+                
+                paginationRow.push({ 
+                    text: `${pageNum + 1}/${totalPages}`, 
+                    callback_data: "cities_page_info" 
+                });
+                
+                if (pageNum < totalPages - 1) {
+                    paginationRow.push({ 
+                        text: "Следующие ▶️", 
+                        callback_data: `cities_page_${country}_${pageNum + 1}` 
+                    });
+                }
+                
+                if (paginationRow.length > 0) {
+                    keyboard.push(paginationRow);
+                }
+            }
+
+            // 🔥 КНОПКА СОЗДАНИЯ АНКЕТЫ
+            keyboard.push([{ 
+                text: "📝 СОЗДАТЬ АНКЕТУ", 
+                web_app: { url: "https://bot-vai-web-app.web.app/?tab=catalog" } 
+            }]);
+
+            if (isDemo) {
+                keyboard.push([{ 
+                    text: "💎 ПОЛУЧИТЬ ПОЛНЫЙ ДОСТУП", 
+                    callback_data: "get_full_access" 
+                }]);
+            }
+
+            keyboard.push([{ 
+                text: "🔙 Назад к странам", 
+                callback_data: "back_to_countries" 
+            }]);
+
+            try {
+                await ctx.editMessageReplyMarkup({
+                    inline_keyboard: keyboard
+                });
+                await ctx.answerCbQuery(`📄 Страница ${pageNum + 1} из ${totalPages}`);
+            } catch (error) {
+                console.error("❌ Ошибка обновления клавиатуры городов:", error);
+                await ctx.answerCbQuery("❌ Ошибка обновления");
+            }
+            
+        } catch (error) {
+            console.error("❌ Ошибка пагинации городов:", error);
+            await ctx.answerCbQuery("❌ Ошибка загрузки");
+        } finally {
+            releaseUserLock(userId);
+        }
+    });
+});
+// ОБРАБОТЧИК ИНФОРМАЦИИ О СТРАНИЦЕ ГОРОДОВ
+bot.action("cities_page_info", async (ctx) => {
+    await ctx.answerCbQuery("📄 Используйте кнопки для навигации по городам");
+});
     bot.action("back_to_countries", async (ctx) => {
         const userId = ctx.from.id;
         
