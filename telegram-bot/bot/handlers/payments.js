@@ -366,7 +366,7 @@ module.exports = (bot, db) => {
     try {
       // Обновленные тарифы (1 день за 1🌟)
       const plan = {
-        '1day': { price: 399, name: "1 день", duration: 86400000 }, // Изменено с 300 на 1
+        '1day': { price: 1, name: "1 день", duration: 86400000 }, // Изменено с 300 на 1
         '1month': { price: 799, name: "1 месяц", duration: 2592000000 },
         'forever': { price: 3999, name: "1 год", duration: null }
       }[planId];

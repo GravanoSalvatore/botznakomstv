@@ -3171,7 +3171,7 @@ const profilesCache = new NodeCache({
     stdTTL: SCALING_CONFIG.CACHE.PROFILES_TTL,
     checkperiod: SCALING_CONFIG.CACHE.CHECKPERIOD,
     useClones: false,
-    maxKeys: 50000  // ← ОТЛИЧНО!
+    maxKeys: 80000  // ← ОТЛИЧНО!
 
     
 });
@@ -4639,40 +4639,7 @@ bot.action(/^country_(.+)$/, async (ctx) => {
     });
 });
 
-    // bot.action(/^country_(.+)$/, async (ctx) => {
-    //     const userId = ctx.from.id;
-        
-    //     if (!acquireUserLock(userId, 2500)) {
-    //         await ctx.answerCbQuery("⏳ Подождите, обрабатываем предыдущий запрос...");
-    //         return;
-    //     }
-        
-    //     await messageQueue.add(async () => {
-    //         try {
-    //             const country = ctx.match[1];
-                
-    //             // ПРОВЕРЯЕМ И ОБНОВЛЯЕМ КЭШ
-    //             const cacheType = await ensureProperCache(ctx);
-    //             const isDemo = cacheType === 'demo';
-                
-    //             ctx.session = ctx.session || {};
-    //             ctx.session.profilesPage = 0;
-    //             ctx.session.filterCountry = country;
-    //             ctx.session.displayCountry = country;
-    //             ctx.session.filterCity = null;
-    //             ctx.session.isDemo = isDemo;
-
-    //             await messageManager.clear(ctx);
-    //             await messageManager.sendCitiesKeyboard(ctx, country, isDemo);
-    //             await ctx.answerCbQuery();
-    //         } catch (error) {
-    //             console.error("❌ Ошибка обработки выбора страны:", error);
-    //         } finally {
-    //             releaseUserLock(userId);
-    //         }
-    //     });
-    // });
-
+   
     bot.action(/^city_(.+)$/, async (ctx) => {
     const userId = ctx.from.id;
     
