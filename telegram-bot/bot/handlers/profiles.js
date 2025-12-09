@@ -1023,6 +1023,7 @@ async loadGlobalFullCache(db) {
 },
     
     // 2. ЗАГРУЗКА ГЛОБАЛЬНОГО ДЕМО-КЭША (с ВСЕМИ городами и странами)
+// 2. ЗАГРУЗКА ГЛОБАЛЬНОГО ДЕМО-КЭША (с ВСЕМИ городами из ВСЕХ профилей)
 async loadGlobalDemoCache(db) {
     if (globalDemoCacheLoading) {
         console.log('⏳ [GLOBAL DEMO CACHE] Уже загружается...');
@@ -1030,69 +1031,134 @@ async loadGlobalDemoCache(db) {
     }
     
     globalDemoCacheLoading = true;
-    console.log('🚀 [GLOBAL DEMO CACHE] Начинаем загрузку глобального демо-кэша с ВСЕМИ городами...');
+    console.log('🚀 [GLOBAL DEMO CACHE] Начинаем загрузку глобального демо-кэша из ВСЕХ 70,000+ профилей...');
     
     try {
         const startTime = Date.now();
         
-        // ЗАГРУЖАЕМ ДОСТАТОЧНО ПРОФИЛЕЙ ДЛЯ ВСЕХ ГОРОДОВ
-        const snapshot = await db.collection("profiles")
-            .orderBy("createdAt", "desc")
-            .limit(20000) // Увеличиваем лимит для демо
-            .select("id", "name", "age", "country", "city", "about", "photoUrl", "telegram", "phone", "whatsapp", "photos", "createdAt")
-            .get();
+        // 🔥 ЗАГРУЖАЕМ ВСЕ ПРОФИЛИ ДЛЯ ДЕМО-КЭША
+        let allProfiles = [];
+        let lastDoc = null;
+        let batchCount = 0;
+        const BATCH_SIZE = 5000;
+        const MAX_PROFILES = 100000; // 🔥 БОЛЬШЕ чем 70,000 чтобы загрузить ВСЕ
         
-        readingStats.addRead('profiles', 'system', snapshot.docs.length, 'firestore');
+        console.log(`📥 [DEMO LOAD] Загрузка ВСЕХ профилей для демо-кэша...`);
         
-        const allProfiles = snapshot.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data()
-        }));
+        while (allProfiles.length < MAX_PROFILES) {
+            batchCount++;
+            console.log(`📦 [DEMO BATCH ${batchCount}] Загрузка ${BATCH_SIZE} анкет...`);
+            
+            let query = db.collection("profiles")
+                .orderBy("createdAt", "desc")
+                .limit(BATCH_SIZE)
+                .select(
+                    "id", 
+                    "name", 
+                    "age", 
+                    "country", 
+                    "city", 
+                    "about", 
+                    "photoUrl", 
+                    "telegram", 
+                    "phone", 
+                    "whatsapp", 
+                    "photos", 
+                    "createdAt"
+                );
+            
+            if (lastDoc) {
+                query = query.startAfter(lastDoc);
+            }
+            
+            const snapshot = await query.get();
+            const docsCount = snapshot.docs.length;
+            
+            readingStats.addRead('profiles', 'system', docsCount, 'firestore');
+            
+            if (docsCount === 0) {
+                console.log(`✅ [DEMO LOAD COMPLETE] Больше анкет нет. Всего загружено: ${allProfiles.length}`);
+                break;
+            }
+            
+            const batchProfiles = snapshot.docs.map(doc => ({
+                id: doc.id,
+                ...doc.data()
+            }));
+            
+            allProfiles.push(...batchProfiles);
+            lastDoc = snapshot.docs[docsCount - 1];
+            
+            console.log(`📊 [DEMO BATCH ${batchCount}] Загружено: ${docsCount} анкет | Всего: ${allProfiles.length}`);
+            
+            if (docsCount === BATCH_SIZE) {
+                await new Promise(resolve => setTimeout(resolve, 100));
+            }
+            
+            if (allProfiles.length % 10000 === 0) {
+                const currentTime = Date.now();
+                const elapsed = (currentTime - startTime) / 1000;
+                const speed = (allProfiles.length / elapsed).toFixed(1);
+                console.log(`📈 [DEMO PROGRESS] ${allProfiles.length} анкет за ${elapsed.toFixed(1)}с (${speed} анкет/сек)`);
+            }
+        }
         
-        console.log(`📊 [GLOBAL DEMO CACHE] Получено ${allProfiles.length} анкет для демо-кэша`);
+        const loadTime = ((Date.now() - startTime) / 1000).toFixed(2);
+        console.log(`✅ [DEMO LOADED] Загружено ${allProfiles.length} профилей за ${loadTime} секунд`);
         
-        // СОЗДАЕМ ДЕМО-КЭШ С ВСЕМИ ГОРОДАМИ
+        if (allProfiles.length === 0) {
+            console.log(`❌ [DEMO ERROR] Не удалось загрузить профили для демо-кэша!`);
+            return false;
+        }
+        
+        // 🔥 СОЗДАЕМ ДЕМО-КЭШ С ВСЕМИ ГОРОДАМИ
+        console.log(`🔧 [DEMO PROCESSING] Создание демо-кэша из ${allProfiles.length} профилей...`);
+        
         const demoProfiles = [];
         const citiesCounter = new Map(); // Счетчик для ограничения 3 анкет на город
         const demoCountries = new Set();
         const demoCitiesMap = new Map();
         
-        // Сначала собираем ВСЕ города и страны
-        allProfiles.forEach(profile => {
+        // ПЕРВЫЙ ПРОХОД: собираем ВСЕ города и страны
+        console.log(`🔍 [DEMO PHASE 1] Сбор всех городов и стран...`);
+        
+        for (let i = 0; i < allProfiles.length; i++) {
+            const profile = allProfiles[i];
             const normalizedCountry = this.normalizeCountryName(profile.country);
             const normalizedCity = this.normalizeCityName(profile.city);
             
             if (normalizedCountry && normalizedCity) {
-                // Добавляем в страны
                 demoCountries.add(normalizedCountry);
                 
-                // Добавляем в города по странам
                 if (!demoCitiesMap.has(normalizedCountry)) {
                     demoCitiesMap.set(normalizedCountry, new Set());
                 }
                 demoCitiesMap.get(normalizedCountry).add(normalizedCity);
             }
-        });
+            
+            if (i % 10000 === 0 && i > 0) {
+                console.log(`📊 [DEMO PROGRESS] Обработано ${i}/${allProfiles.length} профилей`);
+            }
+        }
         
-        console.log(`📊 [DEMO CACHE] Собрано ${demoCountries.size} стран и ${Array.from(demoCitiesMap.values()).reduce((acc, cities) => acc + cities.size, 0)} городов`);
+        // ВТОРОЙ ПРОХОД: добавляем профили с ограничением 3 на город
+        console.log(`🔍 [DEMO PHASE 2] Добавление профилей (макс 3 на город)...`);
         
-        // Теперь добавляем профили с ограничением 3 на город
-        allProfiles.forEach(profile => {
+        for (let i = 0; i < allProfiles.length; i++) {
+            const profile = allProfiles[i];
             const normalizedCountry = this.normalizeCountryName(profile.country);
             const normalizedCity = this.normalizeCityName(profile.city);
             
-            if (!normalizedCountry || !normalizedCity) return;
+            if (!normalizedCountry || !normalizedCity) continue;
             
             const cityKey = `${normalizedCountry}_${normalizedCity}`;
             
-            // Инициализируем счетчик для города
             if (!citiesCounter.has(cityKey)) {
                 citiesCounter.set(cityKey, 0);
             }
             
             const currentCount = citiesCounter.get(cityKey);
             
-            // Ограничение: максимум 3 анкеты на город
             if (currentCount < 3) {
                 citiesCounter.set(cityKey, currentCount + 1);
                 
@@ -1101,49 +1167,79 @@ async loadGlobalDemoCache(db) {
                     country: normalizedCountry,
                     city: normalizedCity,
                     about: replaceSitesInAbout(profile.about),
-                    phone: null, // Скрываем контакты
+                    phone: null,
                     telegram: null,
                     whatsapp: null,
                     isDemo: true
                 };
                 demoProfiles.push(demoProfile);
             }
-        });
+            
+            if (i % 10000 === 0 && i > 0) {
+                console.log(`📊 [DEMO PROGRESS] Добавлено ${demoProfiles.length} демо-профилей`);
+            }
+        }
         
-        // КЭШИРУЕМ ДЕМО-ПРОФИЛИ В ГЛОБАЛЬНЫЙ КЭШ
+        // 🔥 КЭШИРУЕМ ДЕМО-ПРОФИЛИ
+        console.log(`💾 [DEMO CACHE] Кэширование ${demoProfiles.length} демо-профилей...`);
         await this.cacheGlobalProfiles(demoProfiles, true);
         
-        // КЭШИРУЕМ ВСЕ ДЕМО-СТРАНЫ
+        // 🔥 КЭШИРУЕМ ВСЕ СТРАНЫ
         const sortedDemoCountries = Array.from(demoCountries).sort();
         globalDemoCache.set("demo:countries", sortedDemoCountries);
         globalDemoCache.set("demo:countries_raw", Array.from(demoCountries));
         
-        // КЭШИРУЕМ ВСЕ ДЕМО-ГОРОДА
+        // 🔥 КЭШИРУЕМ ВСЕ ГОРОДА
+        console.log(`🗺️ [DEMO CACHE] Кэширование городов по странам...`);
         demoCitiesMap.forEach((citiesSet, country) => {
             globalDemoCache.set(`demo:cities:${country}`, Array.from(citiesSet).sort());
         });
         
-        // Сохраняем статистику городов
+        // СТАТИСТИКА
         let totalCities = 0;
         demoCitiesMap.forEach((citiesSet) => {
             totalCities += citiesSet.size;
         });
         
-        const loadTime = ((Date.now() - startTime) / 1000).toFixed(2);
-        console.log(`✅ [GLOBAL DEMO CACHE] Создан демо-кэш: ${demoProfiles.length} профилей из ${demoCountries.size} стран и ${totalCities} городов за ${loadTime} секунд`);
-        console.log(`📊 [DEMO STATS] Ограничение: максимум 3 анкеты на город, контакты скрыты`);
+        const totalTime = ((Date.now() - startTime) / 1000).toFixed(2);
         
-        // Пример статистики по нескольким странам
-        const sampleCountries = Array.from(demoCountries).slice(0, 5);
-        sampleCountries.forEach(country => {
-            const cities = demoCitiesMap.get(country);
-            console.log(`📋 [DEMO SAMPLE] ${country}: ${cities ? cities.size : 0} городов`);
-        });
+        console.log('='.repeat(80));
+        console.log(`✅ [GLOBAL DEMO CACHE] СОЗДАН ДЕМО-КЭШ!`);
+        console.log(`⏱️  Время загрузки: ${totalTime} секунд`);
+        console.log(`📊 Профилей в демо-кэше: ${demoProfiles.length} (из ${allProfiles.length} загруженных)`);
+        console.log(`🌍 Стран: ${demoCountries.size}`);
+        console.log(`🏙️  Городов: ${totalCities}`);
+        console.log(`🎯 Ограничение: максимум 3 анкеты на город`);
+        console.log(`🚫 Контакты: скрыты в демо-режиме`);
+        console.log('='.repeat(80));
+        
+        // 🔥 ОСОБАЯ СТАТИСТИКА ДЛЯ РОССИИ
+        const russiaKey = "🇷🇺 Россия";
+        if (demoCitiesMap.has(russiaKey)) {
+            const russianCities = demoCitiesMap.get(russiaKey);
+            console.log(`🇷🇺 [RUSSIA STATS] Городов России в демо-кэше: ${russianCities.size}`);
+            
+            if (russianCities.size < 120) {
+                console.log(`⚠️  [RUSSIA WARNING] В демо-кэше только ${russianCities.size} городов России, а должно быть ~120`);
+                console.log(`🔍 Проверяем нормализацию названий городов...`);
+                
+                // Проверяем какие города есть
+                const russianCitiesArray = Array.from(russianCities).sort();
+                console.log(`📋 Города России в демо-кэше (первые 30):`);
+                for (let i = 0; i < Math.min(30, russianCitiesArray.length); i += 5) {
+                    const chunk = russianCitiesArray.slice(i, i + 5);
+                    console.log(`   ${chunk.join(', ')}`);
+                }
+            } else {
+                console.log(`✅ [RUSSIA SUCCESS] Все ~120 городов России в демо-кэше!`);
+            }
+        }
         
         return true;
         
     } catch (error) {
-        console.error(`❌ [GLOBAL DEMO CACHE] Ошибка:`, error.message);
+        console.error(`❌ [GLOBAL DEMO CACHE] Критическая ошибка:`, error.message);
+        console.error(error.stack);
         return false;
     } finally {
         globalDemoCacheLoading = false;
@@ -2550,7 +2646,7 @@ const getProfilesPage = async (page = 0, searchCountry = null, ageRange = null, 
                     await removePreloader(ctx, preloaderMsg);
                     
                     if (!uniqueCountries || uniqueCountries.length === 0) {
-                        const msg = await ctx.reply("❌ Список стран временно недоступен. Попробуйте позже.");
+                        const msg = await ctx.reply("❌ Список стран временно недоступен. дождитесь загрузки.");
                         self.track(chatId, msg.message_id);
                         return;
                     }
@@ -3105,14 +3201,10 @@ bot.command("check_country_normalization", async (ctx) => {
             console.log(`❌ [DEMO CACHE NOT LOADED] Демо-кэш не загружен для ${userId}`);
             
             await ctx.reply(`
-⚠️ <b>ДЕМО-КЭШ НЕ ЗАГРУЖЕН</b>
+⚠️ <b>База не готова! Подождите 1-2 минуты!</b>
 
-Глобальный демо-кэш еще не загружен в систему.
+данные еще не загружены в систему.
 
-<b>Что происходит:</b>
-• Демо-кэш загружается один раз при старте бота
-• Обновляется автоматически раз в 7 дней
-• Сейчас он находится в процессе загрузки
 
 <b>Что делать:</b>
 1. Подождите 1-2 минуты
@@ -3142,7 +3234,7 @@ bot.command("check_country_normalization", async (ctx) => {
 🔄 <b>ЗАГРУЗКА ГЛОБАЛЬНОГО ДОСТУПА</b>
 
 🎉 У вас есть полный доступ!
-📊 Загружаем 70,000+ анкет в глобальный кэш...
+📊 Загружаем 70,000+ анкет в глобальный базу...
 
 ⏱️ <i>Это займет 2-3 минуты</i>
 📦 <i>Загружаем пачками по 5000 анкет</i>
@@ -3161,7 +3253,7 @@ bot.command("check_country_normalization", async (ctx) => {
                             ctx.telegram.deleteMessage(ctx.chat.id, loadingMsg.message_id);
                             // Показываем успешное сообщение
                             ctx.reply(`
-✅ <b>ГЛОБАЛЬНЫЙ ПОЛНЫЙ КЭШ ЗАГРУЖЕН!</b>
+✅ <b> Доступ к полной базе открыт!</b>
 
 🎉 Теперь доступны все 70,000+ анкет!
 • 👤 Все контакты видны
