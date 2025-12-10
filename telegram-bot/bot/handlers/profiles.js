@@ -2069,7 +2069,7 @@ module.exports = (bot, db) => {
     // 2. ФУНКЦИЯ ПРОВЕРКИ ПОДПИСКИ (с кэшем на 24 часа)
     const checkSubscription = async (userId) => {
         try {
-            console.log(`🔍 [SUBSCRIPTION] Проверка подписки для пользователя ${userId}`);
+            console.log(`🔍 [SUBSCRIPTION] Проверка подписки  ${userId}`);
             
             // Сначала пробуем получить из кэша (24 часа)
             const cachedSubscription = cacheManager.getCachedSubscription(userId);
