@@ -413,7 +413,7 @@ const showMainMenu = async (ctx) => {
       inline_keyboard: [
         [
           {
-            text: "🟢 1 день - 5 USDT",
+            text: "🟢 1 день - 1.99 USDT",
             callback_data: "crypto_basic",
           },
         ],

@@ -344,9 +344,9 @@ ${subscription ? `\n\n${subscription.message}` : ''}`,
             inline_keyboard: [
               [{ text: '👩‍🦰 Анкеты PeaceYourGun 🥕', callback_data: 'show_profiles' }],
               [{ text: '🌐 Открыть в браузере PeaceYourGun 🥕', url: process.env.WEBAPP_URL }],
-              [{ text: '🔥 Купить подписку на 1 день (399🌟)', callback_data: 'start_pay_1day' }],
-              [{ text: '❤️ Купить подписку на 1 месяц (799🌟)', callback_data: 'start_pay_1month' }],
-              [{ text: '💫 Купить подписку навсегда (3999🌟)', callback_data: 'start_pay_forever' }]
+              [{ text: '🔥 Купить подписку на 1 день (99🌟)', callback_data: 'start_pay_1day' }],
+              [{ text: '❤️ Купить подписку на 1 месяц (499🌟)', callback_data: 'start_pay_1month' }],
+              [{ text: '💫 Купить подписку навсегда (1999🌟)', callback_data: 'start_pay_forever' }]
             ]
           }
         }
@@ -365,9 +365,9 @@ ${subscription ? `\n\n${subscription.message}` : ''}`, {
           inline_keyboard: [
             [{ text: '👩‍🦰 Анкеты PeaceYourGun 🥕', callback_data: 'show_profiles' }],
             [{ text: '🌐 Открыть в браузере PeaceYourGun 🥕', url: process.env.WEBAPP_URL }],
-            [{ text: '🔥 Купить подписку на 1 день (399🌟)', callback_data: 'start_pay_1day' }],
-            [{ text: '❤️ Купить подписку на 1 месяц (799🌟)', callback_data: 'start_pay_1month' }],
-            [{ text: '💫 Купить подписку навсегда (3999🌟)', callback_data: 'start_pay_forever' }]
+            [{ text: '🔥 Купить подписку на 1 день (99🌟)', callback_data: 'start_pay_1day' }],
+            [{ text: '❤️ Купить подписку на 1 месяц (499🌟)', callback_data: 'start_pay_1month' }],
+            [{ text: '💫 Купить подписку навсегда (1999🌟)', callback_data: 'start_pay_forever' }]
           ]
         }
       });
@@ -382,9 +382,9 @@ ${subscription ? `\n\n${subscription.message}` : ''}`, {
     try {
       // Тарифные планы
       const plan = {
-        '1day': { price: 399, name: "1 день", duration: 86400000 },
-        '1month': { price: 799, name: "1 месяц", duration: 2592000000 },
-        'forever': { price: 3999, name: "1 год", duration: null }
+        '1day': { price: 99, name: "1 день", duration: 86400000 },
+        '1month': { price: 499, name: "1 месяц", duration: 2592000000 },
+        'forever': { price: 1999, name: "1 год", duration: null }
       }[planId];
 
       if (!plan) throw new Error('Неизвестный тариф');

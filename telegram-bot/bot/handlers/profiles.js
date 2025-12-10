@@ -2651,7 +2651,7 @@ const getProfilesPage = async (page = 0, searchCountry = null, ageRange = null, 
                         return;
                     }
                     
-                    const countriesPerPage = 60;
+                    const countriesPerPage = 30;
                     const totalPages = Math.ceil(uniqueCountries.length / countriesPerPage);
                     
                     if (page < 0) page = 0;
@@ -2668,7 +2668,7 @@ const getProfilesPage = async (page = 0, searchCountry = null, ageRange = null, 
                         const countryWithFlag = formatCountryWithFlag(country);
                         row.push({ text: countryWithFlag, callback_data: `country_${country}` });
 
-                        if (row.length === 3 || index === pageCountries.length - 1) {
+                        if (row.length === 2 || index === pageCountries.length - 1) {
                             keyboard.push(row);
                             row = [];
                         }
@@ -2796,7 +2796,7 @@ const getProfilesPage = async (page = 0, searchCountry = null, ageRange = null, 
 
                         pageCities.forEach((city, index) => {
                             row.push({ text: city, callback_data: `city_${city}` });
-                            if (row.length === 3 || index === pageCities.length - 1) {
+                            if (row.length === 2 || index === pageCities.length - 1) {
                                 keyboard.push(row);
                                 row = [];
                             }
@@ -2901,56 +2901,56 @@ const getProfilesPage = async (page = 0, searchCountry = null, ageRange = null, 
         });
     });
 
-    bot.command("init_cache", async (ctx) => {
-        await messageQueue.add(async () => {
-            try {
-                const userId = ctx.from.id;
-                console.log(`🚀 [INIT CACHE] Принудительная инициализация глобального кэша для ${userId}`);
+//     bot.command("init_cache", async (ctx) => {
+//         await messageQueue.add(async () => {
+//             try {
+//                 const userId = ctx.from.id;
+//                 console.log(`🚀 [INIT CACHE] Принудительная инициализация глобального кэша для ${userId}`);
                 
-                await ctx.reply(`
-🔄 <b>ИНИЦИАЛИЗАЦИЯ ГЛОБАЛЬНОГО КЭША</b>
+//                 await ctx.reply(`
+// 🔄 <b>ИНИЦИАЛИЗАЦИЯ ГЛОБАЛЬНОГО КЭША</b>
 
-Загружаем глобальный демо-кэш...
-⏱️ Это может занять несколько секунд
+// Загружаем глобальный демо-кэш...
+// ⏱️ Это может занять несколько секунд
 
-<em>Пожалуйста, подождите</em>
-                `, { parse_mode: "HTML" });
+// <em>Пожалуйста, подождите</em>
+//                 `, { parse_mode: "HTML" });
                 
-                try {
-                    // Пытаемся загрузить глобальный демо-кэш
-                    await cacheManager.loadGlobalDemoCache(db);
+//                 try {
+//                     // Пытаемся загрузить глобальный демо-кэш
+//                     await cacheManager.loadGlobalDemoCache(db);
                     
-                    await ctx.reply(`
-✅ <b>ГЛОБАЛЬНЫЙ КЭШ УСПЕШНО ЗАГРУЖЕН!</b>
+//                     await ctx.reply(`
+// ✅ <b>ГЛОБАЛЬНЫЙ КЭШ УСПЕШНО ЗАГРУЖЕН!</b>
 
-• 📊 Анкеты: загружены в глобальный кэш
-• 🌍 Страны: доступны для всех пользователей
-• 📍 Города: доступны для всех пользователей
+// • 📊 Анкеты: загружены в глобальный кэш
+// • 🌍 Страны: доступны для всех пользователей
+// • 📍 Города: доступны для всех пользователей
 
-Теперь все пользователи могут использовать бота полноценно!
-                    `, { parse_mode: "HTML" });
+// Теперь все пользователи могут использовать бота полноценно!
+//                     `, { parse_mode: "HTML" });
                     
-                } catch (error) {
-                    console.error(`❌ [INIT CACHE] Ошибка:`, error.message);
+//                 } catch (error) {
+//                     console.error(`❌ [INIT CACHE] Ошибка:`, error.message);
                     
-                    await ctx.reply(`
-⚠️ <b>НЕ УДАЛОСЬ ЗАГРУЗИТЬ ГЛОБАЛЬНЫЙ КЭШ</b>
+//                     await ctx.reply(`
+// ⚠️ <b>НЕ УДАЛОСЬ ЗАГРУЗИТЬ ГЛОБАЛЬНЫЙ КЭШ</b>
 
-<b>Что делать:</b>
-1. Проверьте подключение к интернету
-2. Попробуйте через 5 минут
-3. Используйте команду /start
+// <b>Что делать:</b>
+// 1. Проверьте подключение к интернету
+// 2. Попробуйте через 5 минут
+// 3. Используйте команду /start
 
-Бот работает в ограниченном режиме.
-                    `, { parse_mode: "HTML" });
-                }
+// Бот работает в ограниченном режиме.
+//                     `, { parse_mode: "HTML" });
+//                 }
                 
-            } catch (error) {
-                console.error("❌ Ошибка команды init_cache:", error);
-                await ctx.reply("❌ Ошибка инициализации глобального кэша");
-            }
-        });
-    });
+//             } catch (error) {
+//                 console.error("❌ Ошибка команды init_cache:", error);
+//                 await ctx.reply("❌ Ошибка инициализации глобального кэша");
+//             }
+//         });
+//     });
    
 bot.command("fix_city", async (ctx) => {
     try {
@@ -3768,102 +3768,102 @@ ${!hasChannel ? '⚠️ <b>Вы не подписаны на канал @MagicYo
         });
     });
 
-    bot.command("load_global_full_cache", async (ctx) => {
-        await messageQueue.add(async () => {
-            try {
-                const userId = ctx.from.id;
-                await ctx.answerCbQuery("🔄 Загружаем глобальный полный кэш...");
+//     bot.command("load_global_full_cache", async (ctx) => {
+//         await messageQueue.add(async () => {
+//             try {
+//                 const userId = ctx.from.id;
+//                 await ctx.answerCbQuery("🔄 Загружаем глобальный полный кэш...");
                 
-                console.log(`🚀 [LOAD GLOBAL FULL CACHE] Команда от пользователя ${userId}`);
+//                 console.log(`🚀 [LOAD GLOBAL FULL CACHE] Команда от пользователя ${userId}`);
                 
-                const hasFullAccess = await checkFullAccess(ctx, true);
+//                 const hasFullAccess = await checkFullAccess(ctx, true);
                 
-                if (!hasFullAccess) {
-                    await ctx.reply(`
-❌ <b>НЕТ ДОСТУПА К КОМАНДЕ</b>
+//                 if (!hasFullAccess) {
+//                     await ctx.reply(`
+// ❌ <b>НЕТ ДОСТУПА К КОМАНДЕ</b>
 
-Эта команда доступна только пользователям с полным доступом.
+// Эта команда доступна только пользователям с полным доступом.
 
-<b>Ваш статус:</b>
-💎 Подписка: ${hasFullAccess ? '✅' : '❌'}
-📢 Канал: ${hasFullAccess ? '✅' : '❌'}
+// <b>Ваш статус:</b>
+// 💎 Подписка: ${hasFullAccess ? '✅' : '❌'}
+// 📢 Канал: ${hasFullAccess ? '✅' : '❌'}
 
-Используйте /refresh_access для проверки доступа
-                    `, { parse_mode: "HTML" });
-                    return;
-                }
+// Используйте /refresh_access для проверки доступа
+//                     `, { parse_mode: "HTML" });
+//                     return;
+//                 }
                 
-                // Показываем прогресс
-                const progressMsg = await ctx.reply(`
-🔄 <b>ЗАГРУЗКА ГЛОБАЛЬНОГО ПОЛНОГО КЭША</b>
+//                 // Показываем прогресс
+//                 const progressMsg = await ctx.reply(`
+// 🔄 <b>ЗАГРУЗКА ГЛОБАЛЬНОГО ПОЛНОГО КЭША</b>
 
-⏳ Пожалуйста, подождите...
-📊 Загружаем 70,000+ анкет в глобальный кэш
-⏱️ Это может занять 2-3 минуты
+// ⏳ Пожалуйста, подождите...
+// 📊 Загружаем 70,000+ анкет в глобальный кэш
+// ⏱️ Это может занять 2-3 минуты
 
-<em>После загрузки кэш будет доступен для всех пользователей</em>
-                `, { parse_mode: "HTML" });
+// <em>После загрузки кэш будет доступен для всех пользователей</em>
+//                 `, { parse_mode: "HTML" });
                 
-                // Загружаем глобальный полный кэш
-                try {
-                    const success = await cacheManager.loadGlobalFullCache(db);
+//                 // Загружаем глобальный полный кэш
+//                 try {
+//                     const success = await cacheManager.loadGlobalFullCache(db);
                     
-                    if (success) {
-                        await ctx.telegram.deleteMessage(ctx.chat.id, progressMsg.message_id);
+//                     if (success) {
+//                         await ctx.telegram.deleteMessage(ctx.chat.id, progressMsg.message_id);
                         
-                        const cacheStats = cacheManager.getGlobalCacheStats();
+//                         const cacheStats = cacheManager.getGlobalCacheStats();
                         
-                        await ctx.reply(`
-✅ <b>ГЛОБАЛЬНЫЙ КЭШ ЗАГРУЖЕН!</b>
+//                         await ctx.reply(`
+// ✅ <b>ГЛОБАЛЬНЫЙ КЭШ ЗАГРУЖЕН!</b>
 
-📊 <b>Статистика:</b>
-• Анкет загружено: ${cacheStats.fullCache.profilesCount}
-• Стран в кэше: ${cacheStats.fullCache.countriesCount}
-• Доступно для: <b>ВСЕХ ПОЛЬЗОВАТЕЛЕЙ</b>
+// 📊 <b>Статистика:</b>
+// • Анкет загружено: ${cacheStats.fullCache.profilesCount}
+// • Стран в кэше: ${cacheStats.fullCache.countriesCount}
+// • Доступно для: <b>ВСЕХ ПОЛЬЗОВАТЕЛЕЙ</b>
 
-🎉 <b>Теперь доступны все функции:</b>
-• 🌍 Все 70,000+ анкет
-• 📍 Полный список стран и городов
-• 👤 Все контакты профилей
-• ⚡ Максимальная скорость работы
+// 🎉 <b>Теперь доступны все функции:</b>
+// • 🌍 Все 70,000+ анкет
+// • 📍 Полный список стран и городов
+// • 👤 Все контакты профилей
+// • ⚡ Максимальная скорость работы
 
-<code>Кэш обновляется раз в 7 дней автоматически</code>
-                        `, {
-                            parse_mode: "HTML",
-                            reply_markup: {
-                                inline_keyboard: [
-                                    [{ text: "🌍 ВСЕ СТРАНЫ", callback_data: "all_countries_with_check" }],
-                                    [{ text: "📊 Статистика", callback_data: "show_cache_stats" }]
-                                ]
-                            }
-                        });
-                    } else {
-                        await ctx.telegram.deleteMessage(ctx.chat.id, progressMsg.message_id);
-                        throw new Error("Не удалось загрузить глобальный кэш");
-                    }
+// <code>Кэш обновляется раз в 7 дней автоматически</code>
+//                         `, {
+//                             parse_mode: "HTML",
+//                             reply_markup: {
+//                                 inline_keyboard: [
+//                                     [{ text: "🌍 ВСЕ СТРАНЫ", callback_data: "all_countries_with_check" }],
+//                                     [{ text: "📊 Статистика", callback_data: "show_cache_stats" }]
+//                                 ]
+//                             }
+//                         });
+//                     } else {
+//                         await ctx.telegram.deleteMessage(ctx.chat.id, progressMsg.message_id);
+//                         throw new Error("Не удалось загрузить глобальный кэш");
+//                     }
                     
-                } catch (error) {
-                    await ctx.telegram.deleteMessage(ctx.chat.id, progressMsg.message_id);
-                    throw error;
-                }
+//                 } catch (error) {
+//                     await ctx.telegram.deleteMessage(ctx.chat.id, progressMsg.message_id);
+//                     throw error;
+//                 }
                 
-            } catch (error) {
-                console.error("❌ Ошибка загрузки глобального кэша:", error);
-                await ctx.reply(`
-❌ <b>ОШИБКА ЗАГРУЗКИ ГЛОБАЛЬНОГО КЭША</b>
+//             } catch (error) {
+//                 console.error("❌ Ошибка загрузки глобального кэша:", error);
+//                 await ctx.reply(`
+// ❌ <b>ОШИБКА ЗАГРУЗКИ ГЛОБАЛЬНОГО КЭША</b>
 
-Не удалось загрузить глобальный полный кэш.
+// Не удалось загрузить глобальный полный кэш.
 
-<b>Причина:</b> ${error.message}
+// <b>Причина:</b> ${error.message}
 
-Попробуйте:
-1. Подождать несколько минут
-2. Использовать /refresh_access
-3. Написать в поддержку @MagicAdd
-                `, { parse_mode: "HTML" });
-            }
-        });
-    });
+// Попробуйте:
+// 1. Подождать несколько минут
+// 2. Использовать /refresh_access
+// 3. Написать в поддержку @MagicAdd
+//                 `, { parse_mode: "HTML" });
+//             }
+//         });
+//     });
 
     bot.command("reset_cache_stats", async (ctx) => {
         await messageQueue.add(async () => {
@@ -3977,7 +3977,7 @@ ${!hasChannel ? '⚠️ <b>Вы не подписаны на канал @MagicYo
                 
                 // Обновляем сообщение с новой страницей
                 const uniqueCountries = await getUniqueCountries(isDemo);
-                const countriesPerPage = 60;
+                const countriesPerPage = 30;
                 const totalPages = Math.ceil(uniqueCountries.length / countriesPerPage);
                 
                 if (page < 0 || page >= totalPages) {
@@ -3996,7 +3996,7 @@ ${!hasChannel ? '⚠️ <b>Вы не подписаны на канал @MagicYo
                     const countryWithFlag = formatCountryWithFlag(country);
                     row.push({ text: countryWithFlag, callback_data: `country_${country}` });
                     
-                    if (row.length === 3 || index === pageCountries.length - 1) {
+                    if (row.length === 2 || index === pageCountries.length - 1) {
                         keyboard.push(row);
                         row = [];
                     }
@@ -4361,7 +4361,7 @@ ${totalCountries > 10 ? `... и еще ${totalCountries - 10} стран` : ''}
 
                 pageCities.forEach((city, index) => {
                     row.push({ text: city, callback_data: `city_${city}` });
-                    if (row.length === 3 || index === pageCities.length - 1) {
+                    if (row.length === 2 || index === pageCities.length - 1) {
                         keyboard.push(row);
                         row = [];
                     }

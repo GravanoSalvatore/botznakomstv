@@ -706,19 +706,19 @@ module.exports = (bot, db) => {
       inline_keyboard: [
         [
           {
-            text: "🔥 1 день (399🌟)",
+            text: "🔥 1 день (99🌟)",
             callback_data: "buy_1day",
           },
         ],
         [
           {
-            text: "❤️ 1 месяц (799🌟)",
+            text: "❤️ 1 месяц (499🌟)",
             callback_data: "buy_1month",
           },
         ],
         [
           {
-            text: "💫 1 год (3999🌟)",
+            text: "💫 1 год (1999🌟)",
             callback_data: "buy_forever",
           },
         ],
@@ -737,9 +737,9 @@ module.exports = (bot, db) => {
 
     await ctx.reply(
       `⭐ <b>ОПЛАТА STARS</b>\n\n` +
-        `🔥 <b>1 день</b> - 399 Stars\n` +
-        `❤️ <b>1 месяц</b> - 799 Stars\n` +
-        `💫 <b>1 год</b> - 3999 Stars\n\n` +
+        `🔥 <b>1 день</b> - 99 Stars\n` +
+        `❤️ <b>1 месяц</b> - 499 Stars\n` +
+        `💫 <b>1 год</b> - 1999 Stars\n\n` +
         `<b>Выбери тариф:</b>`,
       {
         parse_mode: "HTML",
@@ -754,7 +754,7 @@ module.exports = (bot, db) => {
       inline_keyboard: [
         [
           {
-            text: "🟢 1 день - 5 USDT",
+            text: "🟢 1 день - 1.99 USDT",
             callback_data: "crypto_basic",
           },
         ],
@@ -795,7 +795,7 @@ module.exports = (bot, db) => {
         `6. Создайте сделку: Выберите подходящего продавца и следуйте его инструкции для совершения сделки.\n` +
         `7. Подтвердите перевод: После совершения перевода подтвердите сделку в боте. Продавец получит уведомление, и после проверки оплаты отправит вам USDT.\n\n` +
         `Выбери тариф подписки:\n\n` +
-        `🟢 <b>1 день</b> - 5 USDT\n` +
+        `🟢 <b>1 день</b> - 1.99 USDT\n` +
         `🔵 <b>1 месяц</b> - 10 USDT\n` +
         `🟣 <b>1 год</b> - 50 USDT\n\n` +
         `<b>Выбери тариф:</b>`,
@@ -812,7 +812,7 @@ module.exports = (bot, db) => {
       inline_keyboard: [
         [
           {
-            text: "🟡 1 день - 2.5 TON",
+            text: "🟡 1 день - 1 TON",
             callback_data: "ton_basic",
           },
         ],
@@ -844,7 +844,7 @@ module.exports = (bot, db) => {
     await ctx.reply(
       `💎 <b>ОПЛАТА TON</b>\n\n` +
         `Выбери тариф подписки:\n\n` +
-        `🟡 <b>1 день</b> - 2.5 TON\n` +
+        `🟡 <b>1 день</b> - 1 TON\n` +
         `🟠 <b>1 месяц</b> - 5 TON\n` +
         `🔴 <b>1 год</b> - 25 TON\n\n` +
         `<b>Выбери тариф:</b>`,
@@ -861,7 +861,7 @@ module.exports = (bot, db) => {
     let planData;
 
     if (plan === "basic") {
-      planData = { amount: 5, name: "1 день", duration: 1, asset: "USDT" };
+      planData = { amount: 1.99, name: "1 день", duration: 1, asset: "USDT" };
     } else if (plan === "pro") {
       planData = { amount: 10, name: "1 месяц", duration: 30, asset: "USDT" };
     } else if (plan === "premium") {
@@ -1212,13 +1212,13 @@ module.exports = (bot, db) => {
   };
 
   bot.action("buy_1day", (ctx) =>
-    handleSubscriptionPurchase(ctx, "1day", 399, 86400000)
+    handleSubscriptionPurchase(ctx, "1day", 99, 86400000)
   );
   bot.action("buy_1month", (ctx) =>
-    handleSubscriptionPurchase(ctx, "1month", 799, 2592000000)
+    handleSubscriptionPurchase(ctx, "1month", 499, 2592000000)
   );
   bot.action("buy_forever", (ctx) =>
-    handleSubscriptionPurchase(ctx, "forever", 3999, 31536000000)
+    handleSubscriptionPurchase(ctx, "forever", 1999, 31536000000)
   );
 
   bot.on("pre_checkout_query", (ctx) => ctx.answerPreCheckoutQuery(true));
