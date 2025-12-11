@@ -2131,44 +2131,7 @@ module.exports = (bot, db) => {
 
     // ===================== ОПТИМИЗИРОВАННЫЕ ФУНКЦИИ ПРОВЕРКИ ПОДПИСОК =====================
     
-    // 1. ФУНКЦИЯ ПРОВЕРКИ ПОДПИСКИ НА КАНАЛ (с кэшем на 5 минут)
-    // const checkChannelSubscription = async (ctx) => {
-    //     const userId = ctx.from.id;
-        
-    //     try {
-    //         // Проверяем кэш ПЕРВЫМ делом
-    //         const cached = cacheManager.getCachedChannelSubscription(userId);
-    //         if (cached !== undefined) {
-    //             console.log(`✅ [CHANNEL CACHE HIT] Пользователь ${userId}: ${cached ? 'подписан' : 'не подписан'}`);
-    //             readingStats.addRead('channelSubscriptions', userId, 1, 'cache');
-    //             return cached;
-    //         }
-            
-    //         console.log(`🔍 [CHANNEL CACHE MISS] Проверяем подписку на канал для ${userId}`);
-    //         const channelUsername = `<a href="https://t.me/+H6Eovikei9xiZWU0"><b>MagicClubPrivate</b></a>`;
-            
-    //         const chatMember = await ctx.telegram.getChatMember(channelUsername, userId);
-            
-    //         const isSubscribed = 
-    //             chatMember.status === 'member' || 
-    //             chatMember.status === 'administrator' || 
-    //             chatMember.status === 'creator';
-            
-    //         // Сохраняем в кэш на 5 минут
-    //         cacheManager.cacheChannelSubscription(userId, isSubscribed);
-    //         readingStats.addRead('channelSubscriptions', userId, 1, 'telegram_api');
-            
-    //         console.log(`✅ [CHANNEL] Пользователь ${userId}: ${isSubscribed ? 'подписан' : 'не подписан'}`);
-            
-    //         return isSubscribed;
-    //     } catch (error) {
-    //         console.error(`❌ [CHANNEL] Ошибка проверки подписки на канал для ${userId}:`, error);
-            
-    //         // При ошибке считаем, что не подписан, но кэшируем на 1 минуту
-    //         cacheManager.cacheChannelSubscription(userId, false);
-    //         return false;
-    //     }
-    // };
+ 
 // ================= 5. ФУНКЦИЯ ПРОВЕРКИ ПОДПИСКИ НА КАНАЛ =================
 const checkChannelSubscription = async (ctx) => {
   try {
@@ -3133,57 +3096,7 @@ const createCitiesKeyboard = (page) => {
         });
     });
 
-//     bot.command("init_cache", async (ctx) => {
-//         await messageQueue.add(async () => {
-//             try {
-//                 const userId = ctx.from.id;
-//                 console.log(`🚀 [INIT CACHE] Принудительная инициализация глобального кэша для ${userId}`);
-                
-//                 await ctx.reply(`
-// 🔄 <b>ИНИЦИАЛИЗАЦИЯ ГЛОБАЛЬНОГО КЭША</b>
 
-// Загружаем глобальный демо-кэш...
-// ⏱️ Это может занять несколько секунд
-
-// <em>Пожалуйста, подождите</em>
-//                 `, { parse_mode: "HTML" });
-                
-//                 try {
-//                     // Пытаемся загрузить глобальный демо-кэш
-//                     await cacheManager.loadGlobalDemoCache(db);
-                    
-//                     await ctx.reply(`
-// ✅ <b>ГЛОБАЛЬНЫЙ КЭШ УСПЕШНО ЗАГРУЖЕН!</b>
-
-// • 📊 Анкеты: загружены в глобальный кэш
-// • 🌍 Страны: доступны для всех пользователей
-// • 📍 Города: доступны для всех пользователей
-
-// Теперь все пользователи могут использовать бота полноценно!
-//                     `, { parse_mode: "HTML" });
-                    
-//                 } catch (error) {
-//                     console.error(`❌ [INIT CACHE] Ошибка:`, error.message);
-                    
-//                     await ctx.reply(`
-// ⚠️ <b>НЕ УДАЛОСЬ ЗАГРУЗИТЬ ГЛОБАЛЬНЫЙ КЭШ</b>
-
-// <b>Что делать:</b>
-// 1. Проверьте подключение к интернету
-// 2. Попробуйте через 5 минут
-// 3. Используйте команду /start
-
-// Бот работает в ограниченном режиме.
-//                     `, { parse_mode: "HTML" });
-//                 }
-                
-//             } catch (error) {
-//                 console.error("❌ Ошибка команды init_cache:", error);
-//                 await ctx.reply("❌ Ошибка инициализации глобального кэша");
-//             }
-//         });
-//     });
-   
 bot.command("fix_city", async (ctx) => {
     try {
         const [_, testCity, testCountry] = ctx.text.split(' ');
@@ -3894,45 +3807,6 @@ bot.action("debug_refresh", async (ctx) => {
     await ctx.deleteMessage();
     await ctx.replyWithHTML("Статистика обновлена. Используйте /cache_debug снова.");
 });
-//     bot.command("cache_debug", async (ctx) => {
-//         await messageQueue.add(async () => {
-//             const userId = ctx.from.id;
-//             const cacheType = cacheManager.getUserCacheStatus(userId);
-//             const hasFullAccess = await checkFullAccess(ctx, false);
-//             const sessionType = ctx.session?.cacheSession?.type || 'нет';
-            
-//             const cacheStats = cacheManager.getGlobalCacheStats();
-            
-//             const message = `
-// 🔧 <b>ДЕБАГ ГЛОБАЛЬНОГО КЭША</b>
-
-// 👤 <b>Пользователь:</b> ${userId}
-// 💾 <b>Тип кэша:</b> ${cacheType || 'не установлен'}
-// 🔓 <b>Полный доступ:</b> ${hasFullAccess ? '✅' : '❌'}
-// 💼 <b>Сессия:</b> ${sessionType}
-
-// 📊 <b>ГЛОБАЛЬНЫЙ КЭШ (общий для всех):</b>
-// • Полный кэш: ${cacheStats.fullCache.loaded ? `✅ ${cacheStats.fullCache.profilesCount} анкет, ${cacheStats.fullCache.countriesCount} стран` : '❌ Не загружен'}
-// • Демо кэш: ${cacheStats.demoCache.loaded ? `✅ ${cacheStats.demoCache.profilesCount} анкет, ${cacheStats.demoCache.countriesCount} стран` : '❌ Не загружен'}
-
-// 🔍 <b>КЭШИ ФИЛЬТРОВ:</b>
-// • Полные фильтры: ${cacheStats.filterCacheKeys}
-// • Демо фильтры: ${cacheStats.demoFilterCacheKeys}
-
-// 👥 <b>ИНДИВИДУАЛЬНЫЕ КЭШИ:</b>
-// • Подписки: ${cacheStats.subscriptionCacheCount}
-// • Каналы: ${cacheStats.channelCacheCount}
-// • Статусы: ${cacheStats.userStatusCacheCount}
-
-// 📖 <b>Статистика чтений:</b>
-// • Всего чтений: ${readingStats.totalReads}
-// • Firestore: ${readingStats.operations.firestoreReads}
-// • Кэш эффективность: ${readingStats.getStats().cacheEfficiency}
-//             `;
-            
-//             await ctx.reply(message, { parse_mode: "HTML" });
-//         });
-//     });
 bot.command("debug_city_exact", async (ctx) => {
     try {
         const [_, city] = ctx.text.split(' ');
@@ -4120,102 +3994,6 @@ ${!hasChannel ? '⚠️ <b>Вы не подписаны на канал <a href=
         });
     });
 
-//     bot.command("load_global_full_cache", async (ctx) => {
-//         await messageQueue.add(async () => {
-//             try {
-//                 const userId = ctx.from.id;
-//                 await ctx.answerCbQuery("🔄 Загружаем глобальный полный кэш...");
-                
-//                 console.log(`🚀 [LOAD GLOBAL FULL CACHE] Команда от пользователя ${userId}`);
-                
-//                 const hasFullAccess = await checkFullAccess(ctx, true);
-                
-//                 if (!hasFullAccess) {
-//                     await ctx.reply(`
-// ❌ <b>НЕТ ДОСТУПА К КОМАНДЕ</b>
-
-// Эта команда доступна только пользователям с полным доступом.
-
-// <b>Ваш статус:</b>
-// 💎 Подписка: ${hasFullAccess ? '✅' : '❌'}
-// 📢 Канал: ${hasFullAccess ? '✅' : '❌'}
-
-// Используйте /refresh_access для проверки доступа
-//                     `, { parse_mode: "HTML" });
-//                     return;
-//                 }
-                
-//                 // Показываем прогресс
-//                 const progressMsg = await ctx.reply(`
-// 🔄 <b>ЗАГРУЗКА ГЛОБАЛЬНОГО ПОЛНОГО КЭША</b>
-
-// ⏳ Пожалуйста, подождите...
-// 📊 Загружаем 70,000+ анкет в глобальный кэш
-// ⏱️ Это может занять 2-3 минуты
-
-// <em>После загрузки кэш будет доступен для всех пользователей</em>
-//                 `, { parse_mode: "HTML" });
-                
-//                 // Загружаем глобальный полный кэш
-//                 try {
-//                     const success = await cacheManager.loadGlobalFullCache(db);
-                    
-//                     if (success) {
-//                         await ctx.telegram.deleteMessage(ctx.chat.id, progressMsg.message_id);
-                        
-//                         const cacheStats = cacheManager.getGlobalCacheStats();
-                        
-//                         await ctx.reply(`
-// ✅ <b>ГЛОБАЛЬНЫЙ КЭШ ЗАГРУЖЕН!</b>
-
-// 📊 <b>Статистика:</b>
-// • Анкет загружено: ${cacheStats.fullCache.profilesCount}
-// • Стран в кэше: ${cacheStats.fullCache.countriesCount}
-// • Доступно для: <b>ВСЕХ ПОЛЬЗОВАТЕЛЕЙ</b>
-
-// 🎉 <b>Теперь доступны все функции:</b>
-// • 🌍 Все 70,000+ анкет
-// • 📍 Полный список стран и городов
-// • 👤 Все контакты профилей
-// • ⚡ Максимальная скорость работы
-
-// <code>Кэш обновляется раз в 7 дней автоматически</code>
-//                         `, {
-//                             parse_mode: "HTML",
-//                             reply_markup: {
-//                                 inline_keyboard: [
-//                                     [{ text: "🌍 ВСЕ СТРАНЫ", callback_data: "all_countries_with_check" }],
-//                                     [{ text: "📊 Статистика", callback_data: "show_cache_stats" }]
-//                                 ]
-//                             }
-//                         });
-//                     } else {
-//                         await ctx.telegram.deleteMessage(ctx.chat.id, progressMsg.message_id);
-//                         throw new Error("Не удалось загрузить глобальный кэш");
-//                     }
-                    
-//                 } catch (error) {
-//                     await ctx.telegram.deleteMessage(ctx.chat.id, progressMsg.message_id);
-//                     throw error;
-//                 }
-                
-//             } catch (error) {
-//                 console.error("❌ Ошибка загрузки глобального кэша:", error);
-//                 await ctx.reply(`
-// ❌ <b>ОШИБКА ЗАГРУЗКИ ГЛОБАЛЬНОГО КЭША</b>
-
-// Не удалось загрузить глобальный полный кэш.
-
-// <b>Причина:</b> ${error.message}
-
-// Попробуйте:
-// 1. Подождать несколько минут
-// 2. Использовать /refresh_access
-// 3. Написать в поддержку @MagicAdd
-//                 `, { parse_mode: "HTML" });
-//             }
-//         });
-//     });
 
     bot.command("reset_cache_stats", async (ctx) => {
         await messageQueue.add(async () => {
@@ -5406,8 +5184,7 @@ ${!hasChannelSubscription ? "2. 📢 Подпишитесь на канал \n" 
         });
     });
 
-    // ===================== ФУНКЦИЯ ОТПРАВКИ ПРОФИЛЯ (ПОЛНОСТЬЮ ПЕРЕПИСАНА С ИСПРАВЛЕНИЕМ ДЕМО-РЕЖИМА) =====================
-// ===================== ФУНКЦИЯ ОТПРАВКИ ПРОФИЛЯ (ПОЛНОСТЬЮ ПЕРЕПИСАНА) =====================
+   // ===================== ФУНКЦИЯ ОТПРАВКИ ПРОФИЛЯ (ПОЛНОСТЬЮ ПЕРЕПИСАНА) =====================
 const sendProfile = async (ctx, profile, page, total, isLast, isDemo = false) => {
     return messageQueue.add(async () => {
         try {
@@ -5475,47 +5252,127 @@ const sendProfile = async (ctx, profile, page, total, isLast, isDemo = false) =>
             
             console.log(`✅ [SEND PROFILE READY] Профиль готов: ${profile.n || profile.name || 'unknown'}, isDemo=${isDemo || profile.isDemo}`);
             
+            // 🔥 ОБНОВЛЕННАЯ ФУНКЦИЯ ОЧИСТКИ ТЕКСТА С ЭКРАНИРОВАНИЕМ HTML
+            const cleanTextForHtml = (text) => {
+                if (!text || typeof text !== 'string') return "";
+                
+                // Сначала заменяем HTML-специальные символы
+                let cleaned = text
+                    .replace(/&/g, '&amp;')   // Должно быть первой заменой
+                    .replace(/</g, '&lt;')    // Важно! Заменяем < на &lt;
+                    .replace(/>/g, '&gt;')    // Важно! Заменяем > на &gt;
+                    .replace(/"/g, '&quot;')  // Заменяем двойные кавычки
+                    .replace(/'/g, '&#39;');  // Заменяем одинарные кавычки
+                
+                // Затем убираем нестандартные символы (как в исходной функции)
+                cleaned = cleaned
+                    .replace(/[^\x00-\x7F\u0400-\u04FF\u0500-\u052F\u2DE0-\u2DFF\uA640-\uA69F\s.,!?;:()\-+=\[\]{}@#$%^&*<>\/\\|'"`~]/g, '')
+                    .trim();
+                
+                return cleaned;
+            };
+            
+            // 🔥 ФУНКЦИЯ ОЧИСТКИ URL
+            const cleanUrl = (url) => {
+                if (!url || typeof url !== 'string') return '';
+                return url.trim();
+            };
+            
             // 🔥 ПРЕОБРАЗОВАНИЕ В ЕДИНЫЙ ФОРМАТ
             const fullProfile = {
                 id: profile.id || profile._id || 'unknown_' + Date.now(),
-                name: profile.n || profile.name || 'Неизвестно',
+                name: cleanTextForHtml(profile.n || profile.name || 'Неизвестно'), // Экранируем имя
                 age: parseInt(profile.a || profile.age) || 25,
-                country: profile.c || profile.country || ctx.session?.filterCountry || 'Страна',
-                city: profile.ct || profile.city || ctx.session?.filterCity || 'Город',
+                country: cleanTextForHtml(profile.c || profile.country || ctx.session?.filterCountry || 'Страна'), // Экранируем страну
+                city: cleanTextForHtml(profile.ct || profile.city || ctx.session?.filterCity || 'Город'), // Экранируем город
                 about: profile.ab || profile.about || 'Описание недоступно',
-                photoUrl: profile.p || profile.photoUrl || '',
-                photos: Array.isArray(profile.phs || profile.photos) ? (profile.phs || profile.photos) : [],
-                telegram: isDemo || profile.isDemo ? null : (profile.tg || profile.telegram),
+                photoUrl: cleanUrl(profile.p || profile.photoUrl || ''),
+                photos: Array.isArray(profile.phs || profile.photos) ? (profile.phs || profile.photos).map(cleanUrl) : [],
+                telegram: isDemo || profile.isDemo ? null : cleanUrl(profile.tg || profile.telegram),
                 phone: isDemo || profile.isDemo ? null : (profile.tel || profile.phone),
-                whatsapp: isDemo || profile.isDemo ? null : (profile.wa || profile.whatsapp),
+                whatsapp: isDemo || profile.isDemo ? null : cleanUrl(profile.wa || profile.whatsapp),
                 createdAt: profile.ca || profile.createdAt || new Date(),
                 isDemo: isDemo || profile.isDemo || false
             };
             
             console.log(`🔍 [FULL PROFILE] Создан: ${fullProfile.name}, фото: ${fullProfile.photos.length}, город: "${fullProfile.city}", страна: "${fullProfile.country}"`);
             
-            // 🔥 ФУНКЦИЯ ОЧИСТКИ ТЕКСТА
-            const cleanText = (text) => {
-                if (!text || typeof text !== 'string') return "";
-                return text
-                    .replace(/[^\x00-\x7F\u0400-\u04FF\u0500-\u052F\u2DE0-\u2DFF\uA640-\uA69F\s.,!?;:()\-+=\[\]{}@#$%^&*<>\/\\|'"`~]/g, '')
-                    .trim();
+            // 🔥 ПОДГОТОВКА ОПИСАНИЯ
+            let about = cleanTextForHtml(fullProfile.about);
+            const maxAboutLength = SCALING_CONFIG.PERFORMANCE.MAX_CAPTION_LENGTH - 300; // Оставляем место для остального текста
+            
+            if (about.length > maxAboutLength) {
+                about = about.substring(0, maxAboutLength - 3) + "...";
+            }
+            
+            // 🔥 ФУНКЦИЯ ФОРМАТИРОВАНИЯ КОНТАКТОВ (ДЛЯ ПОЛНОГО ДОСТУПА)
+            const formatTelegram = (username) => {
+                if (!username) return "";
+                const cleanUsername = cleanUrl(username);
+                
+                if (/^[0-9+\-() ]+$/.test(cleanUsername)) {
+                    const cleanDigits = cleanUsername.replace(/[^0-9]/g, "");
+                    if (cleanDigits.startsWith('7') || cleanDigits.startsWith('8') || (cleanDigits.length >= 10 && !cleanDigits.startsWith('1'))) {
+                        let telegramNumber = cleanDigits;
+                        if (telegramNumber.startsWith('7') && telegramNumber.length === 11) telegramNumber = telegramNumber.substring(1);
+                        else if (telegramNumber.startsWith('8') && telegramNumber.length === 11) telegramNumber = telegramNumber.substring(1);
+                        return `🔵 <a href="https://t.me/${telegramNumber}">Telegram</a>`;
+                    }
+                }
+                
+                if (cleanUsername.startsWith("https://t.me/")) {
+                    const cleaned = decodeURIComponent(cleanUsername)
+                        .replace("https://t.me/", "")
+                        .replace(/^%40/, "@")
+                        .replace(/^\+/, "");
+                    return `🔵 <a href="https://t.me/${cleaned}">Telegram</a>`;
+                }
+                
+                const cleaned = cleanUsername.replace(/^[@+]/, "");
+                return `🔵 <a href="https://t.me/${cleaned}">Telegram</a>`;
             };
             
-            // 🔥 ПОДГОТОВКА ОПИСАНИЯ
-            let about = cleanText(fullProfile.about);
-            if (about.length > SCALING_CONFIG.PERFORMANCE.MAX_CAPTION_LENGTH) {
-                about = about.substring(0, SCALING_CONFIG.PERFORMANCE.MAX_CAPTION_LENGTH - 3) + "...";
-            }
+            const formatWhatsApp = (url) => {
+                if (!url) return "";
+                const cleanUrlText = cleanUrl(url);
+                
+                if (/^[0-9+\-() ]+$/.test(cleanUrlText)) {
+                    let cleanDigits = cleanUrlText.replace(/[^0-9]/g, "");
+                    if (cleanDigits.startsWith('8') && cleanDigits.length === 11) cleanDigits = '7' + cleanDigits.substring(1);
+                    else if (cleanDigits.length === 10) cleanDigits = '7' + cleanDigits;
+                    
+                    if (cleanDigits.length === 11 && cleanDigits.startsWith('7')) {
+                        return `🟢 <a href="https://wa.me/${cleanDigits}">WhatsApp</a>`;
+                    }
+                }
+                
+                return `🟢 <a href="${cleanUrlText}">WhatsApp</a>`;
+            };
+            
+            const formatPhone = (phone) => {
+                if (!phone) return "";
+                let cleanDigits = cleanTextForHtml(phone).replace(/[^0-9]/g, "");
+                if (!cleanDigits) return "";
+                
+                let formattedPhone = cleanTextForHtml(phone);
+                if (cleanDigits.length === 11 || cleanDigits.length === 10) {
+                    if (cleanDigits.startsWith('7') && cleanDigits.length === 11) formattedPhone = `+${cleanDigits}`;
+                    else if (cleanDigits.startsWith('8') && cleanDigits.length === 11) formattedPhone = `+7${cleanDigits.substring(1)}`;
+                    else if (cleanDigits.length === 10) formattedPhone = `+7${cleanDigits}`;
+                }
+                
+                return `📞 ${formattedPhone}`;
+            };
             
             // 🔥 РАЗДЕЛЯЕМ ЛОГИКУ ДЕМО И ПОЛНОГО ДОСТУПА
             if (fullProfile.isDemo) {
                 console.log(`🎭 [DEMO MODE] Создаем демо-анкету для ${fullProfile.name}`);
                 
+                // 🔥 ДЕМО-ПОДПИСЬ (контакты скрыты)
                 const demoCaption = `
-👤 <b>${cleanText(fullProfile.name)}</b>, ${fullProfile.age}
+👤 <b>${fullProfile.name}</b>, ${fullProfile.age}
 ━━━━━━━━━━━━━━━━━━━━━━
-📍 <b>${cleanText(fullProfile.city)}, ${cleanText(fullProfile.country)}</b>
+📍 <b>${fullProfile.city}, ${fullProfile.country}</b>
 ━━━━━━━━━━━━━━━━━━━━━━
 <em>${about.length > 300 ? about.substring(0, 300) + `...<a href="http://t.me/magicboss_bot/magic">читать полностью в ✨Magic</a>` : about}</em>
 ━━━━━━━━━━━━━━━━━━━━━━
@@ -5536,30 +5393,6 @@ const sendProfile = async (ctx, profile, page, total, isLast, isDemo = false) =>
 ━━━━━━━━━━━━━━━━━━━━━━
 <a href="http://t.me/magicboss_bot/magic"><b>✨Magic WebApp</b></a>
                 `.trim();
-                
-                // 🔥 ПОДГОТОВКА КНОПОК ПАГИНАЦИИ
-                let keyboard = [];
-                if (isLast) {
-                    const filterKey = `demo:country:${ctx.session?.filterCountry || 'all'}:age:${ctx.session?.ageRange?.label || 'all'}:city:${ctx.session?.filterCity || 'all'}`;
-                    const filteredProfiles = cacheManager.getGlobalFilter(filterKey, true) || [];
-                    const totalPages = Math.ceil((filteredProfiles.length || 0) / SCALING_CONFIG.PERFORMANCE.PROFILES_PER_PAGE);
-                    
-                    const currentFilters = {
-                        country: ctx.session?.filterCountry,
-                        city: ctx.session?.filterCity,
-                        ageRange: ctx.session?.ageRange
-                    };
-                    
-                    keyboard = createEnhancedPaginationKeyboard(page, totalPages, filterKey, currentFilters, true);
-                    
-                    // 🔥 ДОБАВЛЯЕМ ДОПОЛНИТЕЛЬНЫЕ КНОПКИ
-                    keyboard.push(
-                        [{ text: "🏙️ Вернуться к городам", callback_data: "back_to_current_country_cities" }],
-                        [{ text: "🎂 Фильтр по возрасту", callback_data: "filter_by_age" }],
-                        [{ text: "🌍 Все страны", callback_data: "all_countries_with_check" }],
-                        [{ text: "🧹 Очистить экран", callback_data: "clear_screen" }]
-                    );
-                }
                 
                 // 🔥 ПОДГОТОВКА ФОТО
                 let photosToSend = [];
@@ -5590,14 +5423,38 @@ const sendProfile = async (ctx, profile, page, total, isLast, isDemo = false) =>
                     });
                 }
                 
-                // Если нет фото - НЕ добавляем заглушку, просто пропускаем отправку фото
-if (photosToSend.length === 0) {
-    console.log(`⚠️ [NO PHOTOS] У профиля "${fullProfile.name}" нет фото, пропускаем отправку фото`);
-}
+                // Если нет фото - отправляем только текст
+                if (photosToSend.length === 0) {
+                    console.log(`⚠️ [NO PHOTOS] У профиля "${fullProfile.name}" нет фото, отправляем только текст`);
+                }
                 
-                // Ограничиваем количество
+                // Ограничиваем количество фото
                 photosToSend = photosToSend.slice(0, 10);
                 console.log(`📸 [DEMO PHOTOS] Будет отправлено ${photosToSend.length} фото`);
+                
+                // 🔥 ПОДГОТОВКА КНОПОК ПАГИНАЦИИ
+                let keyboard = [];
+                if (isLast) {
+                    const filterKey = `demo:country:${ctx.session?.filterCountry || 'all'}:age:${ctx.session?.ageRange?.label || 'all'}:city:${ctx.session?.filterCity || 'all'}`;
+                    const filteredProfiles = cacheManager.getGlobalFilter(filterKey, true) || [];
+                    const totalPages = Math.ceil((filteredProfiles.length || 0) / SCALING_CONFIG.PERFORMANCE.PROFILES_PER_PAGE);
+                    
+                    const currentFilters = {
+                        country: ctx.session?.filterCountry,
+                        city: ctx.session?.filterCity,
+                        ageRange: ctx.session?.ageRange
+                    };
+                    
+                    keyboard = createEnhancedPaginationKeyboard(page, totalPages, filterKey, currentFilters, true);
+                    
+                    // 🔥 ДОБАВЛЯЕМ ДОПОЛНИТЕЛЬНЫЕ КНОПКИ
+                    keyboard.push(
+                        [{ text: "🏙️ Вернуться к городам", callback_data: "back_to_current_country_cities" }],
+                        [{ text: "🎂 Фильтр по возрасту", callback_data: "filter_by_age" }],
+                        [{ text: "🌍 Все страны", callback_data: "all_countries_with_check" }],
+                        [{ text: "🧹 Очистить экран", callback_data: "clear_screen" }]
+                    );
+                }
                 
                 // 🔥 ФУНКЦИЯ ОТПРАВКИ ФОТО
                 const sendPhotoSafely = async (photoUrl, photoNumber, totalPhotos) => {
@@ -5655,70 +5512,11 @@ if (photosToSend.length === 0) {
                 // 🔥 ПОЛНЫЙ ДОСТУП
                 console.log(`👑 [FULL ACCESS] Создаем полную анкету для ${fullProfile.name}`);
                 
-                // 🔥 ФОРМАТИРОВАНИЕ КОНТАКТОВ
-                const formatTelegram = (username) => {
-                    if (!username) return "";
-                    const cleanUsername = cleanText(username);
-                    
-                    if (/^[0-9+\-() ]+$/.test(cleanUsername)) {
-                        const cleanDigits = cleanUsername.replace(/[^0-9]/g, "");
-                        if (cleanDigits.startsWith('7') || cleanDigits.startsWith('8') || (cleanDigits.length >= 10 && !cleanDigits.startsWith('1'))) {
-                            let telegramNumber = cleanDigits;
-                            if (telegramNumber.startsWith('7') && telegramNumber.length === 11) telegramNumber = telegramNumber.substring(1);
-                            else if (telegramNumber.startsWith('8') && telegramNumber.length === 11) telegramNumber = telegramNumber.substring(1);
-                            return `🔵 <a href="https://t.me/${telegramNumber}">Telegram</a>`;
-                        }
-                    }
-                    
-                    if (cleanUsername.startsWith("https://t.me/")) {
-                        const cleaned = decodeURIComponent(cleanUsername)
-                            .replace("https://t.me/", "")
-                            .replace(/^%40/, "@")
-                            .replace(/^\+/, "");
-                        return `🔵 <a href="https://t.me/${cleaned}">Telegram</a>`;
-                    }
-                    
-                    const cleaned = cleanUsername.replace(/^[@+]/, "");
-                    return `🔵 <a href="https://t.me/${cleaned}">Telegram</a>`;
-                };
-                
-                const formatWhatsApp = (url) => {
-                    if (!url) return "";
-                    const cleanUrl = cleanText(url);
-                    
-                    if (/^[0-9+\-() ]+$/.test(cleanUrl)) {
-                        let cleanDigits = cleanUrl.replace(/[^0-9]/g, "");
-                        if (cleanDigits.startsWith('8') && cleanDigits.length === 11) cleanDigits = '7' + cleanDigits.substring(1);
-                        else if (cleanDigits.length === 10) cleanDigits = '7' + cleanDigits;
-                        
-                        if (cleanDigits.length === 11 && cleanDigits.startsWith('7')) {
-                            return `🟢 <a href="https://wa.me/${cleanDigits}">WhatsApp</a>`;
-                        }
-                    }
-                    
-                    return `🟢 <a href="${cleanUrl}">WhatsApp</a>`;
-                };
-                
-                const formatPhone = (phone) => {
-                    if (!phone) return "";
-                    let cleanDigits = cleanText(phone).replace(/[^0-9]/g, "");
-                    if (!cleanDigits) return "";
-                    
-                    let formattedPhone = cleanText(phone);
-                    if (cleanDigits.length === 11 || cleanDigits.length === 10) {
-                        if (cleanDigits.startsWith('7') && cleanDigits.length === 11) formattedPhone = `+${cleanDigits}`;
-                        else if (cleanDigits.startsWith('8') && cleanDigits.length === 11) formattedPhone = `+7${cleanDigits.substring(1)}`;
-                        else if (cleanDigits.length === 10) formattedPhone = `+7${cleanDigits}`;
-                    }
-                    
-                    return `📞 ${formattedPhone}`;
-                };
-                
-                // 🔥 СОЗДАНИЕ ПОДПИСИ
+                // 🔥 ПОЛНАЯ ПОДПИСЬ (с контактами)
                 const fullCaption = `
-👤 <b>${cleanText(fullProfile.name)}</b>, ${fullProfile.age}
+👤 <b>${fullProfile.name}</b>, ${fullProfile.age}
 ━━━━━━━━━━━━━━━━━━━━━━
-📍 <b>${cleanText(fullProfile.city)}, ${cleanText(fullProfile.country)}</b>
+📍 <b>${fullProfile.city}, ${fullProfile.country}</b>
 ━━━━━━━━━━━━━━━━━━━━━━
 <em>${about.length > 300 ? about.substring(0, 300) + `...<a href="http://t.me/magicboss_bot/magic">читать полностью в ✨Magic</a>` : about}</em>
 ━━━━━━━━━━━━━━━━━━━━━━
@@ -5743,30 +5541,6 @@ ${(fullProfile.phone || fullProfile.telegram || fullProfile.whatsapp) ? '━━�
 ━━━━━━━━━━━━━━━━━━━━━━
 <a href="http://t.me/magicboss_bot/magic"><b>✨Magic WebApp</b></a>
                 `.trim();
-                
-                // 🔥 ПОДГОТОВКА КНОПОК ПАГИНАЦИИ
-                let keyboard = [];
-                if (isLast) {
-                    const filterKey = `country:${ctx.session?.filterCountry || 'all'}:age:${ctx.session?.ageRange?.label || 'all'}:city:${ctx.session?.filterCity || 'all'}`;
-                    const filteredProfiles = cacheManager.getGlobalFilter(filterKey, false) || [];
-                    const totalPages = Math.ceil((filteredProfiles.length || 0) / SCALING_CONFIG.PERFORMANCE.PROFILES_PER_PAGE);
-                    
-                    const currentFilters = {
-                        country: ctx.session?.filterCountry,
-                        city: ctx.session?.filterCity,
-                        ageRange: ctx.session?.ageRange
-                    };
-                    
-                    keyboard = createEnhancedPaginationKeyboard(page, totalPages, filterKey, currentFilters);
-                    
-                    // 🔥 ДОБАВЛЯЕМ ДОПОЛНИТЕЛЬНЫЕ КНОПКИ
-                    keyboard.push(
-                        [{ text: "🏙️ Вернуться к городам", callback_data: "back_to_current_country_cities" }],
-                        [{ text: "🎂 Фильтр по возрасту", callback_data: "filter_by_age" }],
-                        [{ text: "🌍 Все страны", callback_data: "all_countries_with_check" }],
-                        [{ text: "🧹 Очистить экран", callback_data: "clear_screen" }]
-                    );
-                }
                 
                 // 🔥 ПОДГОТОВКА ФОТО
                 let photosToSend = [];
@@ -5812,6 +5586,30 @@ ${(fullProfile.phone || fullProfile.telegram || fullProfile.whatsapp) ? '━━�
                 // Ограничиваем количество
                 photosToSend = photosToSend.slice(0, 10);
                 console.log(`📸 [FULL PHOTOS] Будет отправлено ${photosToSend.length} фото`);
+                
+                // 🔥 ПОДГОТОВКА КНОПОК ПАГИНАЦИИ
+                let keyboard = [];
+                if (isLast) {
+                    const filterKey = `country:${ctx.session?.filterCountry || 'all'}:age:${ctx.session?.ageRange?.label || 'all'}:city:${ctx.session?.filterCity || 'all'}`;
+                    const filteredProfiles = cacheManager.getGlobalFilter(filterKey, false) || [];
+                    const totalPages = Math.ceil((filteredProfiles.length || 0) / SCALING_CONFIG.PERFORMANCE.PROFILES_PER_PAGE);
+                    
+                    const currentFilters = {
+                        country: ctx.session?.filterCountry,
+                        city: ctx.session?.filterCity,
+                        ageRange: ctx.session?.ageRange
+                    };
+                    
+                    keyboard = createEnhancedPaginationKeyboard(page, totalPages, filterKey, currentFilters);
+                    
+                    // 🔥 ДОБАВЛЯЕМ ДОПОЛНИТЕЛЬНЫЕ КНОПКИ
+                    keyboard.push(
+                        [{ text: "🏙️ Вернуться к городам", callback_data: "back_to_current_country_cities" }],
+                        [{ text: "🎂 Фильтр по возрасту", callback_data: "filter_by_age" }],
+                        [{ text: "🌍 Все страны", callback_data: "all_countries_with_check" }],
+                        [{ text: "🧹 Очистить экран", callback_data: "clear_screen" }]
+                    );
+                }
                 
                 // 🔥 ФУНКЦИЯ ОТПРАВКИ ФОТО
                 const sendPhotoSafely = async (photoUrl, photoNumber, totalPhotos) => {
@@ -5879,26 +5677,36 @@ ${(fullProfile.phone || fullProfile.telegram || fullProfile.whatsapp) ? '━━�
             });
             
             try {
-                // 🔥 ПОСЛЕДНЯЯ ПОПЫТКА - ОТПРАВИТЬ ПРОСТОЕ СООБЩЕНИЕ
+                // 🔥 ОШИБКА ЭКРАНИРОВАНИЯ HTML - дополнительная диагностика
+                if (error.message.includes("can't parse entities") || error.message.includes("Unsupported start tag")) {
+                    console.error(`🔍 [HTML PARSE ERROR] Ошибка парсинга HTML в анкете`);
+                    console.error(`🔍 [PROBLEMATIC TEXT] Проблемный текст:`, {
+                        name: profile?.n || profile?.name,
+                        city: profile?.ct || profile?.city,
+                        country: profile?.c || profile?.country,
+                        about: (profile?.ab || profile?.about)?.substring(0, 100) + '...'
+                    });
+                }
+                
+                // 🔥 ПОСЛЕДНЯЯ ПОПЫТКА - ОТПРАВИТЬ ПРОСТОЕ СООБЩЕНИЕ БЕЗ HTML
                 const fallbackText = `
-❌ <b>ОШИБКА ПРИ ОТПРАВКЕ АНКЕТЫ</b>
+❌ ОШИБКА ПРИ ОТПРАВКЕ АНКЕТЫ
 
 Приносим извинения, произошла техническая ошибка при загрузке анкеты.
 
-<b>Что можно сделать:</b>
+Что можно сделать:
 1. Попробуйте выбрать другой город
-2. Используйте кнопку "🧹 Очистить экран"
+2. Используйте кнопку "Очистить экран"
 3. Перезапустите поиск
 
-<em>Если ошибка повторяется, напишите в поддержку @MagicAdd</em>
+Если ошибка повторяется, напишите в поддержку @MagicAdd
                 `.trim();
                 
                 const msg = await ctx.reply(fallbackText, { 
-                    parse_mode: "HTML",
                     reply_markup: {
                         inline_keyboard: [
-                            [{ text: "🧹 Очистить экран", callback_data: "clear_screen" }],
-                            [{ text: "🌍 Все страны", callback_data: "all_countries_with_check" }]
+                            [{ text: "Очистить экран", callback_data: "clear_screen" }],
+                            [{ text: "Все страны", callback_data: "all_countries_with_check" }]
                         ]
                     }
                 });
