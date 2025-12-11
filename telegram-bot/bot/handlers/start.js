@@ -184,28 +184,46 @@ module.exports = (bot, db) => {
   };
 
   // ================= 5. ФУНКЦИЯ ПРОВЕРКИ ПОДПИСКИ НА КАНАЛ =================
-  const checkChannelSubscription = async (ctx) => {
-    try {
-      const userId = ctx.from.id;
-      const channelUsername = "@MagicYourClub";
+  // const checkChannelSubscription = async (ctx) => {
+  //   try {
+  //     const userId = ctx.from.id;
+  //     const channelUsername = "<b>MagicClubPrivate</b>";
 
-      const chatMember = await ctx.telegram.getChatMember(
-        channelUsername,
-        userId
-      );
+  //     const chatMember = await ctx.telegram.getChatMember(
+  //       channelUsername,
+  //       userId
+  //     );
 
-      const isSubscribed =
-        chatMember.status === "member" ||
-        chatMember.status === "administrator" ||
-        chatMember.status === "creator";
+  //     const isSubscribed =
+  //       chatMember.status === "member" ||
+  //       chatMember.status === "administrator" ||
+  //       chatMember.status === "creator";
 
-      return isSubscribed;
-    } catch (error) {
-      console.error("Ошибка проверки подписки на канал:", error);
-      return false;
-    }
-  };
+  //     return isSubscribed;
+  //   } catch (error) {
+  //     console.error("Ошибка проверки подписки на канал:", error);
+  //     return false;
+  //   }
+  // };
+// ================= 5. ФУНКЦИЯ ПРОВЕРКИ ПОДПИСКИ НА КАНАЛ =================
+const checkChannelSubscription = async (ctx) => {
+  try {
+    const userId = ctx.from.id;
+    const channelId = "-1001933124424"; // Ваш реальный Chat ID
+    
+    const chatMember = await ctx.telegram.getChatMember(channelId, userId);
 
+    const isSubscribed =
+      chatMember.status === "member" ||
+      chatMember.status === "administrator" ||
+      chatMember.status === "creator";
+
+    return isSubscribed;
+  } catch (error) {
+    console.error("Ошибка проверки подписки на канал:", error);
+    return false;
+  }
+};
   // ================= 6. ФУНКЦИЯ ПРОВЕРКИ ПОЛНОГО ДОСТУПА =================
   const checkFullAccess = async (ctx) => {
     try {
@@ -220,38 +238,91 @@ module.exports = (bot, db) => {
   };
 
   // ================= 7. ФУНКЦИЯ ПОКАЗА СООБЩЕНИЯ О ПОДПИСКЕ НА КАНАЛ =================
-  const showChannelSubscriptionMessage = async (ctx) => {
-    const subscriptionKeyboard = {
-      inline_keyboard: [
-        [
-          {
-            text: "✅ Я ПОДПИСАЛСЯ",
-            callback_data: "check_channel_subscription",
-          },
-        ],
-        [
-          {
-            text: "📢 ПОДПИСАТЬСЯ НА КАНАЛ",
-            url: "https://t.me/MagicYourClub",
-          },
-        ],
-        [
-          {
-            text: "🔙 Назад",
-            callback_data: "back_to_main",
-          },
-          {
-            text: "🧹 Очистить экран",
-            callback_data: "clear_screen",
-          },
-        ],
-      ],
-    };
+//   const showChannelSubscriptionMessage = async (ctx) => {
+//     const subscriptionKeyboard = {
+//       inline_keyboard: [
+//         [
+//           {
+//             text: "✅ Я ПОДПИСАЛСЯ",
+//             callback_data: "check_channel_subscription",
+//           },
+//         ],
+//         [
+//           {
+//             text: "📢 ПОДПИСАТЬСЯ НА КАНАЛ",
+//             url: "https://t.me/+H6Eovikei9xiZWU0",
+//           },
+//         ],
+//         [
+//           {
+//             text: "🔙 Назад",
+//             callback_data: "back_to_main",
+//           },
+//           {
+//             text: "🧹 Очистить экран",
+//             callback_data: "clear_screen",
+//           },
+//         ],
+//       ],
+//     };
 
-    const subscriptionMessage = `
+//     const subscriptionMessage = `
+// 📢 <b>ОБЯЗАТЕЛЬНОЕ УСЛОВИЕ</b>
+
+// Для доступа к анкетам необходимо подписаться на наш канал <a href="https://t.me/+H6Eovikei9xiZWU0"><b>MagicClubPrivate</b></a>
+
+// ✨ <b>Почему это важно:</b>
+// • Получайте уведомления о новых анкетах
+// • Будьте в курсе обновлений бота
+// • Узнавайте о специальных предложениях
+// • Получайте эксклюзивный контент
+
+// <b>Инструкция:</b>
+// 1. Нажмите кнопку "ПОДПИСАТЬСЯ НА КАНАЛ"
+// 2. Подпишитесь на канал <a href="https://t.me/+H6Eovikei9xiZWU0"><b>MagicClubPrivate</b></a>
+// 3. Вернитесь в бот и нажмите "Я ПОДПИСАЛСЯ"
+
+// После подтверждения подписки вы получите доступ к анкетам!
+//     `;
+
+//     await ctx.reply(subscriptionMessage, {
+//       parse_mode: "HTML",
+//       reply_markup: subscriptionKeyboard,
+//     });
+//   };
+// ================= 7. ФУНКЦИЯ ПОКАЗА СООБЩЕНИЯ О ПОДПИСКЕ НА КАНАЛ =================
+const showChannelSubscriptionMessage = async (ctx) => {
+  const subscriptionKeyboard = {
+    inline_keyboard: [
+      [
+        {
+          text: "✅ Я ПОДПИСАЛСЯ",
+          callback_data: "check_channel_subscription",
+        },
+      ],
+      [
+        {
+          text: "📢 ПОДПИСАТЬСЯ НА КАНАЛ",
+          url: "https://t.me/+H6Eovikei9xiZWU0",
+        },
+      ],
+      [
+        {
+          text: "🔙 Назад",
+          callback_data: "back_to_main",
+        },
+        {
+          text: "🧹 Очистить экран",
+          callback_data: "clear_screen",
+        },
+      ],
+    ],
+  };
+
+  const subscriptionMessage = `
 📢 <b>ОБЯЗАТЕЛЬНОЕ УСЛОВИЕ</b>
 
-Для доступа к анкетам необходимо подписаться на наш канал <b>@MagicYourClub</b>
+Для доступа к анкетам необходимо подписаться на наш канал <a href="https://t.me/+H6Eovikei9xiZWU0"><b>MagicClubPrivate</b></a>
 
 ✨ <b>Почему это важно:</b>
 • Получайте уведомления о новых анкетах
@@ -261,18 +332,17 @@ module.exports = (bot, db) => {
 
 <b>Инструкция:</b>
 1. Нажмите кнопку "ПОДПИСАТЬСЯ НА КАНАЛ"
-2. Подпишитесь на канал @MagicYourClub
+2. Подпишитесь на канал <a href="https://t.me/+H6Eovikei9xiZWU0"><b>MagicClubPrivate</b></a>
 3. Вернитесь в бот и нажмите "Я ПОДПИСАЛСЯ"
 
 После подтверждения подписки вы получите доступ к анкетам!
-    `;
+  `;
 
-    await ctx.reply(subscriptionMessage, {
-      parse_mode: "HTML",
-      reply_markup: subscriptionKeyboard,
-    });
-  };
-
+  await ctx.reply(subscriptionMessage, {
+    parse_mode: "HTML",
+    reply_markup: subscriptionKeyboard,
+  });
+};
   // ================= 8. ФУНКЦИЯ ОЧИСТКИ ЧАТА =================
   const clearChat = async (ctx) => {
     try {
@@ -338,14 +408,14 @@ module.exports = (bot, db) => {
 <em>Здесь ты найдёшь каталог анкет со всего мира для общения, флирта и серьёзных отношений.
 🎉 Каталог обновляется каждый день — всегда свежие профили!
 Начни поиск или размести свою анкету — возможно, твоя вторая половинка уже здесь!</em>\n
-<a href="http://t.me/MagicYourClub"><b>Подпишись на новости и обновления в Magic ClubX ✨</b></a>\n`;
+<b>Подпишись на новости и обновления в <a href="https://t.me/+H6Eovikei9xiZWU0"><b>MagicClubPrivate</b></a> ✨</b>\n`;
 
       // Добавляем информацию о демо-режиме если нет полного доступа
       if (!hasFullAccess) {
         welcomeText += `\n👀 <b>Сейчас вы в демо-режиме:</b>
 • Показано по 3 анкеты на город  
 • Контакты скрыты
-• ✨ Для полного доступа Вы должны быть подписаны на наш канал @MagicYourClub и оплатить подписку
+• ✨ Для полного доступа Вы должны быть подписаны на наш канал <a href="https://t.me/+H6Eovikei9xiZWU0"><b>MagicClubPrivate</b></a> и оплатить подписку
 `;
       }
 
@@ -398,95 +468,183 @@ module.exports = (bot, db) => {
   };
 
   // ================= 10. ФУНКЦИЯ ОТОБРАЖЕНИЯ ГЛАВНОГО МЕНЮ =================
-  const showMainMenu = async (ctx) => {
-    // Обновляем статистику посещений
-    await updateUserVisit(ctx.from.id);
+//   const showMainMenu = async (ctx) => {
+//     // Обновляем статистику посещений
+//     await updateUserVisit(ctx.from.id);
 
-    const hasFullAccess = await checkFullAccess(ctx);
+//     const hasFullAccess = await checkFullAccess(ctx);
 
-    const baseKeyboard = [];
+//     const baseKeyboard = [];
 
-    baseKeyboard.push([
-      { text: "🌍 Все страны", callback_data: "all_countries_with_check" },
-    ]);
+//     baseKeyboard.push([
+//       { text: "🌍 Все страны", callback_data: "all_countries_with_check" },
+//     ]);
 
-    // 🔥 ДОБАВЛЯЕМ КНОПКУ СОЗДАНИЯ АНКЕТЫ ПЕРЕД КНОПКОЙ "НАЗАД"
-    baseKeyboard.push([
-      {
-        text: "📝 СОЗДАТЬ АНКЕТУ",
-        web_app: { url: "https://bot-vai-web-app.web.app/?tab=catalog" },
-      },
-    ]);
+//     // 🔥 ДОБАВЛЯЕМ КНОПКУ СОЗДАНИЯ АНКЕТЫ ПЕРЕД КНОПКОЙ "НАЗАД"
+//     baseKeyboard.push([
+//       {
+//         text: "📝 СОЗДАТЬ АНКЕТУ",
+//         web_app: { url: "https://bot-vai-web-app.web.app/?tab=catalog" },
+//       },
+//     ]);
 
-    baseKeyboard.push([
-      { text: "💎 Купить подписку", callback_data: "choose_payment_method" },
-    ]);
-    baseKeyboard.push([
-      { text: "👨‍💻 Связаться с админом", url: "https://t.me/MagicAdd" },
-    ]);
-    baseKeyboard.push([
-      { text: "🧹 Очистить экран", callback_data: "clear_screen" },
-    ]);
+//     baseKeyboard.push([
+//       { text: "💎 Купить подписку", callback_data: "choose_payment_method" },
+//     ]);
+//     baseKeyboard.push([
+//       { text: "👨‍💻 Связаться с админом", url: "https://t.me/MagicAdd" },
+//     ]);
+//     baseKeyboard.push([
+//       { text: "🧹 Очистить экран", callback_data: "clear_screen" },
+//     ]);
 
-    let welcomeText = `👋<b> Привет, ${ctx.from.first_name}!
+//     let welcomeText = `👋<b> Привет, ${ctx.from.first_name}!
+// Добро пожаловать в клуб знакомств ✨Magic!</b> 
+// <em>Здесь ты найдёшь базу данных анкет со всего мира для общения и не только. 
+// 🗄️ База обновляется и пополняется каждый день — всегда свежие профили!
+// Начни поиск или размести свою анкету — возможно, твоя вторая половинка уже здесь!</em>\n
+// <a href="http://t.me/MagicYourClub"><b>✨ Подпишись на новости и обновления в Magic ClubX</b></a>\n`;
+
+//     // Добавляем информацию о демо-режиме если нет полного доступа
+//     if (!hasFullAccess) {
+//       welcomeText += `\n👀 <b>Сейчас вы в демо-режиме:</b>
+// • Показано по 3 анкеты на город  
+// • Контакты скрыты
+// • ✨ Для полного доступа Вы должны быть подписаны на наш канал <a href="https://t.me/+H6Eovikei9xiZWU0"><b>MagicClubPrivate</b></a> и оплатить подписку
+// `;
+//     }
+
+//     try {
+//       if (welcomeImage.fileId) {
+//         await ctx.replyWithPhoto(welcomeImage.fileId, {
+//           caption: welcomeText,
+//           parse_mode: "HTML",
+//           reply_markup: { inline_keyboard: baseKeyboard },
+//         });
+//       } else if (welcomeImage.buffer) {
+//         const msg = await ctx.replyWithPhoto(
+//           { source: welcomeImage.buffer },
+//           {
+//             caption: welcomeText,
+//             parse_mode: "HTML",
+//             reply_markup: { inline_keyboard: baseKeyboard },
+//           }
+//         );
+//         welcomeImage.fileId = msg.photo[0].file_id;
+//       } else {
+//         await ctx.reply(welcomeText, {
+//           parse_mode: "HTML",
+//           reply_markup: { inline_keyboard: baseKeyboard },
+//         });
+//       }
+//     } catch (e) {
+//       console.error("Ошибка отправки welcome:", e);
+//       await ctx.reply(welcomeText, {
+//         parse_mode: "HTML",
+//         reply_markup: { inline_keyboard: baseKeyboard },
+//       });
+//     }
+
+//     const subscription = await checkSubscription(ctx.from.id);
+//     if (subscription.active) {
+//       setTimeout(async () => {
+//         try {
+//           await ctx.reply(subscription.message, { parse_mode: "HTML" });
+//         } catch (e) {
+//           console.error("Ошибка отправки статуса подписки:", e);
+//         }
+//       }, 500);
+//     }
+//   };
+// ================= 10. ФУНКЦИЯ ОТОБРАЖЕНИЯ ГЛАВНОГО МЕНЮ =================
+const showMainMenu = async (ctx) => {
+  // Обновляем статистику посещений
+  await updateUserVisit(ctx.from.id);
+
+  const hasFullAccess = await checkFullAccess(ctx);
+
+  const baseKeyboard = [];
+
+  baseKeyboard.push([
+    { text: "🌍 Все страны", callback_data: "all_countries_with_check" },
+  ]);
+
+  // 🔥 ДОБАВЛЯЕМ КНОПКУ СОЗДАНИЯ АНКЕТЫ ПЕРЕД КНОПКОЙ "НАЗАД"
+  baseKeyboard.push([
+    {
+      text: "📝 СОЗДАТЬ АНКЕТУ",
+      web_app: { url: "https://bot-vai-web-app.web.app/?tab=catalog" },
+    },
+  ]);
+
+  baseKeyboard.push([
+    { text: "💎 Купить подписку", callback_data: "choose_payment_method" },
+  ]);
+  baseKeyboard.push([
+    { text: "👨‍💻 Связаться с админом", url: "https://t.me/MagicAdd" },
+  ]);
+  baseKeyboard.push([
+    { text: "🧹 Очистить экран", callback_data: "clear_screen" },
+  ]);
+
+  let welcomeText = `👋<b> Привет, ${ctx.from.first_name}!
 Добро пожаловать в клуб знакомств ✨Magic!</b> 
 <em>Здесь ты найдёшь базу данных анкет со всего мира для общения и не только. 
 🗄️ База обновляется и пополняется каждый день — всегда свежие профили!
 Начни поиск или размести свою анкету — возможно, твоя вторая половинка уже здесь!</em>\n
-<a href="http://t.me/MagicYourClub"><b>✨ Подпишись на новости и обновления в Magic ClubX</b></a>\n`;
+<b>✨ Подпишись на новости и обновления в <a href="https://t.me/+H6Eovikei9xiZWU0"><b>MagicClubPrivate</b></a></b>\n`;
 
-    // Добавляем информацию о демо-режиме если нет полного доступа
-    if (!hasFullAccess) {
-      welcomeText += `\n👀 <b>Сейчас вы в демо-режиме:</b>
+  // Добавляем информацию о демо-режиме если нет полного доступа
+  if (!hasFullAccess) {
+    welcomeText += `\n👀 <b>Сейчас вы в демо-режиме:</b>
 • Показано по 3 анкеты на город  
 • Контакты скрыты
-• ✨ Для полного доступа Вы должны быть подписаны на наш канал @MagicYourClub и оплатить подписку
+• ✨ Для полного доступа Вы должны быть подписаны на наш канал <a href="https://t.me/+H6Eovikei9xiZWU0"><b>MagicClubPrivate</b></a> и оплатить подписку
 `;
-    }
+  }
 
-    try {
-      if (welcomeImage.fileId) {
-        await ctx.replyWithPhoto(welcomeImage.fileId, {
+  try {
+    if (welcomeImage.fileId) {
+      await ctx.replyWithPhoto(welcomeImage.fileId, {
+        caption: welcomeText,
+        parse_mode: "HTML",
+        reply_markup: { inline_keyboard: baseKeyboard },
+      });
+    } else if (welcomeImage.buffer) {
+      const msg = await ctx.replyWithPhoto(
+        { source: welcomeImage.buffer },
+        {
           caption: welcomeText,
           parse_mode: "HTML",
           reply_markup: { inline_keyboard: baseKeyboard },
-        });
-      } else if (welcomeImage.buffer) {
-        const msg = await ctx.replyWithPhoto(
-          { source: welcomeImage.buffer },
-          {
-            caption: welcomeText,
-            parse_mode: "HTML",
-            reply_markup: { inline_keyboard: baseKeyboard },
-          }
-        );
-        welcomeImage.fileId = msg.photo[0].file_id;
-      } else {
-        await ctx.reply(welcomeText, {
-          parse_mode: "HTML",
-          reply_markup: { inline_keyboard: baseKeyboard },
-        });
-      }
-    } catch (e) {
-      console.error("Ошибка отправки welcome:", e);
+        }
+      );
+      welcomeImage.fileId = msg.photo[0].file_id;
+    } else {
       await ctx.reply(welcomeText, {
         parse_mode: "HTML",
         reply_markup: { inline_keyboard: baseKeyboard },
       });
     }
+  } catch (e) {
+    console.error("Ошибка отправки welcome:", e);
+    await ctx.reply(welcomeText, {
+      parse_mode: "HTML",
+      reply_markup: { inline_keyboard: baseKeyboard },
+    });
+  }
 
-    const subscription = await checkSubscription(ctx.from.id);
-    if (subscription.active) {
-      setTimeout(async () => {
-        try {
-          await ctx.reply(subscription.message, { parse_mode: "HTML" });
-        } catch (e) {
-          console.error("Ошибка отправки статуса подписки:", e);
-        }
-      }, 500);
-    }
-  };
-
+  const subscription = await checkSubscription(ctx.from.id);
+  if (subscription.active) {
+    setTimeout(async () => {
+      try {
+        await ctx.reply(subscription.message, { parse_mode: "HTML" });
+      } catch (e) {
+        console.error("Ошибка отправки статуса подписки:", e);
+      }
+    }, 500);
+  }
+};
   // ================= 11. ИНИЦИАЛИЗАЦИЯ КОЛЛЕКЦИЙ =================
   const initCollections = async () => {
     const collections = [
@@ -551,105 +709,205 @@ module.exports = (bot, db) => {
     await clearScreen(ctx);
   });
 
-  // ================= 14. ПРОВЕРКА ПОДПИСКИ НА КАНАЛ =================
-  bot.action("check_channel_subscription", async (ctx) => {
-    try {
-      await ctx.answerCbQuery("🔍 Проверяем подписку...");
+ // ================= 14. ПРОВЕРКА ПОДПИСКИ НА КАНАЛ =================
+bot.action("check_channel_subscription", async (ctx) => {
+  try {
+    await ctx.answerCbQuery("🔍 Проверяем подписку...");
 
-      const isSubscribed = await checkChannelSubscription(ctx);
+    console.log(`DEBUG: Начало проверки подписки для пользователя ${ctx.from.id}`);
+    
+    const isSubscribed = await checkChannelSubscription(ctx);
+    
+    console.log(`DEBUG: Результат проверки для ${ctx.from.id}: ${isSubscribed}`);
 
-      if (isSubscribed) {
-        await ctx.answerCbQuery("✅ Подписка подтверждена!");
+    if (isSubscribed) {
+      await ctx.answerCbQuery("✅ Подписка подтверждена!");
 
-        ctx.session = ctx.session || {};
-        ctx.session.channelSubscribed = true;
+      ctx.session = ctx.session || {};
+      ctx.session.channelSubscribed = true;
 
-        const successKeyboard = {
-          inline_keyboard: [
-            [
-              {
-                text: "🌍 Смотреть анкеты",
-                callback_data: "all_countries_with_check",
-              },
-            ],
-            [
-              { text: "🔙 Назад", callback_data: "back_to_main" },
-              { text: "🧹 Очистить экран", callback_data: "clear_screen" },
-            ],
+      const successKeyboard = {
+        inline_keyboard: [
+          [
+            {
+              text: "🌍 Смотреть анкеты",
+              callback_data: "all_countries_with_check",
+            },
           ],
-        };
+          [
+            { text: "🔙 Назад", callback_data: "back_to_main" },
+            { text: "🧹 Очистить экран", callback_data: "clear_screen" },
+          ],
+        ],
+      };
 
-        await ctx.reply(
-          `
+      await ctx.reply(
+        `
 🎉 <b>ПОДПИСКА ПОДТВЕРЖДЕНА</b>
 
-✅ Теперь у вас есть доступ к анкетам в демо-режиме!
-✨ Благодарим за подписку на наш канал @MagicYourClub
+✅ Теперь у вас есть доступ к анкетам!
+✨ Благодарим за подписку на наш канал <a href="https://t.me/+H6Eovikei9xiZWU0"><b>MagicClubPrivate</b></a>
 
-👀 <b></b>
-• Показано по 3 анкеты на город  
-• Контакты скрыты
-• ✨ Для полного доступа Вы должны быть подписаны на наш канал @MagicYourClub и оплатить подписку
+<b>Нажмите "Смотреть анкеты" чтобы начать поиск!</b>
+      `,
+        {
+          parse_mode: "HTML",
+          reply_markup: successKeyboard,
+        }
+      );
+      
+      console.log(`DEBUG: Пользователь ${ctx.from.id} успешно прошел проверку подписки`);
+    } else {
+      await ctx.answerCbQuery("❌ Вы не подписаны на канал");
 
-<b>Нажмите "Смотреть анкеты" чтобы начать!</b>
-        `,
-          {
-            parse_mode: "HTML",
-            reply_markup: successKeyboard,
-          }
-        );
-      } else {
-        await ctx.answerCbQuery("❌ Вы не подписаны на канал");
-
-        const notSubscribedKeyboard = {
-          inline_keyboard: [
-            [
-              {
-                text: "✅ Я ПОДПИСАЛСЯ",
-                callback_data: "check_channel_subscription",
-              },
-            ],
-            [
-              {
-                text: "📢 ПОДПИСАТЬСЯ НА КАНАЛ",
-                url: "https://t.me/MagicYourClub",
-              },
-            ],
-            [{ text: "🔙 Назад", callback_data: "back_to_main" }],
+      const notSubscribedKeyboard = {
+        inline_keyboard: [
+          [
+            {
+              text: "✅ Я ПОДПИСАЛСЯ",
+              callback_data: "check_channel_subscription",
+            },
           ],
-        };
+          [
+            {
+              text: "📢 ПОДПИСАТЬСЯ НА КАНАЛ",
+              url: "https://t.me/+H6Eovikei9xiZWU0",
+            },
+          ],
+          [
+            { text: "🔙 Назад", callback_data: "back_to_main" },
+            { text: "🧹 Очистить экран", callback_data: "clear_screen" },
+          ],
+        ],
+      };
 
-        await ctx.reply(
-          `
+      await ctx.reply(
+        `
 ❌ <b>ПОДПИСКА НЕ НАЙДЕНА</b>
 
-Мы не видим вашу подписку на канал @MagicYourClub
+Мы не видим вашу подписку на канал <a href="https://t.me/+H6Eovikei9xiZWU0"><b>MagicClubPrivate</b></a>
 
 <b>Пожалуйста:</b>
 1. Убедитесь, что вы подписались на канал
-2. Нажмите кнопку "Я ПОДПИСАЛСЯ" для повторной проверки
+2. Подождите 5-10 секунд после подписки
+3. Нажмите кнопку "Я ПОДПИСАЛСЯ" для повторной проверки
 
-Если проблема persists, попробуйте:
-• Перезагрузить Telegram
-• Убедиться, что вы используете тот же аккаунт
-• Написать в поддержку @MagicAdd
-        `,
-          {
-            parse_mode: "HTML",
-            reply_markup: notSubscribedKeyboard,
-          }
-        );
-      }
-    } catch (error) {
-      console.error("Ошибка проверки подписки на канал:", error);
-      await ctx.answerCbQuery("❌ Ошибка проверки подписки");
+<b>Важно:</b>
+• Убедитесь, что вы используете тот же аккаунт Telegram
+• Если вы только что подписались, может потребоваться время для обновления статуса
+
+Если проблема не решается:
+• Перезагрузите Telegram
+• Напишите в поддержку @MagicAdd
+      `,
+        {
+          parse_mode: "HTML",
+          reply_markup: notSubscribedKeyboard,
+        }
+      );
+      
+      console.log(`DEBUG: Пользователь ${ctx.from.id} не подписан на канал`);
     }
-  });
+  } catch (error) {
+    console.error("Полная ошибка проверки подписки на канал:", error);
+    console.error("Детали ошибки:", {
+      userId: ctx.from.id,
+      errorCode: error.response?.error_code,
+      errorDescription: error.response?.description,
+      method: error.on?.method,
+      payload: error.on?.payload
+    });
+    
+    await ctx.answerCbQuery("❌ Ошибка проверки подписки");
+    
+    // Показываем сообщение об ошибке
+    const errorKeyboard = {
+      inline_keyboard: [
+        [
+          {
+            text: "🔄 Попробовать снова",
+            callback_data: "check_channel_subscription",
+          },
+        ],
+        [
+          { text: "🔙 Назад", callback_data: "back_to_main" },
+          { text: "🧹 Очистить экран", callback_data: "clear_screen" },
+        ],
+      ],
+    };
 
-  // ================= 15. ВЫБОР СПОСОБА ОПЛАТЫ =================
-  bot.action("choose_payment_method", async (ctx) => {
+    await ctx.reply(
+      `
+⚠️ <b>ТЕХНИЧЕСКАЯ ОШИБКА</b>
+
+Произошла ошибка при проверке подписки.
+
+<b>Что можно сделать:</b>
+1. Нажмите "Попробовать снова"
+2. Убедитесь, что бот является администратором канала
+3. Проверьте, что канал существует и доступен
+
+<b>Если ошибка повторяется:</b>
+• Напишите администратору @MagicAdd
+• Укажите код ошибки: <code>${error.response?.error_code || "неизвестно"}</code>
+      `,
+      {
+        parse_mode: "HTML",
+        reply_markup: errorKeyboard,
+      }
+    );
+  }
+});
+// ================= БАНКОВСКАЯ КАРТА =================
+bot.action("bank_card_payment", async (ctx) => {
+  const keyboard = {
+    inline_keyboard: [
+      [
+        {
+          text: "➡️ Связаться с админом",
+          url: "https://t.me/Audit_Magic",
+        },
+      ],
+      [
+        {
+          text: "🔙 Назад к выбору оплаты",
+          callback_data: "choose_payment_method",
+        },
+        {
+          text: "🧹 Очистить экран",
+          callback_data: "clear_screen",
+        },
+      ],
+    ],
+  };
+
+  await ctx.reply(
+    `💳 <b>Оплата банковской картой</b>\n\n` +
+      `Для оплаты картой свяжитесь с нашим администратором.\n` +
+      `В сообщении обязательно укажите:\n\n` +
+      `• 🌍 Страну, в которой вы находитесь\n` +
+      `• 🏦 Банк, картой которого хотите оплатить\n\n` +
+      `После этого администратор подберёт удобный способ оплаты и отправит вам реквизиты.\n\n` +
+      `➡️ Связаться с админом: @Audit_Magic`,
+    {
+      parse_mode: "HTML",
+      reply_markup: keyboard,
+    }
+  );
+});
+// ================= 15. ВЫБОР СПОСОБА ОПЛАТЫ =================
+bot.action("choose_payment_method", async (ctx) => {
+  try {
+    await ctx.answerCbQuery();
+
     const keyboard = {
       inline_keyboard: [
+        [
+          {
+            text: "💳 Оплата банковской картой",
+            callback_data: "bank_card_payment",
+          },
+        ],
         [
           {
             text: "⭐ Оплата Stars",
@@ -670,7 +928,7 @@ module.exports = (bot, db) => {
         ],
         [
           {
-            text: "🔙 Назад",
+            text: "🔙 Назад в главное меню",
             callback_data: "back_to_main",
           },
           {
@@ -681,50 +939,73 @@ module.exports = (bot, db) => {
       ],
     };
 
-    await ctx.reply(
-      `💎 <b>ВЫБЕРИ СПОСОБ ОПЛАТЫ</b>\n\n` +
-        `⭐ <b>Stars</b> - оплата через Telegram\n` +
-        `• Быстро и удобно\n` +
-        `• Внутри Telegram\n\n` +
-        ` 💲 <b>USDT </b> - оплата криптовалютой\n` +
-        `• Анонимно и безопасно\n` +
-        `• Поддержка USDT, BTC, ETH\n\n` +
-        `💎 <b>TON</b> - оплата в Toncoin\n` +
-        `• Быстрые переводы\n` +
-        `• Низкие комиссии\n\n` +
-        `<b>Выбери способ оплаты:</b>`,
-      {
-        parse_mode: "HTML",
-        reply_markup: keyboard,
-      }
-    );
-  });
+    const paymentMessage = `
+💎 <b>ВЫБЕРИ СПОСОБ ОПЛАТЫ</b>
 
-  // ================= 16. ТАРИФЫ ДЛЯ STARS =================
-  bot.action("show_stars_plans", async (ctx) => {
+<b>Доступные способы:</b>
+
+💳 <b>Банковская карта</b>
+• Оплата картой любой страны
+• Связь с администратором
+• Подбор удобного способа оплаты
+
+⭐ <b>Stars</b> - оплата через Telegram
+• Быстро и удобно
+• Внутри Telegram
+• Мгновенная активация
+
+💲 <b>USDT</b> - оплата криптовалютой  
+• Анонимно и безопасно
+• Поддержка USDT, BTC, ETH
+• Криптовалютные платежи
+
+💎 <b>TON</b> - оплата в Toncoin
+• Быстрые переводы
+• Низкие комиссии
+• Современная криптовалюта
+
+<b>Выбери способ оплаты:</b>`;
+
+    await ctx.reply(paymentMessage, {
+      parse_mode: "HTML",
+      reply_markup: keyboard,
+    });
+
+    console.log(`Пользователь ${ctx.from.id} выбрал "Выбор способа оплаты"`);
+  } catch (error) {
+    console.error("Ошибка в choose_payment_method:", error);
+    await ctx.reply("❌ Ошибка при загрузке способов оплаты");
+  }
+});
+
+// ================= 16. ТАРИФЫ ДЛЯ STARS =================
+bot.action("show_stars_plans", async (ctx) => {
+  try {
+    await ctx.answerCbQuery();
+
     const keyboard = {
       inline_keyboard: [
         [
           {
-            text: "🔥 1 день (99🌟)",
+            text: "🔥 1 ДЕНЬ - 99🌟",
             callback_data: "buy_1day",
           },
         ],
         [
           {
-            text: "❤️ 1 месяц (499🌟)",
+            text: "❤️ 1 МЕСЯЦ - 499🌟",
             callback_data: "buy_1month",
           },
         ],
         [
           {
-            text: "💫 1 год (1999🌟)",
+            text: "💫 1 ГОД - 1999🌟",
             callback_data: "buy_forever",
           },
         ],
         [
           {
-            text: "🔙 Назад",
+            text: "🔙 Назад к выбору оплаты",
             callback_data: "choose_payment_method",
           },
           {
@@ -735,44 +1016,75 @@ module.exports = (bot, db) => {
       ],
     };
 
-    await ctx.reply(
-      `⭐ <b>ОПЛАТА STARS</b>\n\n` +
-        `🔥 <b>1 день</b> - 99 Stars\n` +
-        `❤️ <b>1 месяц</b> - 499 Stars\n` +
-        `💫 <b>1 год</b> - 1999 Stars\n\n` +
-        `<b>Выбери тариф:</b>`,
-      {
-        parse_mode: "HTML",
-        reply_markup: keyboard,
-      }
-    );
-  });
+    const starsMessage = `
+⭐ <b>ОПЛАТА STARS</b>
 
-  // ================= 17. ТАРИФЫ ДЛЯ CRYPTO PAY =================
-  bot.action("show_crypto_plans", async (ctx) => {
+<b>Telegram Stars - это внутренняя валюта Telegram для оплаты внутри ботов.</b>
+
+<b>Как получить Stars:</b>
+1. Откройте Telegram → Настройки
+2. Выберите "Telegram Stars" или "Баланс"
+3. Пополните баланс Stars
+
+<b>Доступные тарифы:</b>
+
+🔥 <b>1 ДЕНЬ</b> - 99 Stars
+• Доступ на 24 часа
+• Полный доступ ко всем анкетам
+• Отображение контактов
+
+❤️ <b>1 МЕСЯЦ</b> - 499 Stars  
+• Доступ на 30 дней
+• Экономия 83% по сравнению с дневным тарифом
+• Полный доступ ко всем функциям
+
+💫 <b>1 ГОД</b> - 1999 Stars
+• Доступ на 365 дней
+• Максимальная экономия
+• Лучшее предложение
+
+<b>Выбери тариф:</b>`;
+
+    await ctx.reply(starsMessage, {
+      parse_mode: "HTML",
+      reply_markup: keyboard,
+    });
+
+    console.log(`Пользователь ${ctx.from.id} выбрал "Тарифы Stars"`);
+  } catch (error) {
+    console.error("Ошибка в show_stars_plans:", error);
+    await ctx.reply("❌ Ошибка при загрузке тарифов Stars");
+  }
+});
+
+// ================= 17. ТАРИФЫ ДЛЯ CRYPTO PAY =================
+bot.action("show_crypto_plans", async (ctx) => {
+  try {
+    await ctx.answerCbQuery();
+
     const keyboard = {
       inline_keyboard: [
         [
           {
-            text: "🟢 1 день - 1.99 USDT",
+            text: "🟢 1 ДЕНЬ - 1.99 USDT",
             callback_data: "crypto_basic",
           },
         ],
         [
           {
-            text: "🔵 1 месяц - 10 USDT",
+            text: "🔵 1 МЕСЯЦ - 10 USDT",
             callback_data: "crypto_pro",
           },
         ],
         [
           {
-            text: "🟣 1 год - 50 USDT",
+            text: "🟣 1 ГОД - 50 USDT",
             callback_data: "crypto_premium",
           },
         ],
         [
           {
-            text: "🔙 Назад",
+            text: "🔙 Назад к выбору оплаты",
             callback_data: "choose_payment_method",
           },
           {
@@ -783,54 +1095,91 @@ module.exports = (bot, db) => {
       ],
     };
 
-    await ctx.reply(
-      ` <b>ОПЛАТА USDT </b>\n\n` +
-        `Чтобы купить USDT через 🤖крипто-бота, выберите бота, найдите раздел P2P-торговли, выберите USDT, затем укажите способ оплаты (например, СБП) и найдите подходящего продавца, чьи лимиты и курс вас устраивают. Следуйте инструкции продавца для завершения сделки: сделайте перевод фиатных денег и дождитесь поступления USDT на ваш счет.\n\n` +
-        `<b>Пошаговая инструкция:</b>\n` +
-        `1. Найдите бота: Запустите нужного крипто-бота, например, через телеграм-кошелек.\n` +
-        `2. Настройте бота (необязательно): Перед началом зайдите в «Настройки», чтобы установить нужную фиатную валюту (например, гривну или рубль), это повлияет на доступные способы оплаты.\n` +
-        `3. Перейдите в P2P-раздел: Найдите в меню раздел «P2P» (peer-to-peer), где происходит покупка и продажа криптовалюту напрямую между пользователями.\n` +
-        `4. Выберите «Купить»: Нажмите на кнопку «Купить», выберите USDT и удобный для вас метод оплаты (например, СБП, банковский перевод).\n` +
-        `5. Выберите продавца: Ознакомьтесь с предложенными продавцами. Обратите внимание на курс, лимиты по сумме и репутацию продавца.\n` +
-        `6. Создайте сделку: Выберите подходящего продавца и следуйте его инструкции для совершения сделки.\n` +
-        `7. Подтвердите перевод: После совершения перевода подтвердите сделку в боте. Продавец получит уведомление, и после проверки оплаты отправит вам USDT.\n\n` +
-        `Выбери тариф подписки:\n\n` +
-        `🟢 <b>1 день</b> - 1.99 USDT\n` +
-        `🔵 <b>1 месяц</b> - 10 USDT\n` +
-        `🟣 <b>1 год</b> - 50 USDT\n\n` +
-        `<b>Выбери тариф:</b>`,
-      {
-        parse_mode: "HTML",
-        reply_markup: keyboard,
-      }
-    );
-  });
+    const cryptoMessage = `
+💲 <b>ОПЛАТА USDT (КРИПТОВАЛЮТОЙ)</b>
+
+<b>Что такое USDT?</b>
+USDT (Tether) - это стейблкоин, привязанный к доллару США.
+1 USDT ≈ 1 USD
+
+<b>Как купить USDT через @CryptoBot:</b>
+
+<b>ШАГ 1: Настройка</b>
+1. Запустите @CryptoBot
+2. Войдите в "Настройки" 
+3. Установите нужную фиатную валюту (рубли, гривны, доллары)
+
+<b>ШАГ 2: Покупка USDT</b>
+1. Нажмите "P2P Trading" (P2P-торговля)
+2. Выберите "Купить" → "USDT"
+3. Выберите способ оплаты (СБП, банковская карта и т.д.)
+
+<b>ШАГ 3: Выбор продавца</b>
+1. Найдите продавца с хорошим рейтингом
+2. Проверьте курс и лимиты
+3. Следуйте инструкциям продавца
+
+<b>ШАГ 4: Оплата</b>
+1. Совершите перевод продавцу
+2. Подтвердите сделку в боте
+3. Дождитесь поступления USDT
+
+<b>Доступные тарифы:</b>
+
+🟢 <b>1 ДЕНЬ</b> - 1.99 USDT
+• Мгновенная активация
+• Полный доступ на 24 часа
+
+🔵 <b>1 МЕСЯЦ</b> - 10 USDT
+• Экономия 83% 
+• Доступ на 30 дней
+
+🟣 <b>1 ГОД</b> - 50 USDT
+• Максимальная экономия
+• Доступ на 365 дней
+
+<b>Выбери тариф:</b>`;
+
+    await ctx.reply(cryptoMessage, {
+      parse_mode: "HTML",
+      reply_markup: keyboard,
+    });
+
+    console.log(`Пользователь ${ctx.from.id} выбрал "Тарифы USDT"`);
+  } catch (error) {
+    console.error("Ошибка в show_crypto_plans:", error);
+    await ctx.reply("❌ Ошибка при загрузке тарифов USDT");
+  }
+});
 
   // ================= 18. ТАРИФЫ ДЛЯ TON =================
-  bot.action("show_ton_plans", async (ctx) => {
+bot.action("show_ton_plans", async (ctx) => {
+  try {
+    await ctx.answerCbQuery();
+
     const keyboard = {
       inline_keyboard: [
         [
           {
-            text: "🟡 1 день - 1 TON",
+            text: "🟡 1 ДЕНЬ - 1 TON",
             callback_data: "ton_basic",
           },
         ],
         [
           {
-            text: "🟠 1 месяц - 5 ",
+            text: "🟠 1 МЕСЯЦ - 5 TON",
             callback_data: "ton_pro",
           },
         ],
         [
           {
-            text: "🔴 1 год - 25 TON",
+            text: "🔴 1 ГОД - 25 TON",
             callback_data: "ton_premium",
           },
         ],
         [
           {
-            text: "🔙 Назад",
+            text: "🔙 Назад к выбору оплаты",
             callback_data: "choose_payment_method",
           },
           {
@@ -841,19 +1190,64 @@ module.exports = (bot, db) => {
       ],
     };
 
-    await ctx.reply(
-      `💎 <b>ОПЛАТА TON</b>\n\n` +
-        `Выбери тариф подписки:\n\n` +
-        `🟡 <b>1 день</b> - 1 TON\n` +
-        `🟠 <b>1 месяц</b> - 5 TON\n` +
-        `🔴 <b>1 год</b> - 25 TON\n\n` +
-        `<b>Выбери тариф:</b>`,
-      {
-        parse_mode: "HTML",
-        reply_markup: keyboard,
-      }
-    );
-  });
+    const tonMessage = `
+💎 <b>ОПЛАТА TON (TONCOIN)</b>
+
+<b>Что такое TON?</b>
+TON (The Open Network) - это быстрая и безопасная блокчейн-платформа.
+Используется для мгновенных платежей с низкими комиссиями.
+
+<b>Как купить TON через @CryptoBot:</b>
+
+<b>ШАГ 1: Настройка</b>
+1. Запустите @CryptoBot
+2. Войдите в "Настройки"
+3. Выберите удобную валюту для пополнения
+
+<b>ШАГ 2: Покупка TON</b>  
+1. Нажмите "P2P Trading" (P2P-торговля)
+2. Выберите "Купить" → "TON"
+3. Выберите способ оплаты
+
+<b>ШАГ 3: Выбор продавца</b>
+1. Найдите продавца с хорошим рейтингом
+2. Проверьте курс TON к USD
+3. Следуйте инструкциям продавца
+
+<b>ШАГ 4: Оплата</b>
+1. Совершите перевод продавцу
+2. Подтвердите сделку в боте
+3. Получите TON на кошелек
+
+<b>Доступные тарифы:</b>
+
+🟡 <b>1 ДЕНЬ</b> - 1 TON
+• Мгновенная активация
+• Полный доступ на 24 часа
+
+🟠 <b>1 МЕСЯЦ</b> - 5 TON
+• Экономия 93%
+• Доступ на 30 дней
+
+🔴 <b>1 ГОД</b> - 25 TON
+• Максимальная экономия
+• Доступ на 365 дней
+
+<b>Текущий курс TON:</b> ~$6.5 за 1 TON
+
+<b>Выбери тариф:</b>`;
+
+    await ctx.reply(tonMessage, {
+      parse_mode: "HTML",
+      reply_markup: keyboard,
+    });
+
+    console.log(`Пользователь ${ctx.from.id} выбрал "Тарифы TON"`);
+  } catch (error) {
+    console.error("Ошибка в show_ton_plans:", error);
+    await ctx.reply("❌ Ошибка при загрузке тарифов TON");
+  }
+});
 
   // ================= 19. ОБРАБОТКА CRYPTO PAY ПЛАТЕЖЕЙ =================
   bot.action(/crypto_(.+)/, async (ctx) => {
@@ -961,7 +1355,7 @@ module.exports = (bot, db) => {
     let planData;
 
     if (plan === "basic") {
-      planData = { amount: 2.5, name: "1 день", duration: 1, asset: "TON" };
+      planData = { amount: 1, name: "1 день", duration: 1, asset: "TON" };
     } else if (plan === "pro") {
       planData = { amount: 5, name: "1 месяц", duration: 30, asset: "TON" };
     } else if (plan === "premium") {
@@ -1162,7 +1556,7 @@ module.exports = (bot, db) => {
           `🎉 <b>ПЛАТЕЖ ПОДТВЕРЖДЕН!</b>\n\n` +
             `✅ Подписка успешно активирована!\n\n` +
             `${subscription.message}\n\n` +
-            `<b>📢 Не забудьте подписаться на наш канал @MagicYourClub для полного доступа к анкетам!</b>`,
+            `<b>📢 Не забудьте подписаться на наш канал <a href="https://t.me/+H6Eovikei9xiZWU0"><b>MagicClubPrivate</b></a> для полного доступа к анкетам!</b>`,
           {
             parse_mode: "HTML",
             reply_markup: keyboard,
@@ -1280,7 +1674,7 @@ module.exports = (bot, db) => {
 
       await ctx.reply(
         `✅ <b>Подписка успешно активирована!</b>\n\n${subscription.message}\n\n` +
-          `<b>📢 Не забудьте подписаться на наш канал @MagicYourClub для полного доступа к анкетам!</b>`,
+          `<b>📢 Не забудьте подписаться на наш канал <a href="https://t.me/+H6Eovikei9xiZWU0"><b>MagicClubPrivate</b></a> для полного доступа к анкетам!</b>`,
         {
           parse_mode: "HTML",
           reply_markup: keyboard,

@@ -1021,9 +1021,7 @@ async loadGlobalFullCache(db) {
         }
     }
 },
-    
-    // 2. ЗАГРУЗКА ГЛОБАЛЬНОГО ДЕМО-КЭША (с ВСЕМИ городами и странами)
-// 2. ЗАГРУЗКА ГЛОБАЛЬНОГО ДЕМО-КЭША (с ВСЕМИ городами из ВСЕХ профилей)
+// 2. ЗАГРУЗКА ГЛОБАЛЬНОГО ДЕМО-КЭША (ОПТИМИЗИРОВАННАЯ ВЕРСИЯ)
 async loadGlobalDemoCache(db) {
     if (globalDemoCacheLoading) {
         console.log('⏳ [GLOBAL DEMO CACHE] Уже загружается...');
@@ -1031,19 +1029,29 @@ async loadGlobalDemoCache(db) {
     }
     
     globalDemoCacheLoading = true;
-    console.log('🚀 [GLOBAL DEMO CACHE] Начинаем загрузку глобального демо-кэша из ВСЕХ 70,000+ профилей...');
+    console.log('🚀 [GLOBAL DEMO CACHE] Начинаем загрузку глобального демо-кэша...');
     
     try {
-        const startTime = Date.now();
+        // 🔥 ЗАГРУЖАЕМ ПРОФИЛИ ИЗ ПОЛНОГО КЭША, ЕСЛИ ОН УЖЕ ЗАГРУЖЕН
+        // (чтобы не делать лишних чтений из Firestore)
+        const fullProfiles = this.getGlobalProfiles(false);
         
-        // 🔥 ЗАГРУЖАЕМ ВСЕ ПРОФИЛИ ДЛЯ ДЕМО-КЭША
+        if (fullProfiles && fullProfiles.length > 0) {
+            console.log(`✅ [DEMO CACHE] Используем уже загруженные профили из полного кэша: ${fullProfiles.length}`);
+            
+            // ПРОСТО СОЗДАЕМ ДЕМО-ВЕРСИИ ИЗ СУЩЕСТВУЮЩИХ ДАННЫХ
+            return this.createDemoCacheFromFullProfiles(fullProfiles);
+        }
+        
+        // ЕСЛИ ПОЛНЫЙ КЭШ НЕ ЗАГРУЖЕН - ЗАГРУЖАЕМ ИЗ FIRESTORE
+        console.log(`📥 [DEMO CACHE] Полный кэш не загружен, загружаем из Firestore...`);
+        
+        const startTime = Date.now();
         let allProfiles = [];
         let lastDoc = null;
         let batchCount = 0;
         const BATCH_SIZE = 5000;
-        const MAX_PROFILES = 100000; // 🔥 БОЛЬШЕ чем 70,000 чтобы загрузить ВСЕ
-        
-        console.log(`📥 [DEMO LOAD] Загрузка ВСЕХ профилей для демо-кэша...`);
+        const MAX_PROFILES = 70000;
         
         while (allProfiles.length < MAX_PROFILES) {
             batchCount++;
@@ -1094,151 +1102,16 @@ async loadGlobalDemoCache(db) {
             if (docsCount === BATCH_SIZE) {
                 await new Promise(resolve => setTimeout(resolve, 100));
             }
-            
-            if (allProfiles.length % 10000 === 0) {
-                const currentTime = Date.now();
-                const elapsed = (currentTime - startTime) / 1000;
-                const speed = (allProfiles.length / elapsed).toFixed(1);
-                console.log(`📈 [DEMO PROGRESS] ${allProfiles.length} анкет за ${elapsed.toFixed(1)}с (${speed} анкет/сек)`);
-            }
         }
         
         const loadTime = ((Date.now() - startTime) / 1000).toFixed(2);
         console.log(`✅ [DEMO LOADED] Загружено ${allProfiles.length} профилей за ${loadTime} секунд`);
         
-        if (allProfiles.length === 0) {
-            console.log(`❌ [DEMO ERROR] Не удалось загрузить профили для демо-кэша!`);
-            return false;
-        }
-        
-        // 🔥 СОЗДАЕМ ДЕМО-КЭШ С ВСЕМИ ГОРОДАМИ
-        console.log(`🔧 [DEMO PROCESSING] Создание демо-кэша из ${allProfiles.length} профилей...`);
-        
-        const demoProfiles = [];
-        const citiesCounter = new Map(); // Счетчик для ограничения 3 анкет на город
-        const demoCountries = new Set();
-        const demoCitiesMap = new Map();
-        
-        // ПЕРВЫЙ ПРОХОД: собираем ВСЕ города и страны
-        console.log(`🔍 [DEMO PHASE 1] Сбор всех городов и стран...`);
-        
-        for (let i = 0; i < allProfiles.length; i++) {
-            const profile = allProfiles[i];
-            const normalizedCountry = this.normalizeCountryName(profile.country);
-            const normalizedCity = this.normalizeCityName(profile.city);
-            
-            if (normalizedCountry && normalizedCity) {
-                demoCountries.add(normalizedCountry);
-                
-                if (!demoCitiesMap.has(normalizedCountry)) {
-                    demoCitiesMap.set(normalizedCountry, new Set());
-                }
-                demoCitiesMap.get(normalizedCountry).add(normalizedCity);
-            }
-            
-            if (i % 10000 === 0 && i > 0) {
-                console.log(`📊 [DEMO PROGRESS] Обработано ${i}/${allProfiles.length} профилей`);
-            }
-        }
-        
-        // ВТОРОЙ ПРОХОД: добавляем профили с ограничением 3 на город
-        console.log(`🔍 [DEMO PHASE 2] Добавление профилей (макс 3 на город)...`);
-        
-        for (let i = 0; i < allProfiles.length; i++) {
-            const profile = allProfiles[i];
-            const normalizedCountry = this.normalizeCountryName(profile.country);
-            const normalizedCity = this.normalizeCityName(profile.city);
-            
-            if (!normalizedCountry || !normalizedCity) continue;
-            
-            const cityKey = `${normalizedCountry}_${normalizedCity}`;
-            
-            if (!citiesCounter.has(cityKey)) {
-                citiesCounter.set(cityKey, 0);
-            }
-            
-            const currentCount = citiesCounter.get(cityKey);
-            
-            if (currentCount < 3) {
-                citiesCounter.set(cityKey, currentCount + 1);
-                
-                const demoProfile = {
-                    ...profile,
-                    country: normalizedCountry,
-                    city: normalizedCity,
-                    about: replaceSitesInAbout(profile.about),
-                    phone: null,
-                    telegram: null,
-                    whatsapp: null,
-                    isDemo: true
-                };
-                demoProfiles.push(demoProfile);
-            }
-            
-            if (i % 10000 === 0 && i > 0) {
-                console.log(`📊 [DEMO PROGRESS] Добавлено ${demoProfiles.length} демо-профилей`);
-            }
-        }
-        
-        // 🔥 КЭШИРУЕМ ДЕМО-ПРОФИЛИ
-        console.log(`💾 [DEMO CACHE] Кэширование ${demoProfiles.length} демо-профилей...`);
-        await this.cacheGlobalProfiles(demoProfiles, true);
-        
-        // 🔥 КЭШИРУЕМ ВСЕ СТРАНЫ
-        const sortedDemoCountries = Array.from(demoCountries).sort();
-        globalDemoCache.set("demo:countries", sortedDemoCountries);
-        globalDemoCache.set("demo:countries_raw", Array.from(demoCountries));
-        
-        // 🔥 КЭШИРУЕМ ВСЕ ГОРОДА
-        console.log(`🗺️ [DEMO CACHE] Кэширование городов по странам...`);
-        demoCitiesMap.forEach((citiesSet, country) => {
-            globalDemoCache.set(`demo:cities:${country}`, Array.from(citiesSet).sort());
-        });
-        
-        // СТАТИСТИКА
-        let totalCities = 0;
-        demoCitiesMap.forEach((citiesSet) => {
-            totalCities += citiesSet.size;
-        });
-        
-        const totalTime = ((Date.now() - startTime) / 1000).toFixed(2);
-        
-        console.log('='.repeat(80));
-        console.log(`✅ [GLOBAL DEMO CACHE] СОЗДАН ДЕМО-КЭШ!`);
-        console.log(`⏱️  Время загрузки: ${totalTime} секунд`);
-        console.log(`📊 Профилей в демо-кэше: ${demoProfiles.length} (из ${allProfiles.length} загруженных)`);
-        console.log(`🌍 Стран: ${demoCountries.size}`);
-        console.log(`🏙️  Городов: ${totalCities}`);
-        console.log(`🎯 Ограничение: максимум 3 анкеты на город`);
-        console.log(`🚫 Контакты: скрыты в демо-режиме`);
-        console.log('='.repeat(80));
-        
-        // 🔥 ОСОБАЯ СТАТИСТИКА ДЛЯ РОССИИ
-        const russiaKey = "🇷🇺 Россия";
-        if (demoCitiesMap.has(russiaKey)) {
-            const russianCities = demoCitiesMap.get(russiaKey);
-            console.log(`🇷🇺 [RUSSIA STATS] Городов России в демо-кэше: ${russianCities.size}`);
-            
-            if (russianCities.size < 120) {
-                console.log(`⚠️  [RUSSIA WARNING] В демо-кэше только ${russianCities.size} городов России, а должно быть ~120`);
-                console.log(`🔍 Проверяем нормализацию названий городов...`);
-                
-                // Проверяем какие города есть
-                const russianCitiesArray = Array.from(russianCities).sort();
-                console.log(`📋 Города России в демо-кэше (первые 30):`);
-                for (let i = 0; i < Math.min(30, russianCitiesArray.length); i += 5) {
-                    const chunk = russianCitiesArray.slice(i, i + 5);
-                    console.log(`   ${chunk.join(', ')}`);
-                }
-            } else {
-                console.log(`✅ [RUSSIA SUCCESS] Все ~120 городов России в демо-кэше!`);
-            }
-        }
-        
-        return true;
+        // 🔥 СОЗДАЕМ ДЕМО-КЭШ ИЗ ЗАГРУЖЕННЫХ ПРОФИЛЕЙ
+        return this.createDemoCacheFromFullProfiles(allProfiles);
         
     } catch (error) {
-        console.error(`❌ [GLOBAL DEMO CACHE] Критическая ошибка:`, error.message);
+        console.error(`❌ [GLOBAL DEMO CACHE] Ошибка:`, error.message);
         console.error(error.stack);
         return false;
     } finally {
@@ -1246,27 +1119,247 @@ async loadGlobalDemoCache(db) {
     }
 },
     
-   
-// 3. КЭШИРОВАНИЕ ПРОФИЛЕЙ В ГЛОБАЛЬНЫЙ КЭШ (УПРОЩЕННАЯ ВЕРСИЯ)
+ // ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ: СОЗДАНИЕ ДЕМО-КЭША ИЗ ПОЛНЫХ ПРОФИЛЕЙ (ПОЛНОСТЬЮ ПЕРЕПИСАНА С ИНДЕКСАМИ)
+async createDemoCacheFromFullProfiles(fullProfiles) {
+    try {
+        console.log(`🔧 [DEMO CREATION] Создаем демо-кэш из ${fullProfiles.length} профилей...`);
+        
+        const demoProfiles = [];
+        const countriesSet = new Set();
+        const citiesByCountry = new Map();
+        const cityProfilesCount = new Map();
+        
+        // 🔥 СОЗДАЕМ ДЕМО-ВЕРСИИ (3 анкеты на город, скрываем контакты)
+        console.log(`👤 [DEMO PROCESSING] Обработка ${fullProfiles.length} профилей...`);
+        
+        for (let i = 0; i < fullProfiles.length; i++) {
+            const profile = fullProfiles[i];
+            
+            // Получаем данные из профиля
+            const originalName = profile.n || profile.name || '';
+            const originalAge = profile.a || profile.age || 0;
+            const originalCountry = profile.c || profile.country || '';
+            const originalCity = profile.ct || profile.city || '';
+            const originalAbout = profile.ab || profile.about || '';
+            const originalPhotoUrl = profile.p || profile.photoUrl || '';
+            const originalPhotos = profile.phs || profile.photos || [];
+            
+            // Нормализуем страну и город
+            const normalizedCountry = originalCountry ? 
+                this.normalizeCountryName(originalCountry) : 'Не указана';
+            const normalizedCity = originalCity ? 
+                this.normalizeCityName(originalCity) : 'Не указан';
+            
+            // Сохраняем страны и города для списков
+            if (normalizedCountry && normalizedCountry !== 'Не указана') {
+                countriesSet.add(normalizedCountry);
+                
+                if (!citiesByCountry.has(normalizedCountry)) {
+                    citiesByCountry.set(normalizedCountry, new Set());
+                }
+                if (normalizedCity && normalizedCity !== 'Не указан') {
+                    citiesByCountry.get(normalizedCountry).add(normalizedCity);
+                }
+            }
+            
+            // Проверяем лимит 3 анкеты на город
+            const cityKey = `${normalizedCountry}_${normalizedCity}`;
+            const currentCount = cityProfilesCount.get(cityKey) || 0;
+            
+            if (currentCount >= 3) {
+                continue; // Пропускаем, если уже есть 3 анкеты для этого города
+            }
+            
+            cityProfilesCount.set(cityKey, currentCount + 1);
+            
+            // 🔥 СОЗДАЕМ ДЕМО-ПРОФИЛЬ (скрываем контакты)
+            const demoProfile = {
+                id: profile.id || `demo_${Date.now()}_${i}`,
+                n: originalName || `Анкета ${i + 1}`,
+                a: parseInt(originalAge) || 0,
+                c: normalizedCountry,
+                ct: normalizedCity,
+                ab: replaceSitesInAbout(originalAbout),
+                p: originalPhotoUrl,
+                phs: originalPhotos,
+                tg: null, // 🔥 КОНТАКТЫ СКРЫТЫ
+                tel: null,
+                wa: null,
+                ca: profile.ca || profile.createdAt || new Date(),
+                isDemo: true
+            };
+            
+            // Проверяем наличие фото
+            const hasPhoto = demoProfile.p && demoProfile.p.trim() !== '';
+            const hasPhotos = demoProfile.phs && demoProfile.phs.length > 0;
+            
+            if (!hasPhoto && !hasPhotos) {
+                console.log(`⚠️ [DEMO SKIP] Профиль "${demoProfile.n}" без фото, пропускаем`);
+                continue;
+            }
+            
+            demoProfiles.push(demoProfile);
+            
+            // Прогресс каждые 5000 профилей
+            if (i % 5000 === 0 && i > 0) {
+                console.log(`📊 [DEMO PROGRESS] Обработано ${i}/${fullProfiles.length}, создано ${demoProfiles.length} демо-профилей`);
+            }
+        }
+        
+        console.log(`✅ [DEMO CREATION] Создано ${demoProfiles.length} демо-профилей (из ${fullProfiles.length} полных)`);
+        
+        if (demoProfiles.length === 0) {
+            console.log(`❌ [DEMO CRITICAL] Не создано ни одного демо-профиля!`);
+            return false;
+        }
+        
+        // 🔥 КЭШИРУЕМ ДЕМО-ПРОФИЛИ
+        console.log(`💾 [DEMO CACHE] Кэширование ${demoProfiles.length} демо-профилей...`);
+        await this.cacheGlobalProfiles(demoProfiles, true);
+        
+        // 🔥 СОХРАНЯЕМ СТРАНЫ И ГОРОДЫ
+        console.log(`🗺️ [DEMO GEO] Сохранение стран и городов...`);
+        const sortedCountries = Array.from(countriesSet).sort();
+        globalDemoCache.set("demo:countries", sortedCountries);
+        globalDemoCache.set("demo:countries_raw", Array.from(countriesSet));
+        
+        // Сохраняем города по странам
+        citiesByCountry.forEach((citiesSet, country) => {
+            globalDemoCache.set(`demo:cities:${country}`, Array.from(citiesSet).sort());
+        });
+        
+        // 🔥 СОЗДАЕМ ИНДЕКСЫ ДЛЯ ДЕМО-КЭША (ПОЛНОСТЬЮ ПЕРЕПИСАНО)
+        console.log(`📇 [DEMO INDEX] Создание индексов для демо-кэша из ${demoProfiles.length} профилей...`);
+        
+        const demoCountryCityIndex = new Map();
+        const demoCountryIndex = new Map();
+        const demoCityIndex = new Map(); // 🔥 НОВЫЙ: индекс только по городам
+        
+        let indexedProfiles = 0;
+        let profilesWithCountry = 0;
+        let profilesWithCity = 0;
+        
+        for (let i = 0; i < demoProfiles.length; i++) {
+            const profile = demoProfiles[i];
+            const country = profile.c;
+            
+            if (country && country !== 'Не указана') {
+                profilesWithCountry++;
+                
+                // 1. Индекс по стране
+                if (!demoCountryIndex.has(country)) {
+                    demoCountryIndex.set(country, []);
+                }
+                demoCountryIndex.get(country).push(i);
+                
+                // 2. Индекс по стране+городу
+                const city = profile.ct;
+                if (city && city !== 'Не указан') {
+                    profilesWithCity++;
+                    const key = `${country}:${city}`;
+                    if (!demoCountryCityIndex.has(key)) {
+                        demoCountryCityIndex.set(key, []);
+                    }
+                    demoCountryCityIndex.get(key).push(i);
+                    
+                    // 3. Индекс только по городу (для быстрого поиска)
+                    if (!demoCityIndex.has(city)) {
+                        demoCityIndex.set(city, []);
+                    }
+                    demoCityIndex.get(city).push(i);
+                }
+                
+                indexedProfiles++;
+            }
+            
+            // Прогресс создания индексов
+            if (i % 1000 === 0 && i > 0) {
+                console.log(`📊 [INDEX PROGRESS] Индексировано ${i}/${demoProfiles.length} профилей`);
+            }
+        }
+        
+        // Сохраняем индексы в демо-кэш
+        globalDemoCache.set("demo:index:country_city", demoCountryCityIndex);
+        globalDemoCache.set("demo:index:country", demoCountryIndex);
+        globalDemoCache.set("demo:index:city", demoCityIndex);
+        
+        const indexTime = Date.now();
+        console.log(`✅ [DEMO INDEX] Индексы созданы: ${demoCountryIndex.size} стран, ${demoCountryCityIndex.size} пар страна+город, ${demoCityIndex.size} городов`);
+        console.log(`📊 [DEMO INDEX STATS] Профилей: ${indexedProfiles}, с указанной страной: ${profilesWithCountry}, с указанным городом: ${profilesWithCity}`);
+        
+        // 🔥 ПРОВЕРКА ИНДЕКСОВ НА КОНКРЕТНЫХ ГОРОДАХ
+        console.log(`🔍 [DEMO INDEX CHECK] Проверка индексов для Сараево...`);
+        
+        const checkCities = [
+            { country: "🇧🇦 Босния", city: "Сараево" },
+            { country: "🇧🇦 Босния", city: "Мостар" },
+            { country: "🇦🇪 ОАЭ", city: "Дубай" },
+            { country: "🇷🇺 Россия", city: "Москва" }
+        ];
+        
+        checkCities.forEach(({ country, city }) => {
+            const key = `${country}:${city}`;
+            const profilesCount = demoCountryCityIndex.get(key)?.length || 0;
+            console.log(`   📍 ${country} → ${city}: ${profilesCount} профилей в индексе`);
+            
+            if (profilesCount > 0) {
+                // Получаем первый профиль для проверки
+                const firstIndex = demoCountryCityIndex.get(key)[0];
+                const sampleProfile = demoProfiles[firstIndex];
+                console.log(`       👤 Пример: "${sampleProfile.n}", ${sampleProfile.a} лет, фото: ${sampleProfile.p ? 'есть' : 'нет'}, фото галереи: ${sampleProfile.phs?.length || 0}`);
+            }
+        });
+        
+        // Статистика
+        console.log(`📊 [DEMO STATS] Профилей: ${demoProfiles.length}, Стран: ${countriesSet.size}`);
+        
+        // Проверяем Сараево
+        const bosniaKey = "🇧🇦 Босния";
+        if (citiesByCountry.has(bosniaKey)) {
+            const bosniaCities = citiesByCountry.get(bosniaKey);
+            console.log(`🇧🇦 [BOSNIA] Городов: ${bosniaCities.size}`);
+            
+            const sarajevoProfiles = demoProfiles.filter(p => 
+                p.c === bosniaKey && p.ct === "Сараево"
+            );
+            console.log(`🇧🇦 [SARAJEVO] Профилей: ${sarajevoProfiles.length}`);
+            
+            if (sarajevoProfiles.length > 0) {
+                const sample = sarajevoProfiles[0];
+                console.log(`   👤 Пример профиля: "${sample.n}", фото: ${sample.p ? 'есть' : 'нет'}, фото галереи: ${sample.phs?.length || 0}`);
+            }
+        }
+        
+        return true;
+        
+    } catch (error) {
+        console.error(`❌ [DEMO CREATION ERROR] Ошибка создания демо-кэша:`, error);
+        return false;
+    }
+},
+// 3. КЭШИРОВАНИЕ ПРОФИЛЕЙ В ГЛОБАЛЬНЫЙ КЭШ (ИСПРАВЛЕННАЯ ВЕРСИЯ)
 async cacheGlobalProfiles(profiles, isDemo = false) {
     try {
         console.log(`🔄 [${isDemo ? 'GLOBAL DEMO' : 'GLOBAL FULL'} CACHE] Кэширование ${profiles.length} анкет...`);
         
+        // 🔥 ИСПРАВЛЕНИЕ: Сохраняем ВСЕ данные профиля
         const normalizedProfiles = profiles.map(profile => ({
-            id: profile.id,
-            n: profile.name,
-            a: profile.age,
-            c: profile.country,
-            ct: profile.city,
-            ab: profile.about ? profile.about.substring(0, 500) : "",
-            p: profile.photoUrl,
-            phs: profile.photos || [],
-            tg: profile.telegram,
-            tel: profile.phone,
-            wa: profile.whatsapp,
-            ca: profile.createdAt,
-            isDemo: profile.isDemo || isDemo
+            id: profile.id || profile._id || '',
+            n: profile.n || profile.name || '',
+            a: parseInt(profile.a || profile.age) || 0,
+            c: profile.c || profile.country || '',
+            ct: profile.ct || profile.city || '',
+            ab: profile.ab || profile.about || '',
+            p: profile.p || profile.photoUrl || '',
+            phs: Array.isArray(profile.phs || profile.photos) ? (profile.phs || profile.photos) : [],
+            tg: isDemo ? null : (profile.tg || profile.telegram),
+            tel: isDemo ? null : (profile.tel || profile.phone),
+            wa: isDemo ? null : (profile.wa || profile.whatsapp),
+            ca: profile.ca || profile.createdAt || new Date(),
+            isDemo: isDemo || profile.isDemo || false
         }));
+
+        console.log(`🔍 [CACHE SAMPLE] Пример профиля в кэше: ${normalizedProfiles[0]?.n || 'нет имени'}, фото: ${normalizedProfiles[0]?.p ? 'есть' : 'нет'}, фото галереи: ${normalizedProfiles[0]?.phs?.length || 0}`);
 
         // СЖАТИЕ ДАННЫХ
         const jsonString = JSON.stringify(normalizedProfiles);
@@ -1274,8 +1367,10 @@ async cacheGlobalProfiles(profiles, isDemo = false) {
         
         if (isDemo) {
             globalDemoCache.set("demo:profiles", compressed);
+            console.log(`💾 [DEMO CACHE] Сохранено ${normalizedProfiles.length} профилей с названием: ${normalizedProfiles[0]?.n || 'неизвестно'}`);
         } else {
             globalProfilesCache.set("profiles:all", compressed);
+            console.log(`💾 [FULL CACHE] Сохранено ${normalizedProfiles.length} профилей с названием: ${normalizedProfiles[0]?.n || 'неизвестно'}`);
         }
 
         console.log(`✅ [GLOBAL CACHE] Сжатие: ${jsonString.length} → ${compressed.length} bytes (${Math.round((1 - compressed.length/jsonString.length) * 100)}% экономии)`);
@@ -1287,29 +1382,38 @@ async cacheGlobalProfiles(profiles, isDemo = false) {
         return false;
     }
 },
-    // 4. ПОЛУЧЕНИЕ ПРОФИЛЕЙ ИЗ ГЛОБАЛЬНОГО КЭША
-    getGlobalProfiles(isDemo = false) { 
-        try {
-            let compressed;
-            if (isDemo) {
-                compressed = globalDemoCache.get("demo:profiles");
-            } else {
-                compressed = globalProfilesCache.get("profiles:all");
-            }
-            
-            if (!compressed) return null;
-            
-            // РАСПАКОВКА ДАННЫХ
-            const decompressed = zlib.gunzipSync(compressed);
-            const profiles = JSON.parse(decompressed.toString());
-            
-            return profiles;
-            
-        } catch (error) {
-            console.error(`❌ [GLOBAL CACHE] Ошибка распаковки:`, error);
+    // 4. ПОЛУЧЕНИЕ ПРОФИЛЕЙ ИЗ ГЛОБАЛЬНОГО КЭША (ИСПРАВЛЕННАЯ ВЕРСИЯ)
+getGlobalProfiles(isDemo = false) { 
+    try {
+        let compressed;
+        if (isDemo) {
+            compressed = globalDemoCache.get("demo:profiles");
+            console.log(`🔍 [GET DEMO PROFILES] Ключ найден: ${compressed ? 'да' : 'нет'}`);
+        } else {
+            compressed = globalProfilesCache.get("profiles:all");
+        }
+        
+        if (!compressed) {
+            console.log(`❌ [GET GLOBAL PROFILES] Нет данных в кэше (демо: ${isDemo})`);
             return null;
         }
-    },
+        
+        // РАСПАКОВКА ДАННЫХ
+        const decompressed = zlib.gunzipSync(compressed);
+        const profiles = JSON.parse(decompressed.toString());
+        
+        console.log(`✅ [GET GLOBAL PROFILES] Загружено ${profiles.length} профилей (демо: ${isDemo})`);
+        if (profiles.length > 0) {
+            console.log(`📋 [SAMPLE] Первый профиль: ${profiles[0]?.n || 'нет имени'}, фото: ${profiles[0]?.p ? 'есть' : 'нет'}, фото галереи: ${profiles[0]?.phs?.length || 0}`);
+        }
+        
+        return profiles;
+        
+    } catch (error) {
+        console.error(`❌ [GLOBAL CACHE] Ошибка распаковки:`, error);
+        return null;
+    }
+},
     
     // 5. ПОЛУЧЕНИЕ СТРАН ИЗ ГЛОБАЛЬНОГО КЭША
     getGlobalCountries(isDemo = false) { 
@@ -2028,44 +2132,62 @@ module.exports = (bot, db) => {
     // ===================== ОПТИМИЗИРОВАННЫЕ ФУНКЦИИ ПРОВЕРКИ ПОДПИСОК =====================
     
     // 1. ФУНКЦИЯ ПРОВЕРКИ ПОДПИСКИ НА КАНАЛ (с кэшем на 5 минут)
-    const checkChannelSubscription = async (ctx) => {
-        const userId = ctx.from.id;
+    // const checkChannelSubscription = async (ctx) => {
+    //     const userId = ctx.from.id;
         
-        try {
-            // Проверяем кэш ПЕРВЫМ делом
-            const cached = cacheManager.getCachedChannelSubscription(userId);
-            if (cached !== undefined) {
-                console.log(`✅ [CHANNEL CACHE HIT] Пользователь ${userId}: ${cached ? 'подписан' : 'не подписан'}`);
-                readingStats.addRead('channelSubscriptions', userId, 1, 'cache');
-                return cached;
-            }
+    //     try {
+    //         // Проверяем кэш ПЕРВЫМ делом
+    //         const cached = cacheManager.getCachedChannelSubscription(userId);
+    //         if (cached !== undefined) {
+    //             console.log(`✅ [CHANNEL CACHE HIT] Пользователь ${userId}: ${cached ? 'подписан' : 'не подписан'}`);
+    //             readingStats.addRead('channelSubscriptions', userId, 1, 'cache');
+    //             return cached;
+    //         }
             
-            console.log(`🔍 [CHANNEL CACHE MISS] Проверяем подписку на канал для ${userId}`);
-            const channelUsername = "@MagicYourClub";
+    //         console.log(`🔍 [CHANNEL CACHE MISS] Проверяем подписку на канал для ${userId}`);
+    //         const channelUsername = `<a href="https://t.me/+H6Eovikei9xiZWU0"><b>MagicClubPrivate</b></a>`;
             
-            const chatMember = await ctx.telegram.getChatMember(channelUsername, userId);
+    //         const chatMember = await ctx.telegram.getChatMember(channelUsername, userId);
             
-            const isSubscribed = 
-                chatMember.status === 'member' || 
-                chatMember.status === 'administrator' || 
-                chatMember.status === 'creator';
+    //         const isSubscribed = 
+    //             chatMember.status === 'member' || 
+    //             chatMember.status === 'administrator' || 
+    //             chatMember.status === 'creator';
             
-            // Сохраняем в кэш на 5 минут
-            cacheManager.cacheChannelSubscription(userId, isSubscribed);
-            readingStats.addRead('channelSubscriptions', userId, 1, 'telegram_api');
+    //         // Сохраняем в кэш на 5 минут
+    //         cacheManager.cacheChannelSubscription(userId, isSubscribed);
+    //         readingStats.addRead('channelSubscriptions', userId, 1, 'telegram_api');
             
-            console.log(`✅ [CHANNEL] Пользователь ${userId}: ${isSubscribed ? 'подписан' : 'не подписан'}`);
+    //         console.log(`✅ [CHANNEL] Пользователь ${userId}: ${isSubscribed ? 'подписан' : 'не подписан'}`);
             
-            return isSubscribed;
-        } catch (error) {
-            console.error(`❌ [CHANNEL] Ошибка проверки подписки на канал для ${userId}:`, error);
+    //         return isSubscribed;
+    //     } catch (error) {
+    //         console.error(`❌ [CHANNEL] Ошибка проверки подписки на канал для ${userId}:`, error);
             
-            // При ошибке считаем, что не подписан, но кэшируем на 1 минуту
-            cacheManager.cacheChannelSubscription(userId, false);
-            return false;
-        }
-    };
+    //         // При ошибке считаем, что не подписан, но кэшируем на 1 минуту
+    //         cacheManager.cacheChannelSubscription(userId, false);
+    //         return false;
+    //     }
+    // };
+// ================= 5. ФУНКЦИЯ ПРОВЕРКИ ПОДПИСКИ НА КАНАЛ =================
+const checkChannelSubscription = async (ctx) => {
+  try {
+    const userId = ctx.from.id;
+    const channelId = "-1001933124424"; // Ваш реальный Chat ID
+    
+    const chatMember = await ctx.telegram.getChatMember(channelId, userId);
 
+    const isSubscribed =
+      chatMember.status === "member" ||
+      chatMember.status === "administrator" ||
+      chatMember.status === "creator";
+
+    return isSubscribed;
+  } catch (error) {
+    console.error("Ошибка проверки подписки на канал:", error);
+    return false;
+  }
+};
     // 2. ФУНКЦИЯ ПРОВЕРКИ ПОДПИСКИ (с кэшем на 24 часа)
     const checkSubscription = async (userId) => {
         try {
@@ -2424,91 +2546,189 @@ const getUniqueCitiesForCountry = async (country, isDemo = false) => {
 // ===================== ОПТИМИЗИРОВАННАЯ ФУНКЦИЯ ПОЛУЧЕНИЯ ПРОФИЛЕЙ =====================
 const getProfilesPage = async (page = 0, searchCountry = null, ageRange = null, searchCity = null, isDemo = false) => {
     try {
-        console.log(`🔍 [PROFILES PAGE] Запрос страницы ${page}, демо=${isDemo}, страна=${searchCountry}, город=${searchCity}`);
+        console.log(`🔍 [PROFILES PAGE] Запрос страницы ${page}, демо=${isDemo}, страна="${searchCountry}", город="${searchCity}"`);
         
         // 🔥 ВАЖНО: ИСПОЛЬЗУЕМ ГЛОБАЛЬНЫЙ КЭШ
         let allProfiles = cacheManager.getGlobalProfiles(isDemo);
         
         if (!allProfiles || allProfiles.length === 0) {
             console.log(`❌ [PROFILES PAGE] Нет профилей в глобальном кэше (демо: ${isDemo})`);
-            
-            // 🔥 ВАЖНО: НЕ ЗАГРУЖАЕМ КЭШ НА ЛЕТУ!
-            // Просто возвращаем пустой массив
             return [];
         }
 
         const normalizedSearchCity = searchCity ? cacheManager.normalizeCityName(searchCity) : null;
         const normalizedSearchCountry = searchCountry ? cacheManager.normalizeCountryName(searchCountry) : null;
         
+        // 🔥 КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: ИСПОЛЬЗУЕМ ИНДЕКСЫ ДЛЯ ДЕМО-КЭША
         const filterKey = `country:${normalizedSearchCountry || 'all'}:age:${ageRange?.label || 'all'}:city:${normalizedSearchCity || 'all'}`;
         
-        // 🔥 ОСОБЕННОСТЬ ДЕМО-РЕЖИМА: максимум 3 анкеты на город
-        if (isDemo && normalizedSearchCity) {
-            const demoFilterKey = `demo:country:${normalizedSearchCountry || 'all'}:age:${ageRange?.label || 'all'}:city:${normalizedSearchCity || 'all'}`;
+        // ПРОВЕРЯЕМ КЭШ ФИЛЬТРОВ
+        let filteredProfiles = cacheManager.getGlobalFilter(filterKey, isDemo);
+        
+        if (!filteredProfiles) {
+            console.log(`🔍 [FILTER] Промах глобального кэша фильтров: ${filterKey} (демо: ${isDemo})`);
+            console.log(`📊 [FILTER] Всего профилей в глобальном кэше: ${allProfiles.length} (демо: ${isDemo})`);
             
-            // ПРОВЕРЯЕМ ГЛОБАЛЬНЫЙ КЭШ ФИЛЬТРОВ ДЛЯ ДЕМО
-            let filteredProfiles = cacheManager.getGlobalFilter(demoFilterKey, true);
-            
-            if (!filteredProfiles) {
-                console.log(`🔍 [DEMO FILTER] Промах глобального кэша фильтров: ${demoFilterKey}`);
-                console.log(`📊 [DEMO FILTER] Всего профилей в демо-кэше: ${allProfiles.length}`);
+            // 🔥 ВАЖНОЕ ИСПРАВЛЕНИЕ: ДЛЯ ДЕМО-РЕЖИМА ИСПОЛЬЗУЕМ ИНДЕКСЫ ИЗ ДЕМО-КЭША
+            if (isDemo) {
+                console.log(`🎯 [DEMO INDEX SEARCH] Ищем в демо-индексах...`);
                 
-                // Фильтруем профили
-                filteredProfiles = await asyncFilterManager.filterProfilesAsync(allProfiles, {
-                    country: normalizedSearchCountry,
-                    city: normalizedSearchCity,
-                    ageRange: ageRange
-                }, true);
-
-                console.log(`✅ [DEMO FILTER] Отфильтровано: ${filteredProfiles.length} профилей`);
+                // Получаем индексы из демо-кэша
+                const demoCountryCityIndex = globalDemoCache.get("demo:index:country_city");
+                const demoCountryIndex = globalDemoCache.get("demo:index:country");
+                const demoCityIndex = globalDemoCache.get("demo:index:city");
                 
-                // 🔥 ВАЖНО: ОГРАНИЧИВАЕМ ДО 3 АНКЕТ НА ГОРОД В ДЕМО-РЕЖИМЕ
-                if (filteredProfiles.length > 3) {
-                    console.log(`🎯 [DEMO LIMIT] Ограничиваем до 3 анкет на город (было: ${filteredProfiles.length})`);
-                    filteredProfiles = filteredProfiles.slice(0, 3);
+                if (demoCountryCityIndex && demoCountryIndex && demoCityIndex) {
+                    console.log(`✅ [DEMO INDEXES LOADED] Страны: ${demoCountryIndex.size}, Города: ${demoCityIndex.size}, Пары: ${demoCountryCityIndex.size}`);
+                    
+                    let profileIndexes = [];
+                    
+                    // СЦЕНАРИЙ 1: Страна + Город (самый точный поиск)
+                    if (normalizedSearchCountry && normalizedSearchCity) {
+                        const key = `${normalizedSearchCountry}:${normalizedSearchCity}`;
+                        profileIndexes = demoCountryCityIndex.get(key) || [];
+                        console.log(`⚡ [DEMO INDEX 1] Страна+Город "${key}": ${profileIndexes.length} профилей`);
+                    }
+                    // СЦЕНАРИЙ 2: Только Страна
+                    else if (normalizedSearchCountry && !normalizedSearchCity) {
+                        profileIndexes = demoCountryIndex.get(normalizedSearchCountry) || [];
+                        console.log(`⚡ [DEMO INDEX 2] Только страна "${normalizedSearchCountry}": ${profileIndexes.length} профилей`);
+                    }
+                    // СЦЕНАРИЙ 3: Только Город (используем индекс только по городам)
+                    else if (!normalizedSearchCountry && normalizedSearchCity) {
+                        profileIndexes = demoCityIndex.get(normalizedSearchCity) || [];
+                        console.log(`⚡ [DEMO INDEX 3] Только город "${normalizedSearchCity}": ${profileIndexes.length} профилей`);
+                    }
+                    
+                    // Если нашли профили через индексы
+                    if (profileIndexes.length > 0) {
+                        filteredProfiles = [];
+                        let validProfilesFound = 0;
+                        
+                        for (let i = 0; i < profileIndexes.length; i++) {
+                            const profileIndex = profileIndexes[i];
+                            
+                            // Проверяем что индекс в пределах массива
+                            if (profileIndex >= 0 && profileIndex < allProfiles.length) {
+                                const profile = allProfiles[profileIndex];
+                                
+                                // Проверяем что профиль существует и имеет данные
+                                if (profile && (profile.id || profile.n || profile.name)) {
+                                    // Применяем фильтр по возрасту если есть
+                                    if (ageRange) {
+                                        const age = parseInt(profile.a) || 0;
+                                        const minAge = ageRange.min || 0;
+                                        const maxAge = ageRange.max || 999;
+                                        
+                                        if (age >= minAge && age <= maxAge) {
+                                            filteredProfiles.push(profile);
+                                            validProfilesFound++;
+                                        }
+                                    } else {
+                                        filteredProfiles.push(profile);
+                                        validProfilesFound++;
+                                    }
+                                } else {
+                                    console.log(`⚠️ [DEMO INDEX WARNING] Профиль по индексу ${profileIndex} невалидный`);
+                                }
+                            } else {
+                                console.log(`⚠️ [DEMO INDEX ERROR] Индекс ${profileIndex} вне диапазона (0-${allProfiles.length - 1})`);
+                            }
+                        }
+                        
+                        console.log(`✅ [DEMO INDEX RESULT] Найдено через индексы: ${validProfilesFound} валидных профилей`);
+                        
+                        // Если нашли через индексы - сохраняем в кэш и возвращаем
+                        if (filteredProfiles.length > 0) {
+                            cacheManager.cacheGlobalFilter(filterKey, filteredProfiles, isDemo);
+                            console.log(`💾 [DEMO CACHE SAVED] Сохранено в кэш фильтров: ${filterKey}`);
+                        }
+                    } else {
+                        console.log(`⚠️ [DEMO INDEX EMPTY] Не найдено профилей через индексы, используем стандартную фильтрацию`);
+                    }
+                } else {
+                    console.log(`❌ [DEMO INDEX MISSING] Индексы не найдены в демо-кэше`);
                 }
-                
-                // 🔥 СОХРАНЯЕМ В ГЛОБАЛЬНЫЙ КЭШ ФИЛЬТРОВ ДЛЯ ДЕМО
-                cacheManager.cacheGlobalFilter(demoFilterKey, filteredProfiles, true);
-            } else {
-                console.log(`✅ [DEMO CACHE HIT] Используем кэш демо-фильтра: ${filteredProfiles.length} профилей`);
             }
-
-            const startIndex = page * SCALING_CONFIG.PERFORMANCE.PROFILES_PER_PAGE;
-            const endIndex = startIndex + SCALING_CONFIG.PERFORMANCE.PROFILES_PER_PAGE;
             
-            const result = filteredProfiles.slice(startIndex, endIndex);
-            console.log(`📄 [DEMO PAGE] Возвращаем страницу ${page}: ${result.length} профилей (макс 3 на город)`);
-            
-            return result;
-        } else {
-            // 🔥 ПРОВЕРЯЕМ ГЛОБАЛЬНЫЙ КЭШ ФИЛЬТРОВ (для полного доступа или фильтра без города)
-            let filteredProfiles = cacheManager.getGlobalFilter(filterKey, isDemo);
-            
-            if (!filteredProfiles) {
-                console.log(`🔍 [FILTER] Промах глобального кэша фильтров: ${filterKey} (демо: ${isDemo})`);
-                console.log(`📊 [FILTER] Всего профилей в глобальном кэше: ${allProfiles.length} (демо: ${isDemo})`);
-                
+            // 🔥 ЕСЛИ НЕ НАШЛИ ЧЕРЕЗ ИНДЕКСЫ ИЛИ НЕ ДЕМО-РЕЖИМ - ИСПОЛЬЗУЕМ СТАНДАРТНУЮ ФИЛЬТРАЦИЮ
+            if (!filteredProfiles || filteredProfiles.length === 0) {
+                console.log(`🔍 [STANDARD FILTER] Используем стандартную фильтрацию`);
                 filteredProfiles = await asyncFilterManager.filterProfilesAsync(allProfiles, {
                     country: normalizedSearchCountry,
                     city: normalizedSearchCity,
                     ageRange: ageRange
                 }, isDemo);
-
-                console.log(`✅ [FILTER] Отфильтровано: ${filteredProfiles.length} профилей`);
                 
-                // 🔥 СОХРАНЯЕМ В ГЛОБАЛЬНЫЙ КЭШ ФИЛЬТРОВ
+                console.log(`✅ [STANDARD FILTER RESULT] Отфильтровано: ${filteredProfiles?.length || 0} профилей`);
+            }
+            
+            // 🔥 КРИТИЧЕСКАЯ ПРОВЕРКА: УБИРАЕМ НЕВАЛИДНЫЕ ПРОФИЛИ
+            if (filteredProfiles) {
+                const validProfiles = filteredProfiles.filter(profile => 
+                    profile && 
+                    (profile.id || profile._id) && 
+                    (profile.n || profile.name)
+                );
+                
+                if (validProfiles.length !== filteredProfiles.length) {
+                    console.log(`⚠️ [FILTER CLEANUP] Удалено ${filteredProfiles.length - validProfiles.length} некорректных профилей`);
+                    filteredProfiles = validProfiles;
+                }
+                
+                // Сохраняем в кэш фильтров (если еще не сохранили через демо-индексы)
+                if (!cacheManager.getGlobalFilter(filterKey, isDemo)) {
+                    cacheManager.cacheGlobalFilter(filterKey, filteredProfiles, isDemo);
+                }
+            }
+        } else {
+            console.log(`✅ [CACHE HIT] Используем кэш для фильтра ${filterKey}: ${filteredProfiles.length} профилей`);
+            
+            // Проверяем кэшированные профили
+            const validCachedProfiles = filteredProfiles.filter(profile => 
+                profile && 
+                (profile.id || profile._id) && 
+                (profile.n || profile.name)
+            );
+            
+            if (validCachedProfiles.length !== filteredProfiles.length) {
+                console.log(`⚠️ [CACHE CLEANUP] В кэше ${filteredProfiles.length - validCachedProfiles.length} некорректных профилей`);
+                filteredProfiles = validCachedProfiles;
                 cacheManager.cacheGlobalFilter(filterKey, filteredProfiles, isDemo);
             }
-
-            const startIndex = page * SCALING_CONFIG.PERFORMANCE.PROFILES_PER_PAGE;
-            const endIndex = startIndex + SCALING_CONFIG.PERFORMANCE.PROFILES_PER_PAGE;
-            
-            const result = filteredProfiles.slice(startIndex, endIndex);
-            console.log(`📄 [PAGE] Возвращаем страницу ${page}: ${result.length} профилей`);
-            
-            return result;
         }
+
+        if (!filteredProfiles || filteredProfiles.length === 0) {
+            console.log(`❌ [PAGE] Нет профилей после фильтрации`);
+            return [];
+        }
+
+        const startIndex = page * SCALING_CONFIG.PERFORMANCE.PROFILES_PER_PAGE;
+        const endIndex = startIndex + SCALING_CONFIG.PERFORMANCE.PROFILES_PER_PAGE;
+        
+        const result = filteredProfiles.slice(startIndex, endIndex);
+        
+        // 🔥 ВАЖНО: ПРОВЕРЯЕМ КАЖДЫЙ ПРОФИЛЬ В РЕЗУЛЬТАТЕ
+        const validResult = result.filter(profile => 
+            profile && 
+            (profile.id || profile._id) && 
+            (profile.n || profile.name)
+        );
+        
+        if (validResult.length !== result.length) {
+            console.log(`⚠️ [RESULT CLEANUP] Удалено ${result.length - validResult.length} некорректных профилей из результата`);
+        }
+        
+        console.log(`📄 [PAGE] Возвращаем страницу ${page}: ${validResult.length} профилей (всего ${filteredProfiles.length})`);
+        
+        // 🔥 ДЛЯ ОТЛАДКИ: выводим первый профиль
+        if (validResult.length > 0) {
+            const firstProfile = validResult[0];
+            console.log(`📋 [FIRST PROFILE DEBUG] ID: ${firstProfile.id || firstProfile._id || 'нет'}, Имя: "${firstProfile.n || firstProfile.name || 'нет'}", Возраст: ${firstProfile.a || firstProfile.age || 0}, Город: "${firstProfile.ct || firstProfile.city || 'нет'}", isDemo: ${firstProfile.isDemo || isDemo}`);
+            console.log(`   📸 Фото: ${firstProfile.p || firstProfile.photoUrl ? 'есть' : 'нет'}, Фото галереи: ${firstProfile.phs?.length || firstProfile.photos?.length || 0}`);
+        }
+        
+        return validResult;
 
     } catch (error) {
         console.error("❌ [PROFILES PAGE] Ошибка загрузки анкет:", error);
@@ -2525,64 +2745,74 @@ const getProfilesPage = async (page = 0, searchCountry = null, ageRange = null, 
             chatStorage.messageTimestamps.set(messageId, Date.now());
         },
 
-        clear: async function (ctx, keepCityKeyboard = false, keepCountryKeyboard = false) {
-            const chatId = ctx.chat.id;
-            if (!chatStorage.messages.has(chatId)) return;
+        // Внутри messageManager:
+clear: async function (ctx, keepCityKeyboard = false, keepCountryKeyboard = false) {
+    const chatId = ctx.chat.id;
+    if (!chatStorage.messages.has(chatId)) return;
 
-            const messages = [...chatStorage.messages.get(chatId)];
-            const mainMenuId = chatStorage.mainMenu.get(chatId);
-            const countryKeyboardId = chatStorage.countryKeyboard.get(chatId);
-            const cityKeyboardId = chatStorage.cityKeyboard.get(chatId);
+    const messages = [...chatStorage.messages.get(chatId)];
+    const mainMenuId = chatStorage.mainMenu.get(chatId);
+    const countryKeyboardId = chatStorage.countryKeyboard.get(chatId);
+    const cityKeyboardId = chatStorage.cityKeyboard.get(chatId);
 
-            let deletedCount = 0;
+    let deletedCount = 0;
 
-            for (const messageId of messages) {
-                const shouldKeep = 
-                    (keepCountryKeyboard && messageId === countryKeyboardId) ||
-                    (keepCityKeyboard && messageId === cityKeyboardId) ||
-                    messageId === mainMenuId;
-                    
-                if (!shouldKeep) {
-                    try {
-                        await ctx.telegram.deleteMessage(chatId, messageId);
-                        chatStorage.messages.get(chatId).delete(messageId);
-                        chatStorage.messageTimestamps.delete(messageId);
-                        deletedCount++;
-                    } catch (e) {
-                        if (e.response?.error_code !== 400) {
-                            console.error(`❌ Ошибка удаления ${messageId}:`, e.message);
-                        }
-                    }
+    for (const messageId of messages) {
+        const shouldKeep = 
+            (keepCountryKeyboard && messageId === countryKeyboardId) ||
+            (keepCityKeyboard && messageId === cityKeyboardId) ||
+            messageId === mainMenuId;
+            
+        if (!shouldKeep) {
+            try {
+                await ctx.telegram.deleteMessage(chatId, messageId);
+                chatStorage.messages.get(chatId).delete(messageId);
+                chatStorage.messageTimestamps.delete(messageId);
+                deletedCount++;
+            } catch (e) {
+                // Игнорируем ошибки "сообщение не найдено" и "доступ запрещен"
+                if (e.response?.error_code !== 400 && e.response?.error_code !== 403) {
+                    console.error(`❌ Ошибка удаления ${messageId}:`, e.message);
+                } else {
+                    // Удаляем из хранилища даже если сообщение уже удалено
+                    chatStorage.messages.get(chatId)?.delete(messageId);
+                    chatStorage.messageTimestamps.delete(messageId);
                 }
             }
+        }
+    }
 
-            if (cityKeyboardId && !keepCityKeyboard) {
-                try {
-                    await ctx.telegram.deleteMessage(chatId, cityKeyboardId);
-                    chatStorage.messages.get(chatId)?.delete(cityKeyboardId);
-                    chatStorage.messageTimestamps.delete(cityKeyboardId);
-                    chatStorage.cityKeyboard.delete(chatId);
-                    deletedCount++;
-                } catch (e) {
-                    if (e.response?.error_code !== 400) console.error("❌ Ошибка удаления клавиатуры городов:", e);
-                }
+    if (cityKeyboardId && !keepCityKeyboard) {
+        try {
+            await ctx.telegram.deleteMessage(chatId, cityKeyboardId);
+            chatStorage.messages.get(chatId)?.delete(cityKeyboardId);
+            chatStorage.messageTimestamps.delete(cityKeyboardId);
+            chatStorage.cityKeyboard.delete(chatId);
+            deletedCount++;
+        } catch (e) {
+            if (e.response?.error_code !== 400 && e.response?.error_code !== 403) {
+                console.error("❌ Ошибка удаления клавиатуры городов:", e);
             }
+        }
+    }
 
-            if (countryKeyboardId && !keepCountryKeyboard) {
-                try {
-                    await ctx.telegram.deleteMessage(chatId, countryKeyboardId);
-                    chatStorage.messages.get(chatId)?.delete(countryKeyboardId);
-                    chatStorage.messageTimestamps.delete(countryKeyboardId);
-                    chatStorage.countryKeyboard.delete(chatId);
-                    deletedCount++;
-                } catch (e) {
-                    if (e.response?.error_code !== 400) console.error("❌ Ошибка удаления клавиатуры стран:", e);
-                }
+    if (countryKeyboardId && !keepCountryKeyboard) {
+        try {
+            await ctx.telegram.deleteMessage(chatId, countryKeyboardId);
+            chatStorage.messages.get(chatId)?.delete(countryKeyboardId);
+            chatStorage.messageTimestamps.delete(countryKeyboardId);
+            chatStorage.countryKeyboard.delete(chatId);
+            deletedCount++;
+        } catch (e) {
+            if (e.response?.error_code !== 400 && e.response?.error_code !== 403) {
+                console.error("❌ Ошибка удаления клавиатуры стран:", e);
             }
+        }
+    }
 
-            chatStorage.userState.delete(ctx.from.id);
-            if (deletedCount > 0) console.log(`🧹 [CLEAN] Удалено ${deletedCount} сообщений для чата ${chatId}`);
-        },
+    chatStorage.userState.delete(ctx.from.id);
+    if (deletedCount > 0) console.log(`🧹 [CLEAN] Удалено ${deletedCount} сообщений для чата ${chatId}`);
+},
 
         sendMainMenu: async function (ctx) {
             return messageQueue.add(async () => {
@@ -2734,7 +2964,7 @@ const getProfilesPage = async (page = 0, searchCountry = null, ageRange = null, 
                     keyboard.push([{ text: "🔙 Назад", callback_data: "back_to_menu" }]);
 
                     const msgText = isDemo ? 
-                        `👀 ДЕМО-РЕЖИМ: Выберите страну (показано по 3 анкеты на город)\n\n📄 Страница ${page + 1} из ${totalPages}\n🌍 Всего стран: ${uniqueCountries.length}\n\n💎 Для полного доступа Вы должны быть подписаны на наш канал @MagicYourClub и оплатить подписку` : 
+                        `👀 ДЕМО-РЕЖИМ: Выберите страну (показано по 3 анкеты на город)\n\n📄 Страница ${page + 1} из ${totalPages}\n🌍 Всего стран: ${uniqueCountries.length}\n\n💎 Для полного доступа Вы должны быть подписаны на наш канал <a href="https://t.me/+H6Eovikei9xiZWU0"><b>MagicClubPrivate</b></a>  и оплатить подписку` : 
                         `🌍 Выберите страну (страница ${page + 1} из ${totalPages})\n📊 Всего стран: ${uniqueCountries.length}\n📍 Показано: ${pageCountries.length} стран`;
 
                     const msg = await ctx.reply(msgText, { 
@@ -2786,67 +3016,69 @@ const getProfilesPage = async (page = 0, searchCountry = null, ageRange = null, 
                     let currentPage = 0;
                     const totalPages = Math.ceil(cities.length / citiesPerPage);
 
-                    const createCitiesKeyboard = (page) => {
-                        const startIndex = page * citiesPerPage;
-                        const endIndex = Math.min(startIndex + citiesPerPage, cities.length);
-                        const pageCities = cities.slice(startIndex, endIndex);
-                        
-                        const keyboard = [];
-                        let row = [];
+                    // В методе sendCitiesKeyboard объекта messageManager находим создание клавиатуры:
+const createCitiesKeyboard = (page) => {
+    const startIndex = page * citiesPerPage;
+    const endIndex = Math.min(startIndex + citiesPerPage, cities.length);
+    const pageCities = cities.slice(startIndex, endIndex);
+    
+    const keyboard = [];
+    let row = [];
 
-                        pageCities.forEach((city, index) => {
-                            row.push({ text: city, callback_data: `city_${city}` });
-                            if (row.length === 2 || index === pageCities.length - 1) {
-                                keyboard.push(row);
-                                row = [];
-                            }
-                        });
+    pageCities.forEach((city, index) => {
+        row.push({ text: city, callback_data: `city_${city}` });
+        if (row.length === 2 || index === pageCities.length - 1) {
+            keyboard.push(row);
+            row = [];
+        }
+    });
 
-                        const paginationRow = [];
-                        if (totalPages > 1) {
-                            if (page > 0) {
-                                paginationRow.push({ 
-                                    text: "◀️ Предыдущие", 
-                                    callback_data: `cities_page_${country}_${page - 1}` 
-                                });
-                            }
-                            
-                            paginationRow.push({ 
-                                text: `${page + 1}/${totalPages}`, 
-                                callback_data: "cities_page_info" 
-                            });
-                            
-                            if (page < totalPages - 1) {
-                                paginationRow.push({ 
-                                    text: "Следующие ▶️", 
-                                    callback_data: `cities_page_${country}_${page + 1}` 
-                                });
-                            }
-                            
-                            if (paginationRow.length > 0) {
-                                keyboard.push(paginationRow);
-                            }
-                        }
+    const paginationRow = [];
+    if (totalPages > 1) {
+        if (page > 0) {
+            paginationRow.push({ 
+                text: "◀️ Предыдущие", 
+                callback_data: `cities_page_${country}_${page - 1}` 
+            });
+        }
+        
+        paginationRow.push({ 
+            text: `${page + 1}/${totalPages}`, 
+            callback_data: "cities_page_info" 
+        });
+        
+        if (page < totalPages - 1) {
+            paginationRow.push({ 
+                text: "Следующие ▶️", 
+                callback_data: `cities_page_${country}_${page + 1}` 
+            });
+        }
+        
+        if (paginationRow.length > 0) {
+            keyboard.push(paginationRow);
+        }
+    }
 
-                        keyboard.push([{ 
-                            text: "📝 СОЗДАТЬ АНКЕТУ", 
-                            web_app: { url: "https://bot-vai-web-app.web.app/?tab=catalog" } 
-                        }]);
+    // 🔥 ДОБАВЛЯЕМ НОВУЮ КНОПКУ "🔙 Назад к странам"
+    keyboard.push([{ 
+        text: "🔙 Назад к странам", 
+        callback_data: "back_to_countries" 
+    }]);
 
-                        if (isDemo) {
-                            keyboard.push([{ 
-                                text: "💎 ПОЛУЧИТЬ ПОЛНЫЙ ДОСТУП", 
-                                callback_data: "get_full_access" 
-                            }]);
-                        }
+    keyboard.push([{ 
+        text: "📝 СОЗДАТЬ АНКЕТУ", 
+        web_app: { url: "https://bot-vai-web-app.web.app/?tab=catalog" } 
+    }]);
 
-                        keyboard.push([{ 
-                            text: "🔙 Назад к странам", 
-                            callback_data: "back_to_countries" 
-                        }]);
+    if (isDemo) {
+        keyboard.push([{ 
+            text: "💎 ПОЛУЧИТЬ ПОЛНЫЙ ДОСТУП", 
+            callback_data: "get_full_access" 
+        }]);
+    }
 
-                        return keyboard;
-                    };
+    return keyboard;
+};
 
                     const msgText = isDemo ?
                         `👀 ДЕМО-РЕЖИМ: Выберите город в ${country} (${cities.length} городов, показано по 3 анкеты на город)\n\n💎 Для полного доступа ко всем анкетам получите подписку!` :
@@ -3138,32 +3370,54 @@ bot.command("check_country_normalization", async (ctx) => {
         await ctx.reply("❌ Ошибка");
     }
 });
+const safeClearMessages = async (ctx, keepCityKeyboard = false, keepCountryKeyboard = false) => {
+    try {
+        await messageManager.clear(ctx, keepCityKeyboard, keepCountryKeyboard);
+    } catch (error) {
+        if (error.response?.error_code !== 400 && error.response?.error_code !== 403) {
+            console.error("Ошибка очистки сообщений:", error);
+        }
+    }
+};
     bot.action("all_countries_with_check", async (ctx) => {
     const userId = ctx.from.id;
     console.log(`🌍 [COUNTRIES] Пользователь ${userId} запросил страны`);
     
     // 🔥 ДОБАВЛЯЕМ ПРЕЛОАДЕР СРАЗУ
-    const accessPreloader = await sendPreloader(ctx, 'access', "🔍 ПРОВЕРКА ДОСТУПА");
+    let accessPreloader = null;
+    try {
+        accessPreloader = await sendPreloader(ctx, 'access', "🔍 ПРОВЕРКА ДОСТУПА");
+    } catch (error) {
+        console.log("⚠️ Не удалось отправить прелоадер:", error.message);
+    }
     
     // 🔥 БЫСТРАЯ ПРОВЕРКА БЛОКИРОВКИ
     if (!acquireUserLock(userId, 2000)) {
         try {
             await ctx.answerCbQuery("⏳ Подождите, обрабатываем предыдущий запрос...");
-            // Удаляем прелоадер
-            if (accessPreloader) {
-                try {
-                    await ctx.telegram.deleteMessage(ctx.chat.id, accessPreloader.message_id);
-                } catch (e) {}
-            }
+            // Удаляем прелоадер безопасно
+            await safeDeleteMessage(ctx, accessPreloader?.message_id);
         } catch (e) {}
         return;
     }
     
+    // 🔥 ФУНКЦИЯ БЕЗОПАСНОГО УДАЛЕНИЯ СООБЩЕНИЙ
+    const safeDeleteMessage = async (messageId) => {
+        if (!messageId) return;
+        try {
+            await ctx.telegram.deleteMessage(ctx.chat.id, messageId);
+        } catch (error) {
+            if (error.response?.error_code !== 400 && error.response?.error_code !== 403) {
+                console.log(`⚠️ Ошибка удаления сообщения ${messageId}: ${error.message}`);
+            }
+        }
+    };
+    
     try {
         await ctx.answerCbQuery("🌍 Загружаем страны...");
         
-        // Очищаем предыдущие сообщения
-        await messageManager.clear(ctx);
+        // Очищаем предыдущие сообщения безопасно
+        await safeClearMessages(ctx);
         
         // 🔥 🔥 🔥 ЭТАП 1: ВСЕГДА ПРОВЕРЯЕМ ДОСТУП ЗАНОВО
         console.log(`🔄 [FORCE CHECK] Принудительная проверка для ${userId}`);
@@ -3186,13 +3440,10 @@ bot.command("check_country_normalization", async (ctx) => {
         const cacheType = hasFullAccess ? 'full' : 'demo';
         const isDemo = cacheType === 'demo';
         
-        // 🔥 УДАЛЯЕМ ПРЕЛОАДЕР
+        // 🔥 УДАЛЯЕМ ПРЕЛОАДЕР БЕЗОПАСНО
         if (accessPreloader) {
-            try {
-                await ctx.telegram.deleteMessage(ctx.chat.id, accessPreloader.message_id);
-            } catch (e) {
-                console.log("Не удалось удалить прелоадер:", e.message);
-            }
+            await safeDeleteMessage(accessPreloader.message_id);
+            accessPreloader = null;
         }
         
         // 🔥 🔥 🔥 ЭТАП 2: ПРОВЕРЯЕМ, ЗАГРУЖЕН ЛИ НУЖНЫЙ КЭШ
@@ -3211,7 +3462,7 @@ bot.command("check_country_normalization", async (ctx) => {
 2. Нажмите "🌍 ВСЕ СТРАНЫ" снова
 3. Или используйте команду /start
 
-<em>Если проблема persists, напишите в поддержку @MagicAdd</em>
+<em>Если проблема , напишите в поддержку @MagicAdd</em>
             `, {
                 parse_mode: "HTML",
                 reply_markup: {
@@ -3249,10 +3500,9 @@ bot.command("check_country_normalization", async (ctx) => {
                     if (success) {
                         console.log(`✅ [BACKGROUND GLOBAL CACHE] Глобальный полный кэш загружен для ${userId}`);
                         // Удаляем сообщение о загрузке
-                        try {
-                            ctx.telegram.deleteMessage(ctx.chat.id, loadingMsg.message_id);
-                            // Показываем успешное сообщение
-                            ctx.reply(`
+                        safeDeleteMessage(loadingMsg.message_id);
+                        // Показываем успешное сообщение
+                        ctx.reply(`
 ✅ <b> Доступ к полной базе открыт!</b>
 
 🎉 Теперь доступны все 70,000+ анкет!
@@ -3260,23 +3510,16 @@ bot.command("check_country_normalization", async (ctx) => {
 • 📞 Телефоны, Telegram, WhatsApp
 • ⚡ Максимальная скорость работы
                             `, { parse_mode: "HTML" });
-                        } catch (e) {}
                     } else {
                         console.log(`❌ [BACKGROUND GLOBAL CACHE ERROR] ${userId}: Не удалось загрузить`);
                         // Показываем сообщение об ошибке
-                        try {
-                            ctx.telegram.editMessageText(
-                                ctx.chat.id,
-                                loadingMsg.message_id,
-                                null,
-                                `⚠️ <b>ОШИБКА ЗАГРУЗКИ ГЛОБАЛЬНОГО КЭША</b>\n\nНе удалось загрузить глобальный кэш.\nИспользуем ограниченный доступ.\n\n<em>Попробуйте через несколько минут</em>`,
-                                { parse_mode: "HTML" }
-                            );
-                        } catch (e) {}
+                        safeDeleteMessage(loadingMsg.message_id);
+                        ctx.reply(`⚠️ <b>ОШИБКА ЗАГРУЗКИ</b>\n\nНе удалось загрузить полную базу.\nИспользуем ограниченный доступ.`, { parse_mode: "HTML" });
                     }
                 })
                 .catch(error => {
                     console.error(`❌ [BACKGROUND GLOBAL CACHE ERROR] ${userId}:`, error.message);
+                    safeDeleteMessage(loadingMsg.message_id);
                 });
             
             // 🔥 ПОКАЗЫВАЕМ ПЕРВУЮ ПАЧКУ СТРАН (из демо-кэша пока идет загрузка полного)
@@ -3311,7 +3554,7 @@ bot.command("check_country_normalization", async (ctx) => {
 🚫 Контакты: скрыты
 
 💎 <b>Для полного доступа:</b>
-1. Подписка на канал @MagicYourClub
+1. Подписка на канал <a href="https://t.me/+H6Eovikei9xiZWU0"><b>MagicClubPrivate</b></a>
 2. Активная оплаченная подписка
 
 <em>Выберите страну для начала поиска</em>
@@ -3320,7 +3563,7 @@ bot.command("check_country_normalization", async (ctx) => {
                 reply_markup: {
                     inline_keyboard: [
                         [{ text: "💎 ПОЛУЧИТЬ ПОЛНЫЙ ДОСТУП", callback_data: "get_full_access" }],
-                        [{ text: "📢 ПОДПИСАТЬСЯ НА КАНАЛ", url: "https://t.me/MagicYourClub" }]
+                        [{ text: "📢 ПОДПИСАТЬСЯ НА КАНАЛ", url: "https://t.me/+H6Eovikei9xiZWU0" }]
                     ]
                 }
             });
@@ -3347,9 +3590,7 @@ bot.command("check_country_normalization", async (ctx) => {
         
         // УДАЛЯЕМ ПРЕЛОАДЕР ПРИ ОШИБКЕ
         if (accessPreloader) {
-            try {
-                await ctx.telegram.deleteMessage(ctx.chat.id, accessPreloader.message_id);
-            } catch (e) {}
+            await safeDeleteMessage(accessPreloader.message_id);
         }
         
         try {
@@ -3380,7 +3621,60 @@ bot.command("check_country_normalization", async (ctx) => {
         releaseUserLock(userId);
     }
 });
-
+bot.command("debug_demo_profile", async (ctx) => {
+    try {
+        const demoProfiles = cacheManager.getGlobalProfiles(true);
+        
+        if (!demoProfiles || demoProfiles.length === 0) {
+            return ctx.reply("❌ Демо-кэш пуст!");
+        }
+        
+        // Ищем профиль Сараево
+        const sarajevoProfiles = demoProfiles.filter(p => {
+            const city = cacheManager.normalizeCityName(p.ct || p.city);
+            const country = cacheManager.normalizeCountryName(p.c || p.country);
+            return city === "Сараево" && country === "🇧🇦 Босния";
+        });
+        
+        let response = `🔍 **ДИАГНОСТИКА ДЕМО-ПРОФИЛЯ САРАЕВО:**\n\n`;
+        response += `Всего демо-профилей: ${demoProfiles.length}\n`;
+        response += `Профилей Сараево: ${sarajevoProfiles.length}\n\n`;
+        
+        if (sarajevoProfiles.length > 0) {
+            sarajevoProfiles.forEach((p, i) => {
+                response += `**Профиль ${i+1}:**\n`;
+                response += `• ID: ${p.id || 'нет'}\n`;
+                response += `• Имя: "${p.n}"\n`;
+                response += `• Возраст: ${p.a}\n`;
+                response += `• Страна: "${p.c}"\n`;
+                response += `• Город: "${p.ct}"\n`;
+                response += `• Основное фото: ${p.p ? '✅' : '❌'}\n`;
+                response += `• Фото галереи: ${p.phs?.length || 0}\n`;
+                response += `• isDemo: ${p.isDemo}\n`;
+                response += `• TG: ${p.tg ? 'есть' : 'скрыто'}\n`;
+                response += `• О себе: ${p.ab?.substring(0, 50) || 'нет'}...\n\n`;
+            });
+        } else {
+            response += `❌ **НЕТ ПРОФИЛЕЙ САРАЕВО В ДЕМО-КЭШЕ!**\n\n`;
+            
+            // Проверяем структуру первого профиля
+            if (demoProfiles.length > 0) {
+                const sampleProfile = demoProfiles[0];
+                response += `**Пример первого профиля в демо-кэше:**\n`;
+                response += `• Имя: "${sampleProfile.n}"\n`;
+                response += `• Страна: "${sampleProfile.c}"\n`;
+                response += `• Город: "${sampleProfile.ct}"\n`;
+                response += `• isDemo: ${sampleProfile.isDemo}\n`;
+            }
+        }
+        
+        await ctx.reply(response);
+        
+    } catch (error) {
+        console.error("Ошибка debug_demo_profile:", error);
+        await ctx.reply(`❌ Ошибка: ${error.message}`);
+    }
+});
     bot.action("get_full_access", async (ctx) => {
         await messageQueue.add(async () => {
             try {
@@ -3392,7 +3686,7 @@ bot.command("check_country_normalization", async (ctx) => {
                             { text: "💎 Купить подписку", callback_data: "choose_payment_method" }
                         ],
                         [
-                            { text: "📢 Подписаться на канал", url: "https://t.me/MagicYourClub" }
+                            { text: "📢 Подписаться на канал", url: "https://t.me/+H6Eovikei9xiZWU0" }
                         ],
                         [
                             { text: "🔙 Назад", callback_data: "back_to_menu" }
@@ -3410,7 +3704,7 @@ bot.command("check_country_normalization", async (ctx) => {
    • Все контакты профилей
    • Полная функциональность
 
-✅ <b>2. Подписка на канал @MagicYourClub</b>
+✅ <b>2. Подписка на канал <a href="https://t.me/+H6Eovikei9xiZWU0"><b>MagicClubPrivate</b></a></b>
    • Новые анкеты и обновления
    • Эксклюзивный контент
    • Специальные предложения
@@ -3529,7 +3823,65 @@ ${filterCacheKeys.length > 50 ? '• ✅ Кэш фильтров работае�
         });
     });
 });
-
+bot.command("check_demo_sarajevo", async (ctx) => {
+    try {
+        // Получаем демо-профили
+        const demoProfiles = cacheManager.getGlobalProfiles(true);
+        
+        if (!demoProfiles || demoProfiles.length === 0) {
+            return ctx.reply("❌ Демо-кэш пуст!");
+        }
+        
+        // Ищем профили Сараево
+        const sarajevoProfiles = demoProfiles.filter(p => {
+            const city = cacheManager.normalizeCityName(p.ct || p.city);
+            const country = cacheManager.normalizeCountryName(p.c || p.country);
+            return city === "Сараево" && country === "🇧🇦 Босния";
+        });
+        
+        let response = `🔍 **ПРОВЕРКА САРАЕВО В ДЕМО-КЭШЕ:**\n\n`;
+        response += `Всего демо-профилей: ${demoProfiles.length}\n`;
+        response += `Профилей Сараево: ${sarajevoProfiles.length}\n\n`;
+        
+        if (sarajevoProfiles.length > 0) {
+            response += `**Найдены профили:**\n`;
+            sarajevoProfiles.forEach((p, i) => {
+                response += `${i+1}. ${p.n || p.name}, ${p.a || p.age}\n`;
+                response += `   ID: ${p.id || p._id || 'нет'}\n`;
+                response += `   Город: "${p.ct || p.city}"\n`;
+                response += `   Страна: "${p.c || p.country}"\n`;
+                response += `   Основное фото: ${p.p ? '✅' : '❌'}\n`;
+                response += `   Фото галереи: ${p.phs?.length || 0}\n`;
+                response += `   Телефон: ${p.tel ? 'есть' : 'скрыт'}\n`;
+                response += `   Telegram: ${p.tg ? 'есть' : 'скрыт'}\n\n`;
+            });
+        } else {
+            // Проверяем города Боснии в демо-кэше
+            const bosniaCities = cacheManager.getGlobalCities("🇧🇦 Босния", true);
+            response += `**Города Боснии в демо-кэше:** ${bosniaCities?.length || 0}\n`;
+            if (bosniaCities) {
+                response += `Список: ${bosniaCities.slice(0, 10).join(', ')}\n`;
+            }
+            
+            // Проверяем полный кэш для сравнения
+            const fullProfiles = cacheManager.getGlobalProfiles(false);
+            if (fullProfiles) {
+                const fullSarajevo = fullProfiles.filter(p => {
+                    const city = cacheManager.normalizeCityName(p.ct || p.city);
+                    const country = cacheManager.normalizeCountryName(p.c || p.country);
+                    return city === "Сараево" && country === "🇧🇦 Босния";
+                });
+                response += `\n**В полном кэше:** ${fullSarajevo.length} профилей Сараево\n`;
+            }
+        }
+        
+        await ctx.reply(response);
+        
+    } catch (error) {
+        console.error("Ошибка check_demo_sarajevo:", error);
+        await ctx.reply(`❌ Ошибка: ${error.message}`);
+    }
+});
 // Обработчик для кнопки генерации фильтров
 bot.action("force_precompute", async (ctx) => {
     await ctx.answerCbQuery("🧠 Запускаем генерацию фильтров...");
@@ -3758,7 +4110,7 @@ bot.command("check_uae_profiles", async (ctx) => {
 • 📢 Канал: ${hasChannel ? '✅ ПОДПИСАН' : '❌ НЕТ'}
 • 👤 Режим: ${accessType === 'full' ? '🔓 ПОЛНЫЙ' : '👀 ДЕМО'}
 
-${!hasChannel ? '⚠️ <b>Вы не подписаны на канал @MagicYourClub</b>' : ''}
+${!hasChannel ? '⚠️ <b>Вы не подписаны на канал <a href="https://t.me/+H6Eovikei9xiZWU0"><b>MagicClubPrivate</b></a></b>' : ''}
                 `, { parse_mode: "HTML" });
                 
             } catch (error) {
@@ -4064,7 +4416,7 @@ ${!hasChannel ? '⚠️ <b>Вы не подписаны на канал @MagicYo
                 try {
                     await ctx.editMessageText(
                         isDemo ? 
-                        `👀 ДЕМО-РЕЖИМ: Выберите страну (показано по 3 анкеты на город)\n\n📄 Страница ${page + 1} из ${totalPages}\n🌍 Всего стран: ${uniqueCountries.length}\n\n💎 Для полного доступа Вы должны быть подписаны на наш канал @MagicYourClub и оплатить подписку` : 
+                        `👀 ДЕМО-РЕЖИМ: Выберите страну (показано по 3 анкеты на город)\n\n📄 Страница ${page + 1} из ${totalPages}\n🌍 Всего стран: ${uniqueCountries.length}\n\n💎 Для полного доступа Вы должны быть подписаны на наш канал <a href="https://t.me/+H6Eovikei9xiZWU0"><b>MagicClubPrivate</b></a> и оплатить подписку` : 
                         `🌍 Выберите страну (страница ${page + 1} из ${totalPages})\n📊 Всего стран: ${uniqueCountries.length}\n📍 Показано: ${pageCountries.length} стран`,
                         {
                             parse_mode: "HTML",
@@ -4432,7 +4784,50 @@ ${totalCountries > 10 ? `... и еще ${totalCountries - 10} стран` : ''}
     bot.action("cities_page_info", async (ctx) => {
         await ctx.answerCbQuery("📄 Используйте кнопки для навигации по городам");
     });
-
+// ===================== ОБРАБОТЧИК ДЛЯ КНОПКИ "ВЕРНУТЬСЯ К ГОРОДАМ" =====================
+bot.action("back_to_current_country_cities", async (ctx) => {
+    const userId = ctx.from.id;
+    
+    if (!acquireUserLock(userId, 2000)) {
+        await ctx.answerCbQuery("⏳ Подождите, обрабатываем предыдущий запрос...");
+        return;
+    }
+    
+    await messageQueue.add(async () => {
+        try {
+            await ctx.answerCbQuery("🏙️ Возвращаемся к городам...");
+            
+            // Получаем текущую страну из сессии
+            const currentCountry = ctx.session.filterCountry;
+            const cacheType = await ensureProperCache(ctx);
+            const isDemo = cacheType === 'demo';
+            
+            if (!currentCountry) {
+                console.log(`❌ [BACK TO CITIES] Нет страны в сессии для пользователя ${userId}`);
+                await ctx.reply("❌ Не удалось определить текущую страну. Пожалуйста, выберите страну заново.");
+                await messageManager.sendCountriesKeyboard(ctx, isDemo);
+                return;
+            }
+            
+            console.log(`🏙️ [BACK TO CITIES] Пользователь ${userId} возвращается к городам страны ${currentCountry}, демо=${isDemo}`);
+            
+            // Очищаем экран, но сохраняем клавиатуру стран
+            await messageManager.clear(ctx, false, true);
+            
+            // Показываем клавиатуру городов для текущей страны
+            await messageManager.sendCitiesKeyboard(ctx, currentCountry, isDemo);
+            
+        } catch (error) {
+            console.error("❌ Ошибка возврата к городам:", error);
+            try {
+                await ctx.answerCbQuery("❌ Ошибка возврата");
+            } catch (e) {
+            }
+        } finally {
+            releaseUserLock(userId);
+        }
+    });
+});
     bot.action("back_to_countries", async (ctx) => {
         const userId = ctx.from.id;
         
@@ -4606,180 +5001,100 @@ ${totalCountries > 10 ? `... и еще ${totalCountries - 10} стран` : ''}
     });
 
     // ===================== УЛУЧШЕННАЯ ПРОВЕРКА ПОДПИСКИ НА КАНАЛ =====================
-    bot.action("check_channel_subscription", async (ctx) => {
-        await messageQueue.add(async () => {
-            try {
-                const userId = ctx.from.id;
-                await ctx.answerCbQuery("🔍 Проверяем подписку на канал...");
-                
-                console.log(`🔍 [CHANNEL CHECK] Пользователь ${userId} проверяет подписку на канал`);
-                
-                // 🔥 КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: ОЧИЩАЕМ ВСЕ КЭШИ
-                console.log(`🔄 [CHANNEL CHECK] Очищаем кэши для ${userId}`);
-                
-                // Очищаем ВСЕ кэши
-                subscriptionCache.del(`subscription:${userId}`);
-                channelSubscriptionCache.del(`channel:${userId}`);
-                userCacheStatus.del(`cache_status:${userId}`);
-                
-                // Очищаем сессию
-                if (ctx.session) {
-                    delete ctx.session.fullAccessCache;
-                    delete ctx.session.cacheSession;
-                    delete ctx.session.recentChannelCheck;
-                }
-                
-                // 🔥 ПРОВЕРЯЕМ ПОДПИСКУ И КАНАЛ ЗАНОВО
-                const hasSubscription = await checkSubscription(userId);
-                const hasChannelSubscription = await checkChannelSubscription(ctx);
-                const hasFullAccess = hasSubscription && hasChannelSubscription;
-                
-                console.log(`✅ [CHANNEL CHECK RESULT] ${userId}: подписка=${hasSubscription}, канал=${hasChannelSubscription}, полный доступ=${hasFullAccess}`);
-                
-                // 🔥 ЕСЛИ ПОЛНЫЙ ДОСТУП - ПОКАЗЫВАЕМ УСПЕХ И ПРЕДЛАГАЕМ ПЕРЕЙТИ К АНКЕТАМ
-                if (hasFullAccess) {
-                    console.log(`🎉 [CHANNEL CHECK SUCCESS] ${userId} получил полный доступ!`);
-                    
-                    // 🔥 ТАКЖЕ ОЧИЩАЕМ КЭШ ПОЛЬЗОВАТЕЛЯ (ВАЖНО!)
-                    cacheManager.setUserCacheStatus(userId, 'full');
-                    
-                    // Обновляем сессию
-                    if (!ctx.session) ctx.session = {};
-                    ctx.session.fullAccessCache = {
-                        value: true,
-                        timestamp: Date.now(),
-                        subscription: hasSubscription,
-                        channel: hasChannelSubscription
-                    };
-                    
-                    ctx.session.cacheSession = {
-                        type: 'full',
-                        timestamp: Date.now(),
-                        fullAccess: true
-                    };
-                    
-                    const successKeyboard = {
-                        inline_keyboard: [
-                            [
-                                {
-                                    text: "🌍 СМОТРЕТЬ АНКЕТЫ",
-                                    callback_data: "all_countries_with_check",
-                                },
-                            ],
-                            [
-                                { text: "🔙 Назад", callback_data: "back_to_main" },
-                                { text: "🧹 Очистить экран", callback_data: "clear_screen" },
-                            ],
-                        ],
-                    };
+   // ================= 14. ПРОВЕРКА ПОДПИСКИ НА КАНАЛ =================
+bot.action("check_channel_subscription", async (ctx) => {
+  try {
+    await ctx.answerCbQuery("🔍 Проверяем подписку...");
 
-                    await ctx.reply(
-                        `
-🎉 <b>ПОДПИСКА ПОДТВЕРЖДЕНА!</b>
+    const isSubscribed = await checkChannelSubscription(ctx);
 
-✅ Все условия выполнены!
-✨ Теперь у вас полный доступ ко всем анкетам!
+    if (isSubscribed) {
+      await ctx.answerCbQuery("✅ Подписка подтверждена!");
 
-<b>Что теперь доступно:</b>
-• 👤 Все 70,000+ анкет
-• 📞 Контакты профилей (телефоны, Telegram, WhatsApp)
-• 🌍 Неограниченный поиск по странам и городам
-• ⚡ Максимальная скорость работы
+      ctx.session = ctx.session || {};
+      ctx.session.channelSubscribed = true;
 
-<em>Нажмите "СМОТРЕТЬ АНКЕТЫ" чтобы начать!</em>
-                        `,
-                        {
-                            parse_mode: "HTML",
-                            reply_markup: successKeyboard,
-                        }
-                    );
-                    
-                } else if (hasSubscription && !hasChannelSubscription) {
-                    // 🔥 ЕСТЬ ПОДПИСКА, НО КАНАЛ ВСЕ ЕЩЕ НЕ НАЙДЕН
-                    await ctx.reply(`
-❌ <b>ПОДПИСКА НА КАНАЛ НЕ НАЙДЕНА</b>
+      const successKeyboard = {
+        inline_keyboard: [
+          [
+            {
+              text: "🌍 Смотреть анкеты",
+              callback_data: "all_countries_with_check",
+            },
+          ],
+          [
+            { text: "🔙 Назад", callback_data: "back_to_main" },
+            { text: "🧹 Очистить экран", callback_data: "clear_screen" },
+          ],
+        ],
+      };
 
-✅ Подписка: <b>АКТИВНА</b>
-❌ Канал: <b>НЕ ПОДПИСАН</b>
+      await ctx.reply(
+        `
+🎉 <b>ПОДПИСКА ПОДТВЕРЖДЕНА</b>
 
-<em>Мы все еще не видим вашу подписку на @MagicYourClub</em>
+✅ Теперь у вас есть доступ к анкетам в демо-режиме!
+✨ Благодарим за подписку на наш канал <a href="https://t.me/+H6Eovikei9xiZWU0"><b>MagicClubPrivate</b></a>
 
-<b>Что нужно сделать:</b>
-1. Убедитесь, что вы подписались на канал @MagicYourClub
-2. Если подписались - попробуйте выйти и зайти в канал
-3. Проверьте, что используете тот же аккаунт Telegram
-4. Подождите 1-2 минуты и проверьте снова
+👀 <b></b>
+• Показано по 3 анкеты на город  
+• Контакты скрыты
+• ✨ Для полного доступа Вы должны быть подписаны на наш канал <a href="https://t.me/+H6Eovikei9xiZWU0"><b>MagicClubPrivate</b></a> и оплатить подписку
 
-<code>Если проблема persists, напишите в поддержку @MagicAdd</code>
-                    `, {
-                        parse_mode: "HTML",
-                        reply_markup: {
-                            inline_keyboard: [
-                                [{ text: "✅ Я ПОДПИСАЛСЯ НА КАНАЛ", callback_data: "check_channel_subscription" }],
-                                [{ text: "📢 ПОДПИСАТЬСЯ НА КАНАЛ", url: "https://t.me/MagicYourClub" }],
-                                [{ text: "🔄 Проверить подписку", callback_data: "check_subscription_now" }]
-                            ]
-                        }
-                    });
-                    
-                } else if (!hasSubscription && hasChannelSubscription) {
-                    // 🔥 ЕСТЬ КАНАЛ, НЕТ ПОДПИСКИ
-                    await ctx.reply(`
-✅ <b>Вы подписаны на канал!</b>
+<b>Нажмите "Смотреть анкеты" чтобы начать!</b>
+      `,
+        {
+          parse_mode: "HTML",
+          reply_markup: successKeyboard,
+        }
+      );
+    } else {
+      await ctx.answerCbQuery("❌ Вы не подписаны на канал");
 
-❌ <b>Но у вас нет активной подписки</b>
+      const notSubscribedKeyboard = {
+        inline_keyboard: [
+          [
+            {
+              text: "✅ Я ПОДПИСАЛСЯ",
+              callback_data: "check_channel_subscription",
+            },
+          ],
+          [
+            {
+              text: "📢 ПОДПИСАТЬСЯ НА КАНАЛ",
+              url: "https://t.me/+H6Eovikei9xiZWU0",
+            },
+          ],
+          [{ text: "🔙 Назад", callback_data: "back_to_main" }],
+        ],
+      };
 
-Что делать:
-1. Нажмите "💎 КУПИТЬ ПОДПИСКУ" для оплаты
-2. После оплаты проверьте доступ снова
+      await ctx.reply(
+        `
+❌ <b>ПОДПИСКА НЕ НАЙДЕНА</b>
 
-<em>Без подписки доступ ограничен демо-режимом (3 анкеты на город)</em>
-                    `, {
-                        parse_mode: "HTML",
-                        reply_markup: {
-                            inline_keyboard: [
-                                [{ text: "💎 КУПИТЬ ПОДПИСКУ", callback_data: "get_full_access" }],
-                                [{ text: "🔄 Проверить подписку", callback_data: "check_subscription_now" }],
-                                [{ text: "🌍 ВСЕ СТРАНЫ (демо)", callback_data: "all_countries_with_check" }]
-                            ]
-                        }
-                    });
-                    
-                } else {
-                    // 🔥 НИЧЕГО НЕТ
-                    await ctx.reply(`
-❌ <b>ПОДПИСКА НА КАНАЛ НЕ НАЙДЕНА</b>
+Мы не видим вашу подписку на канал <a href="https://t.me/+H6Eovikei9xiZWU0"><b>MagicClubPrivate</b></a>
 
-Мы не видим вашу подписку на @MagicYourClub
-И у вас нет активной подписки
+<b>Пожалуйста:</b>
+1. Убедитесь, что вы подписались на канал
+2. Нажмите кнопку "Я ПОДПИСАЛСЯ" для повторной проверки
 
-<b>Что нужно сделать:</b>
-1. Нажмите "📢 ПОДПИСАТЬСЯ НА КАНАЛ"
-2. После подписки нажмите "✅ Я ПОДПИСАЛСЯ" снова
-3. Купите подписку для полного доступа
-
-<em>Если вы уже подписаны, но бот не видит подписку:</em>
-• Попробуйте выйти и зайти в канал
-• Убедитесь, что вы используете тот же аккаунт Telegram
-• Подождите 1-2 минуты и проверьте снова
-                    `, {
-                        parse_mode: "HTML",
-                        reply_markup: {
-                            inline_keyboard: [
-                                [{ text: "✅ Я ПОДПИСАЛСЯ НА КАНАЛ", callback_data: "check_channel_subscription" }],
-                                [{ text: "📢 ПОДПИСАТЬСЯ НА КАНАЛ", url: "https://t.me/MagicYourClub" }],
-                                [{ text: "💎 КУПИТЬ ПОДПИСКУ", callback_data: "get_full_access" }]
-                            ]
-                        }
-                    });
-                }
-                
-            } catch (error) {
-                console.error("Ошибка проверки подписки на канал:", error);
-                await ctx.answerCbQuery("❌ Ошибка проверки");
-            }
-        });
-    });
+Если проблема persists, попробуйте:
+• Перезагрузить Telegram
+• Убедиться, что вы используете тот же аккаунт
+• Написать в поддержку @MagicAdd
+      `,
+        {
+          parse_mode: "HTML",
+          reply_markup: notSubscribedKeyboard,
+        }
+      );
+    }
+  } catch (error) {
+    console.error("Ошибка проверки подписки на канал:", error);
+    await ctx.answerCbQuery("❌ Ошибка проверки подписки");
+  }
+});
 
     // ===================== ПРОВЕРКА ТОЛЬКО ПОДПИСКИ =====================
     bot.action("check_subscription_now", async (ctx) => {
@@ -4825,17 +5140,17 @@ ${totalCountries > 10 ? `... и еще ${totalCountries - 10} стран` : ''}
                     await ctx.reply(`
 ✅ <b>ПОДПИСКА АКТИВНА!</b>
 
-❌ <b>Но нет подписки на канал @MagicYourClub</b>
+❌ <b>Но нет подписки на канал <a href="https://t.me/+H6Eovikei9xiZWU0"><b>MagicClubPrivate</b></a></b>
 
 Что нужно сделать:
-1. Подпишитесь на @MagicYourClub
+1. Подпишитесь на <a href="https://t.me/+H6Eovikei9xiZWU0"><b>MagicClubPrivate</b></a>
 2. Нажмите "✅ Я ПОДПИСАЛСЯ НА КАНАЛ"
                     `, {
                         parse_mode: "HTML",
                         reply_markup: {
                             inline_keyboard: [
                                 [{ text: "✅ Я ПОДПИСАЛСЯ НА КАНАЛ", callback_data: "check_channel_subscription" }],
-                                [{ text: "📢 ПОДПИСАТЬСЯ НА КАНАЛ", url: "https://t.me/MagicYourClub" }]
+                                [{ text: "📢 ПОДПИСАТЬСЯ НА КАНАЛ", url: "https://t.me/+H6Eovikei9xiZWU0" }]
                             ]
                         }
                     });
@@ -4976,7 +5291,7 @@ ${hasSubscription && hasChannelSubscription ?
                 } else {
                     let missing = [];
                     if (!hasSubscription) missing.push("активной подписки");
-                    if (!hasChannelSubscription) missing.push("подписки на канал @MagicYourClub");
+                    if (!hasChannelSubscription) missing.push("подписки на канал ");
                     
                     await ctx.reply(`
 ❌ <b>УСЛОВИЯ НЕ ВЫПОЛНЕНЫ</b>
@@ -4985,14 +5300,14 @@ ${hasSubscription && hasChannelSubscription ?
 
 <b>Что нужно сделать:</b>
 ${!hasSubscription ? "1. 💎 Купите подписку через 'ПОЛУЧИТЬ ПОЛНЫЙ ДОСТУП'\n" : ""}
-${!hasChannelSubscription ? "2. 📢 Подпишитесь на канал @MagicYourClub\n" : ""}
+${!hasChannelSubscription ? "2. 📢 Подпишитесь на канал \n" : ""}
 3. 🔄 Проверьте снова после выполнения условий
                     `, {
                         parse_mode: "HTML",
                         reply_markup: {
                             inline_keyboard: [
                                 !hasSubscription ? [{ text: "💎 КУПИТЬ ПОДПИСКУ", callback_data: "get_full_access" }] : [],
-                                !hasChannelSubscription ? [{ text: "📢 ПОДПИСАТЬСЯ НА КАНАЛ", url: "https://t.me/MagicYourClub" }] : [],
+                                !hasChannelSubscription ? [{ text: "📢 ПОДПИСАТЬСЯ НА КАНАЛ", url: "https://t.me/+H6Eovikei9xiZWU0" }] : [],
                                 [{ text: "✅ Я ПОДПИСАЛСЯ НА КАНАЛ", callback_data: "check_channel_subscription" }],
                                 [{ text: "🔄 Проверить снова", callback_data: "check_all_access" }]
                             ].filter(row => row.length > 0)
@@ -5091,64 +5406,126 @@ ${!hasChannelSubscription ? "2. 📢 Подпишитесь на канал @Mag
         });
     });
 
-    // ===================== ФУНКЦИЯ ОТПРАВКИ ПРОФИЛЯ =====================
-    // ===================== ФУНКЦИЯ ОТПРАВКИ ПРОФИЛЯ =====================
+    // ===================== ФУНКЦИЯ ОТПРАВКИ ПРОФИЛЯ (ПОЛНОСТЬЮ ПЕРЕПИСАНА С ИСПРАВЛЕНИЕМ ДЕМО-РЕЖИМА) =====================
+// ===================== ФУНКЦИЯ ОТПРАВКИ ПРОФИЛЯ (ПОЛНОСТЬЮ ПЕРЕПИСАНА) =====================
 const sendProfile = async (ctx, profile, page, total, isLast, isDemo = false) => {
     return messageQueue.add(async () => {
         try {
-            // 🔥 КРИТИЧЕСКИЙ ФИКС: ПРОВЕРЯЕМ НА NULL/UNDEFINED
-            if (!profile) {
-                console.log(`❌ [SEND PROFILE] Профиль не определен!`);
-                return null;
+            console.log(`🔍 [SEND PROFILE START] page=${page}, total=${total}, isLast=${isLast}, isDemo=${isDemo}`);
+            
+            // 🔥 КРИТИЧЕСКАЯ ПРОВЕРКА: Профиль undefined
+            if (profile === undefined || profile === null) {
+                console.log(`❌ [SEND PROFILE] Профиль undefined/null`);
+                
+                // 🔥 Пытаемся восстановить из кэша фильтров
+                const filterKey = isDemo ? 
+                    `demo:country:${ctx.session?.filterCountry || 'all'}:age:${ctx.session?.ageRange?.label || 'all'}:city:${ctx.session?.filterCity || 'all'}` :
+                    `country:${ctx.session?.filterCountry || 'all'}:age:${ctx.session?.ageRange?.label || 'all'}:city:${ctx.session?.filterCity || 'all'}`;
+                
+                console.log(`🔄 [RECOVERY] Пробуем получить из кэша: ${filterKey}`);
+                
+                const cachedProfiles = cacheManager.getGlobalFilter(filterKey, isDemo);
+                
+                if (cachedProfiles && cachedProfiles.length > 0) {
+                    console.log(`✅ [RECOVERY SUCCESS] Найдено в кэше: ${cachedProfiles.length} профилей`);
+                    
+                    // 🔥 ВАЖНОЕ ИСПРАВЛЕНИЕ: Берем профиль по индексу страницы
+                    if (cachedProfiles.length > page) {
+                        const targetProfile = cachedProfiles[page];
+                        console.log(`✅ [RECOVERY] Используем профиль из кэша на странице ${page}:`, targetProfile?.n || targetProfile?.name || 'unknown');
+                        profile = targetProfile;
+                    } else if (cachedProfiles.length > 0) {
+                        // Если страница больше чем профилей - берем первый
+                        const targetProfile = cachedProfiles[0];
+                        console.log(`✅ [RECOVERY] Используем первый профиль из кэша:`, targetProfile?.n || targetProfile?.name || 'unknown');
+                        profile = targetProfile;
+                    } else {
+                        console.log(`❌ [RECOVERY FAILED] Нет профилей в кэше`);
+                        profile = null;
+                    }
+                } else {
+                    console.log(`❌ [RECOVERY FAILED] Кэш пустой или не найден`);
+                    profile = null;
+                }
             }
             
-            console.log(`🔍 [SEND PROFILE] Отправка профиля ${profile.n || profile.name || 'unknown'}, демо=${isDemo}`);
+            // 🔥 Проверка: Профиль пустой объект или некорректная структура
+            if (!profile || typeof profile !== 'object' || (!profile.n && !profile.name && !profile.id && !profile._id)) {
+                console.log(`⚠️ [SEND PROFILE INVALID] Профиль некорректный, создаем демо-заглушку`);
+                
+                const fallbackProfile = {
+                    id: 'demo_fallback_' + Date.now(),
+                    n: 'Демо-анкета',
+                    a: 25,
+                    c: ctx.session?.filterCountry || 'Страна',
+                    ct: ctx.session?.filterCity || 'Город',
+                    ab: 'Это демо-анкета для показа работы системы. Для просмотра полных анкет с контактами получите полный доступ.',
+                    p: 'https://via.placeholder.com/600x800/0088cc/ffffff?text=Demo+Profile',
+                    phs: ['https://via.placeholder.com/600x800/0088cc/ffffff?text=Photo+1', 'https://via.placeholder.com/600x800/0088cc/ffffff?text=Photo+2'],
+                    tg: null,
+                    tel: null,
+                    wa: null,
+                    ca: new Date(),
+                    isDemo: true
+                };
+                
+                profile = fallbackProfile;
+                isDemo = true;
+            }
             
+            console.log(`✅ [SEND PROFILE READY] Профиль готов: ${profile.n || profile.name || 'unknown'}, isDemo=${isDemo || profile.isDemo}`);
+            
+            // 🔥 ПРЕОБРАЗОВАНИЕ В ЕДИНЫЙ ФОРМАТ
             const fullProfile = {
-                id: profile.id || profile._id || '',
+                id: profile.id || profile._id || 'unknown_' + Date.now(),
                 name: profile.n || profile.name || 'Неизвестно',
-                age: profile.a || profile.age || 0, 
-                country: profile.c || profile.country || '',
-                city: profile.ct || profile.city || '',
-                about: profile.ab || profile.about || '',
+                age: parseInt(profile.a || profile.age) || 25,
+                country: profile.c || profile.country || ctx.session?.filterCountry || 'Страна',
+                city: profile.ct || profile.city || ctx.session?.filterCity || 'Город',
+                about: profile.ab || profile.about || 'Описание недоступно',
                 photoUrl: profile.p || profile.photoUrl || '',
-                photos: profile.phs || profile.photos || [],
-                telegram: profile.tg || profile.telegram,
-                phone: profile.tel || profile.phone,
-                whatsapp: profile.wa || profile.whatsapp,
-                createdAt: profile.ca || profile.createdAt,
-                isDemo: profile.isDemo || isDemo
+                photos: Array.isArray(profile.phs || profile.photos) ? (profile.phs || profile.photos) : [],
+                telegram: isDemo || profile.isDemo ? null : (profile.tg || profile.telegram),
+                phone: isDemo || profile.isDemo ? null : (profile.tel || profile.phone),
+                whatsapp: isDemo || profile.isDemo ? null : (profile.wa || profile.whatsapp),
+                createdAt: profile.ca || profile.createdAt || new Date(),
+                isDemo: isDemo || profile.isDemo || false
             };
-
-            console.log(`🔍 [DEBUG] Профиль ${fullProfile.name}: фото URL=${fullProfile.photoUrl}, галерея=${fullProfile.photos?.length || 0} фото`);
-
+            
+            console.log(`🔍 [FULL PROFILE] Создан: ${fullProfile.name}, фото: ${fullProfile.photos.length}, город: "${fullProfile.city}", страна: "${fullProfile.country}"`);
+            
+            // 🔥 ФУНКЦИЯ ОЧИСТКИ ТЕКСТА
             const cleanText = (text) => {
-                if (!text) return "";
-                return text.replace(/[^\x00-\x7F\u0400-\u04FF\u0500-\u052F\u2DE0-\u2DFF\uA640-\uA69F]/g, '')
-                          .replace(/[^\w\s\u0400-\u04FF\u0500-\u052F\u2DE0-\u2DFF\uA640-\uA69F.,!?;:()\-+=\[\]{}@#$%^&*<>\/\\|'"`~]/g, '')
-                          .trim();
+                if (!text || typeof text !== 'string') return "";
+                return text
+                    .replace(/[^\x00-\x7F\u0400-\u04FF\u0500-\u052F\u2DE0-\u2DFF\uA640-\uA69F\s.,!?;:()\-+=\[\]{}@#$%^&*<>\/\\|'"`~]/g, '')
+                    .trim();
             };
-
-            const about = cleanText(fullProfile.about)?.length > SCALING_CONFIG.PERFORMANCE.MAX_CAPTION_LENGTH
-                ? cleanText(fullProfile.about).substring(0, SCALING_CONFIG.PERFORMANCE.MAX_CAPTION_LENGTH - 3) + "..."
-                : cleanText(fullProfile.about) || "";
-
-            // 🔥 ВАЖНО: РАЗДЕЛЯЕМ ЛОГИКУ ДЕМО И ПОЛНОГО ДОСТУПА
-            if (isDemo || fullProfile.isDemo) {
+            
+            // 🔥 ПОДГОТОВКА ОПИСАНИЯ
+            let about = cleanText(fullProfile.about);
+            if (about.length > SCALING_CONFIG.PERFORMANCE.MAX_CAPTION_LENGTH) {
+                about = about.substring(0, SCALING_CONFIG.PERFORMANCE.MAX_CAPTION_LENGTH - 3) + "...";
+            }
+            
+            // 🔥 РАЗДЕЛЯЕМ ЛОГИКУ ДЕМО И ПОЛНОГО ДОСТУПА
+            if (fullProfile.isDemo) {
+                console.log(`🎭 [DEMO MODE] Создаем демо-анкету для ${fullProfile.name}`);
+                
                 const demoCaption = `
 👤 <b>${cleanText(fullProfile.name)}</b>, ${fullProfile.age}
--------------------------------
-${cleanText(fullProfile.country)},📍${cleanText(fullProfile.city)}
--------------------------------
+━━━━━━━━━━━━━━━━━━━━━━
+📍 <b>${cleanText(fullProfile.city)}, ${cleanText(fullProfile.country)}</b>
+━━━━━━━━━━━━━━━━━━━━━━
 <em>${about.length > 300 ? about.substring(0, 300) + `...<a href="http://t.me/magicboss_bot/magic">читать полностью в ✨Magic</a>` : about}</em>
-🔹🔹🔹🔹🔹🔹🔹🔹🔹🔹
+━━━━━━━━━━━━━━━━━━━━━━
 🚫 <b>КОНТАКТЫ СКРЫТЫ (ДЕМО-РЕЖИМ)</b>
--------------------------------
+━━━━━━━━━━━━━━━━━━━━━━
 👀 <b>ДЕМО-РЕЖИМ:</b> показано максимум 3 анкеты на город
 💎 <b>Для получения контактов и полного доступа ко всем анкетам необходимо:</b>
 
 ✅ <b>1. Активная подписка</b>
-✅ <b>2. Подписка на канал @MagicYourClub</b>
+✅ <b>2. Подписка на канал <a href="https://t.me/+H6Eovikei9xiZWU0"><b>MagicClubPrivate</b></a></b>
 
 ✨ После получения доступа вы увидите:
 • Все контакты профилей (Telegram, WhatsApp, телефон)
@@ -5156,121 +5533,96 @@ ${cleanText(fullProfile.country)},📍${cleanText(fullProfile.city)}
 • Неограниченный доступ ко всем анкетам
 • Максимальную скорость работы
 
--------------------------------
+━━━━━━━━━━━━━━━━━━━━━━
 <a href="http://t.me/magicboss_bot/magic"><b>✨Magic WebApp</b></a>
-`.trim();
-
+                `.trim();
+                
+                // 🔥 ПОДГОТОВКА КНОПОК ПАГИНАЦИИ
                 let keyboard = [];
                 if (isLast) {
-                    const filterKey = `demo:country:${ctx.session.filterCountry || 'all'}:age:${ctx.session.ageRange?.label || 'all'}:city:${ctx.session.filterCity || 'all'}`;
-                    const filteredProfiles = cacheManager.getGlobalFilter(filterKey, true);
-                    const totalPages = Math.ceil((filteredProfiles?.length || 0) / SCALING_CONFIG.PERFORMANCE.PROFILES_PER_PAGE);
+                    const filterKey = `demo:country:${ctx.session?.filterCountry || 'all'}:age:${ctx.session?.ageRange?.label || 'all'}:city:${ctx.session?.filterCity || 'all'}`;
+                    const filteredProfiles = cacheManager.getGlobalFilter(filterKey, true) || [];
+                    const totalPages = Math.ceil((filteredProfiles.length || 0) / SCALING_CONFIG.PERFORMANCE.PROFILES_PER_PAGE);
                     
                     const currentFilters = {
-                        country: ctx.session?.displayCountry,
+                        country: ctx.session?.filterCountry,
                         city: ctx.session?.filterCity,
                         ageRange: ctx.session?.ageRange
                     };
                     
                     keyboard = createEnhancedPaginationKeyboard(page, totalPages, filterKey, currentFilters, true);
-
+                    
+                    // 🔥 ДОБАВЛЯЕМ ДОПОЛНИТЕЛЬНЫЕ КНОПКИ
                     keyboard.push(
+                        [{ text: "🏙️ Вернуться к городам", callback_data: "back_to_current_country_cities" }],
                         [{ text: "🎂 Фильтр по возрасту", callback_data: "filter_by_age" }],
                         [{ text: "🌍 Все страны", callback_data: "all_countries_with_check" }],
                         [{ text: "🧹 Очистить экран", callback_data: "clear_screen" }]
                     );
                 }
-
+                
+                // 🔥 ПОДГОТОВКА ФОТО
                 let photosToSend = [];
-                const seenUrls = new Set();
-
-                if (fullProfile.photoUrl && typeof fullProfile.photoUrl === 'string' && fullProfile.photoUrl.trim() !== '') {
+                
+                // Основное фото
+                if (fullProfile.photoUrl && fullProfile.photoUrl.trim() !== '') {
                     try {
-                        const urlObj = new URL(fullProfile.photoUrl.trim());
-                        const cleanUrl = urlObj.href;
-                        if ((urlObj.protocol === 'http:' || urlObj.protocol === 'https:') && !seenUrls.has(cleanUrl)) {
-                            seenUrls.add(cleanUrl);
-                            photosToSend.push(cleanUrl);
-                        }
+                        const url = fullProfile.photoUrl.trim();
+                        new URL(url);
+                        photosToSend.push(url);
                     } catch (e) {
-                        console.log(`❌ Ошибка обработки основного фото:`, e.message);
+                        console.log(`❌ [DEMO PHOTO] Некорректный URL основного фото: ${e.message}`);
                     }
                 }
-
+                
+                // Фото галереи
                 if (Array.isArray(fullProfile.photos) && fullProfile.photos.length > 0) {
                     fullProfile.photos.forEach((url, index) => {
                         if (typeof url === 'string' && url.trim() !== '') {
                             try {
-                                const urlObj = new URL(url.trim());
-                                const cleanUrl = urlObj.href;
-                                if ((urlObj.protocol === 'http:' || urlObj.protocol === 'https:') && !seenUrls.has(cleanUrl)) {
-                                    seenUrls.add(cleanUrl);
-                                    photosToSend.push(cleanUrl);
-                                }
+                                const cleanUrl = url.trim();
+                                new URL(cleanUrl);
+                                photosToSend.push(cleanUrl);
                             } catch (e) {
-                                console.log(`❌ Ошибка обработки фото ${index + 1}:`, e.message);
+                                console.log(`❌ [DEMO PHOTO] Некорректный URL фото ${index + 1}: ${e.message}`);
                             }
                         }
                     });
                 }
-
-                photosToSend = photosToSend.slice(0, 10);
                 
-                console.log(`📸 [DEMO PHOTO] Уникальные фото для ${fullProfile.name}: ${photosToSend.length} (из ${fullProfile.photos?.length || 0} в галерее)`);
-
+                // Если нет фото - НЕ добавляем заглушку, просто пропускаем отправку фото
+if (photosToSend.length === 0) {
+    console.log(`⚠️ [NO PHOTOS] У профиля "${fullProfile.name}" нет фото, пропускаем отправку фото`);
+}
+                
+                // Ограничиваем количество
+                photosToSend = photosToSend.slice(0, 10);
+                console.log(`📸 [DEMO PHOTOS] Будет отправлено ${photosToSend.length} фото`);
+                
+                // 🔥 ФУНКЦИЯ ОТПРАВКИ ФОТО
                 const sendPhotoSafely = async (photoUrl, photoNumber, totalPhotos) => {
                     try {
                         const emojiNumbers = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'];
                         const numberEmoji = photoNumber <= 10 ? emojiNumbers[photoNumber - 1] : `${photoNumber}.`;
                         const photoCaption = `${numberEmoji} Фото ${photoNumber}/${totalPhotos}`;
                         
+                        console.log(`🖼️ [SEND PHOTO] Отправляем фото ${photoNumber}/${totalPhotos}: ${photoUrl.substring(0, 50)}...`);
+                        
                         return await ctx.replyWithPhoto(photoUrl, { 
                             caption: photoCaption, 
                             parse_mode: "HTML" 
                         });
                     } catch (error) {
-                        console.log(`❌ Ошибка отправки фото ${photoNumber}:`, error.message);
-                        
-                        try {
-                            return await ctx.replyWithPhoto(photoUrl);
-                        } catch (e) {
-                            console.log(`❌ Не удалось отправить фото ${photoNumber} даже без caption:`, e.message);
-                            return null;
-                        }
+                        console.log(`❌ [SEND PHOTO ERROR] Ошибка отправки фото ${photoNumber}: ${error.message}`);
+                        return null;
                     }
                 };
-
-                let infoMessage = null;
                 
+                // 🔥 ОТПРАВКА ФОТО
                 if (photosToSend.length > 0) {
-                    const profileInfo = `✨✨✨✨✨✨✨✨✨✨ \n <a href="http://t.me/MagicYourClub"><b>Новые анкеты в нашем ➡️ канале</b></a>\n\n`;
-                    infoMessage = await ctx.reply(profileInfo, { parse_mode: "HTML" });
-                    messageManager.track(ctx.chat.id, infoMessage.message_id);
-                    await new Promise(resolve => setTimeout(resolve, 500));
-                }
-
-                const sentPhotoMessages = [];
-                
-                if (photosToSend.length === 0) {
-                    console.log(`📭 [DEMO PHOTO] Нет валидных фото для ${fullProfile.name}, отправляем только текст`);
-                    const msg = await ctx.reply(demoCaption, {
-                        parse_mode: "HTML",
-                        reply_markup: keyboard.length > 0 ? { inline_keyboard: keyboard } : undefined,
-                    });
-                    messageManager.track(ctx.chat.id, msg.message_id);
-                    return msg;
-                }
-                else {
                     for (let i = 0; i < photosToSend.length; i++) {
-                        const photoUrl = photosToSend[i];
-                        const photoNumber = i + 1;
-                        const totalPhotos = photosToSend.length;
-                        
-                        console.log(`🔄 [PHOTO] Отправляем фото ${photoNumber}/${totalPhotos} для ${fullProfile.name}`);
-                        
-                        const photoMsg = await sendPhotoSafely(photoUrl, photoNumber, totalPhotos);
+                        const photoMsg = await sendPhotoSafely(photosToSend[i], i + 1, photosToSend.length);
                         if (photoMsg) {
-                            sentPhotoMessages.push(photoMsg);
                             messageManager.track(ctx.chat.id, photoMsg.message_id);
                             
                             if (i < photosToSend.length - 1) {
@@ -5278,35 +5630,36 @@ ${cleanText(fullProfile.country)},📍${cleanText(fullProfile.city)}
                             }
                         }
                     }
-                    
-                    if (sentPhotoMessages.length === 0) {
-                        console.log(`⚠️ [DEMO PHOTO] Все фото не удалось отправить для ${fullProfile.name}`);
-                        const fallbackMsg = await ctx.reply(`📷 [Все фото недоступны]\n\n${demoCaption}`, { 
-                            parse_mode: "HTML",
-                            reply_markup: keyboard.length > 0 ? { inline_keyboard: keyboard } : undefined,
-                        });
-                        messageManager.track(ctx.chat.id, fallbackMsg.message_id);
-                        return fallbackMsg;
-                    }
                 }
-
+                
+                // 🔥 ИНФОРМАЦИОННОЕ СООБЩЕНИЕ
+                const infoMessage = await ctx.reply(
+                    `✨✨✨✨✨✨✨✨✨✨\n<a href="http://t.me/MagicYourClub"><b>Новые анкеты в нашем ➡️ канале</b></a>\n\n`,
+                    { parse_mode: "HTML" }
+                );
+                messageManager.track(ctx.chat.id, infoMessage.message_id);
                 await new Promise(resolve => setTimeout(resolve, 500));
-
+                
+                // 🔥 ОТПРАВКА ТЕКСТА АНКЕТЫ
                 const textMsg = await ctx.reply(demoCaption, {
                     parse_mode: "HTML",
                     reply_markup: keyboard.length > 0 ? { inline_keyboard: keyboard } : undefined,
                 });
-
+                
                 messageManager.track(ctx.chat.id, textMsg.message_id);
-                console.log(`✅ [DEMO PROFILE] Анкета ${fullProfile.name} отправлена: ${sentPhotoMessages.length} фото + текст`);
-
+                console.log(`✅ [DEMO PROFILE SENT] Анкета ${fullProfile.name} отправлена успешно`);
+                
                 return textMsg;
-
+                
             } else {
-                // 🔥 КОД ДЛЯ ПОЛНОГО ДОСТУПА
+                // 🔥 ПОЛНЫЙ ДОСТУП
+                console.log(`👑 [FULL ACCESS] Создаем полную анкету для ${fullProfile.name}`);
+                
+                // 🔥 ФОРМАТИРОВАНИЕ КОНТАКТОВ
                 const formatTelegram = (username) => {
                     if (!username) return "";
                     const cleanUsername = cleanText(username);
+                    
                     if (/^[0-9+\-() ]+$/.test(cleanUsername)) {
                         const cleanDigits = cleanUsername.replace(/[^0-9]/g, "");
                         if (cleanDigits.startsWith('7') || cleanDigits.startsWith('8') || (cleanDigits.length >= 10 && !cleanDigits.startsWith('1'))) {
@@ -5316,168 +5669,174 @@ ${cleanText(fullProfile.country)},📍${cleanText(fullProfile.city)}
                             return `🔵 <a href="https://t.me/${telegramNumber}">Telegram</a>`;
                         }
                     }
+                    
                     if (cleanUsername.startsWith("https://t.me/")) {
-                        const cleaned = decodeURIComponent(cleanUsername).replace("https://t.me/", "").replace(/^%40/, "@").replace(/^\+/, "");
+                        const cleaned = decodeURIComponent(cleanUsername)
+                            .replace("https://t.me/", "")
+                            .replace(/^%40/, "@")
+                            .replace(/^\+/, "");
                         return `🔵 <a href="https://t.me/${cleaned}">Telegram</a>`;
                     }
+                    
                     const cleaned = cleanUsername.replace(/^[@+]/, "");
                     return `🔵 <a href="https://t.me/${cleaned}">Telegram</a>`;
                 };
-
+                
                 const formatWhatsApp = (url) => {
                     if (!url) return "";
                     const cleanUrl = cleanText(url);
+                    
                     if (/^[0-9+\-() ]+$/.test(cleanUrl)) {
                         let cleanDigits = cleanUrl.replace(/[^0-9]/g, "");
                         if (cleanDigits.startsWith('8') && cleanDigits.length === 11) cleanDigits = '7' + cleanDigits.substring(1);
                         else if (cleanDigits.length === 10) cleanDigits = '7' + cleanDigits;
-                        if (cleanDigits.length === 11 && cleanDigits.startsWith('7')) return `🟢 <a href="https://wa.me/${cleanDigits}">WhatsApp</a>`;
+                        
+                        if (cleanDigits.length === 11 && cleanDigits.startsWith('7')) {
+                            return `🟢 <a href="https://wa.me/${cleanDigits}">WhatsApp</a>`;
+                        }
                     }
+                    
                     return `🟢 <a href="${cleanUrl}">WhatsApp</a>`;
                 };
-
+                
                 const formatPhone = (phone) => {
                     if (!phone) return "";
                     let cleanDigits = cleanText(phone).replace(/[^0-9]/g, "");
                     if (!cleanDigits) return "";
+                    
                     let formattedPhone = cleanText(phone);
                     if (cleanDigits.length === 11 || cleanDigits.length === 10) {
                         if (cleanDigits.startsWith('7') && cleanDigits.length === 11) formattedPhone = `+${cleanDigits}`;
                         else if (cleanDigits.startsWith('8') && cleanDigits.length === 11) formattedPhone = `+7${cleanDigits.substring(1)}`;
                         else if (cleanDigits.length === 10) formattedPhone = `+7${cleanDigits}`;
                     }
+                    
                     return `📞 ${formattedPhone}`;
                 };
-
+                
+                // 🔥 СОЗДАНИЕ ПОДПИСИ
                 const fullCaption = `
 👤 <b>${cleanText(fullProfile.name)}</b>, ${fullProfile.age}
--------------------------------
-${cleanText(fullProfile.country)},📍${cleanText(fullProfile.city)}
--------------------------------
+━━━━━━━━━━━━━━━━━━━━━━
+📍 <b>${cleanText(fullProfile.city)}, ${cleanText(fullProfile.country)}</b>
+━━━━━━━━━━━━━━━━━━━━━━
 <em>${about.length > 300 ? about.substring(0, 300) + `...<a href="http://t.me/magicboss_bot/magic">читать полностью в ✨Magic</a>` : about}</em>
-🔹🔹🔹🔹🔹🔹🔹🔹🔹🔹
-<b>Контакты:</b>
--------------------------------
-${fullProfile.phone ? formatPhone(fullProfile.phone) : ""}${fullProfile.telegram ? "\n-------------------------------\n" + formatTelegram(fullProfile.telegram) : ""}${fullProfile.whatsapp ? "\n-------------------------------\n" + formatWhatsApp(fullProfile.whatsapp) : ""}${(fullProfile.phone || fullProfile.telegram || fullProfile.whatsapp) ? "\n-------------------------------" : ""}
-⚠️ <b>ЕСЛИ КТО-ТО ПРОСИТ: Криптовалюту наперед, деньги на такси🚕 или дорогу, предоплату любым способом, переводы на карты💳 или электронные кошельки, чеки или подтверждения оплаты</b>
+━━━━━━━━━━━━━━━━━━━━━━
+<b>📞 Контакты:</b>
+━━━━━━━━━━━━━━━━━━━━━━
+${fullProfile.phone ? formatPhone(fullProfile.phone) + '\n' : ''}
+${fullProfile.telegram ? formatTelegram(fullProfile.telegram) + '\n' : ''}
+${fullProfile.whatsapp ? formatWhatsApp(fullProfile.whatsapp) + '\n' : ''}
+${(fullProfile.phone || fullProfile.telegram || fullProfile.whatsapp) ? '━━━━━━━━━━━━━━━━━━━━━━\n' : ''}
+⚠️ <b>ВНИМАНИЕ!</b>
+━━━━━━━━━━━━━━━━━━━━━━
+<b>ЕСЛИ КТО-ТО ПРОСИТ:</b>
+• Криптовалюту наперед
+• Деньги на такси🚕 или дорогу
+• Предоплату любым способом
+• Переводы на карты💳 или электронные кошельки
+• Чеки или подтверждения оплаты
+
 🔥 🔥 🔥 🔥 🔥 🔥 🔥 🔥 🔥 🔥 🔥 🔥 
 <b>ЭТО 100% МОШЕННИКИ!
 НИ В КОЕМ СЛУЧАЕ НЕ ОТПРАВЛЯЙТЕ ПРЕДОПЛАТУ  🛑 ВАС ОБМАНУТ!</b>
--------------------------------
+━━━━━━━━━━━━━━━━━━━━━━
 <a href="http://t.me/magicboss_bot/magic"><b>✨Magic WebApp</b></a>
-`.trim();
-
+                `.trim();
+                
+                // 🔥 ПОДГОТОВКА КНОПОК ПАГИНАЦИИ
                 let keyboard = [];
                 if (isLast) {
-                    const filterKey = `country:${ctx.session.filterCountry || 'all'}:age:${ctx.session.ageRange?.label || 'all'}:city:${ctx.session.filterCity || 'all'}`;
-                    const filteredProfiles = cacheManager.getGlobalFilter(filterKey, false);
-                    const totalPages = Math.ceil((filteredProfiles?.length || 0) / SCALING_CONFIG.PERFORMANCE.PROFILES_PER_PAGE);
+                    const filterKey = `country:${ctx.session?.filterCountry || 'all'}:age:${ctx.session?.ageRange?.label || 'all'}:city:${ctx.session?.filterCity || 'all'}`;
+                    const filteredProfiles = cacheManager.getGlobalFilter(filterKey, false) || [];
+                    const totalPages = Math.ceil((filteredProfiles.length || 0) / SCALING_CONFIG.PERFORMANCE.PROFILES_PER_PAGE);
                     
                     const currentFilters = {
-                        country: ctx.session?.displayCountry,
+                        country: ctx.session?.filterCountry,
                         city: ctx.session?.filterCity,
                         ageRange: ctx.session?.ageRange
                     };
                     
                     keyboard = createEnhancedPaginationKeyboard(page, totalPages, filterKey, currentFilters);
-
+                    
+                    // 🔥 ДОБАВЛЯЕМ ДОПОЛНИТЕЛЬНЫЕ КНОПКИ
                     keyboard.push(
+                        [{ text: "🏙️ Вернуться к городам", callback_data: "back_to_current_country_cities" }],
                         [{ text: "🎂 Фильтр по возрасту", callback_data: "filter_by_age" }],
                         [{ text: "🌍 Все страны", callback_data: "all_countries_with_check" }],
                         [{ text: "🧹 Очистить экран", callback_data: "clear_screen" }]
                     );
                 }
-
+                
+                // 🔥 ПОДГОТОВКА ФОТО
                 let photosToSend = [];
                 const seenUrls = new Set();
-
-                if (fullProfile.photoUrl && typeof fullProfile.photoUrl === 'string' && fullProfile.photoUrl.trim() !== '') {
+                
+                // Основное фото
+                if (fullProfile.photoUrl && fullProfile.photoUrl.trim() !== '') {
                     try {
-                        const urlObj = new URL(fullProfile.photoUrl.trim());
-                        const cleanUrl = urlObj.href;
-                        if ((urlObj.protocol === 'http:' || urlObj.protocol === 'https:') && !seenUrls.has(cleanUrl)) {
-                            seenUrls.add(cleanUrl);
-                            photosToSend.push(cleanUrl);
+                        const url = fullProfile.photoUrl.trim();
+                        new URL(url);
+                        if (!seenUrls.has(url)) {
+                            seenUrls.add(url);
+                            photosToSend.push(url);
                         }
                     } catch (e) {
-                        console.log(`❌ Ошибка обработки основного фото:`, e.message);
+                        console.log(`❌ [FULL PHOTO] Некорректный URL основного фото: ${e.message}`);
                     }
                 }
-
+                
+                // Фото галереи
                 if (Array.isArray(fullProfile.photos) && fullProfile.photos.length > 0) {
                     fullProfile.photos.forEach((url, index) => {
                         if (typeof url === 'string' && url.trim() !== '') {
                             try {
-                                const urlObj = new URL(url.trim());
-                                const cleanUrl = urlObj.href;
-                                if ((urlObj.protocol === 'http:' || urlObj.protocol === 'https:') && !seenUrls.has(cleanUrl)) {
+                                const cleanUrl = url.trim();
+                                new URL(cleanUrl);
+                                if (!seenUrls.has(cleanUrl)) {
                                     seenUrls.add(cleanUrl);
                                     photosToSend.push(cleanUrl);
                                 }
                             } catch (e) {
-                                console.log(`❌ Ошибка обработки фото ${index + 1}:`, e.message);
+                                console.log(`❌ [FULL PHOTO] Некорректный URL фото ${index + 1}: ${e.message}`);
                             }
                         }
                     });
                 }
-
-                photosToSend = photosToSend.slice(0, 10);
                 
-                console.log(`📸 [PHOTO] Уникальные фото для ${fullProfile.name}: ${photosToSend.length} (из ${fullProfile.photos?.length || 0} в галерее)`);
-
+                // Если нет фото
+                if (photosToSend.length === 0) {
+                    console.log(`⚠️ [FULL PHOTOS] Нет валидных фото для ${fullProfile.name}`);
+                }
+                
+                // Ограничиваем количество
+                photosToSend = photosToSend.slice(0, 10);
+                console.log(`📸 [FULL PHOTOS] Будет отправлено ${photosToSend.length} фото`);
+                
+                // 🔥 ФУНКЦИЯ ОТПРАВКИ ФОТО
                 const sendPhotoSafely = async (photoUrl, photoNumber, totalPhotos) => {
                     try {
                         const emojiNumbers = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'];
                         const numberEmoji = photoNumber <= 10 ? emojiNumbers[photoNumber - 1] : `${photoNumber}.`;
                         const photoCaption = `${numberEmoji} Фото ${photoNumber}/${totalPhotos}`;
                         
+                        console.log(`🖼️ [SEND PHOTO] Отправляем фото ${photoNumber}/${totalPhotos}: ${photoUrl.substring(0, 50)}...`);
+                        
                         return await ctx.replyWithPhoto(photoUrl, { 
                             caption: photoCaption, 
                             parse_mode: "HTML" 
                         });
                     } catch (error) {
-                        console.log(`❌ Ошибка отправки фото ${photoNumber}:`, error.message);
-                        
-                        try {
-                            return await ctx.replyWithPhoto(photoUrl);
-                        } catch (e) {
-                            console.log(`❌ Не удалось отправить фото ${photoNumber} даже без caption:`, e.message);
-                            return null;
-                        }
+                        console.log(`❌ [SEND PHOTO ERROR] Ошибка отправки фото ${photoNumber}: ${error.message}`);
+                        return null;
                     }
                 };
-
-                let infoMessage = null;
                 
+                // 🔥 ОТПРАВКА ФОТО
                 if (photosToSend.length > 0) {
-                    const profileInfo = `✨✨✨✨✨✨✨✨✨✨ \n <a href="http://t.me/MagicYourClub"><b>Новые анкеты в нашем ➡️ канале</b></a>\n\n`;
-                    infoMessage = await ctx.reply(profileInfo, { parse_mode: "HTML" });
-                    messageManager.track(ctx.chat.id, infoMessage.message_id);
-                    await new Promise(resolve => setTimeout(resolve, 500));
-                }
-
-                const sentPhotoMessages = [];
-                
-                if (photosToSend.length === 0) {
-                    console.log(`📭 [PHOTO] Нет валидных фото для ${fullProfile.name}, отправляем только текст`);
-                    const msg = await ctx.reply(fullCaption, {
-                        parse_mode: "HTML",
-                        reply_markup: keyboard.length > 0 ? { inline_keyboard: keyboard } : undefined,
-                    });
-                    messageManager.track(ctx.chat.id, msg.message_id);
-                    return msg;
-                }
-                else {
                     for (let i = 0; i < photosToSend.length; i++) {
-                        const photoUrl = photosToSend[i];
-                        const photoNumber = i + 1;
-                        const totalPhotos = photosToSend.length;
-                        
-                        console.log(`🔄 [PHOTO] Отправляем фото ${photoNumber}/${totalPhotos} для ${fullProfile.name}`);
-                        
-                        const photoMsg = await sendPhotoSafely(photoUrl, photoNumber, totalPhotos);
+                        const photoMsg = await sendPhotoSafely(photosToSend[i], i + 1, photosToSend.length);
                         if (photoMsg) {
-                            sentPhotoMessages.push(photoMsg);
                             messageManager.track(ctx.chat.id, photoMsg.message_id);
                             
                             if (i < photosToSend.length - 1) {
@@ -5485,53 +5844,208 @@ ${fullProfile.phone ? formatPhone(fullProfile.phone) : ""}${fullProfile.telegram
                             }
                         }
                     }
-                    
-                    if (sentPhotoMessages.length === 0) {
-                        console.log(`⚠️ [PHOTO] Все фото не удалось отправить для ${fullProfile.name}`);
-                        const fallbackMsg = await ctx.reply(`📷 [Все фото недоступны]\n\n${fullCaption}`, { 
-                            parse_mode: "HTML",
-                            reply_markup: keyboard.length > 0 ? { inline_keyboard: keyboard } : undefined,
-                        });
-                        messageManager.track(ctx.chat.id, fallbackMsg.message_id);
-                        return fallbackMsg;
-                    }
                 }
-
+                
+                // 🔥 ИНФОРМАЦИОННОЕ СООБЩЕНИЕ
+                const infoMessage = await ctx.reply(
+                    `✨✨✨✨✨✨✨✨✨✨\n<a href="http://t.me/MagicYourClub"><b>Новые анкеты в нашем ➡️ канале</b></a>\n\n`,
+                    { parse_mode: "HTML" }
+                );
+                messageManager.track(ctx.chat.id, infoMessage.message_id);
                 await new Promise(resolve => setTimeout(resolve, 500));
-
+                
+                // 🔥 ОТПРАВКА ТЕКСТА АНКЕТЫ
                 const textMsg = await ctx.reply(fullCaption, {
                     parse_mode: "HTML",
                     reply_markup: keyboard.length > 0 ? { inline_keyboard: keyboard } : undefined,
                 });
-
+                
                 messageManager.track(ctx.chat.id, textMsg.message_id);
-                console.log(`✅ [PROFILE] Анкета ${fullProfile.name} отправлена: ${sentPhotoMessages.length} фото + текст`);
-
+                console.log(`✅ [FULL PROFILE SENT] Анкета ${fullProfile.name} отправлена успешно`);
+                
                 return textMsg;
             }
-
+            
         } catch (error) {
-            console.error("❌ Критическая ошибка отправки анкеты:", error);
-            console.error("❌ Детали ошибки:", {
+            console.error(`💥 [SEND PROFILE CRITICAL ERROR] Критическая ошибка отправки анкеты:`, error);
+            console.error(`📋 [ERROR DETAILS]`, {
                 profile: profile ? 'exists' : 'undefined',
-                profileData: profile,
+                page,
+                total,
+                isLast,
+                isDemo,
                 errorMessage: error.message,
                 stack: error.stack
             });
             
             try {
-                const fallbackText = `👤 ${fullProfile ? fullProfile.name : 'Неизвестно'}, ${fullProfile ? fullProfile.age : ''}\n📍 ${fullProfile ? fullProfile.city : ''}, ${fullProfile ? fullProfile.country : ''}\n\n${fullProfile ? (fullProfile.about || 'Описание недоступно') : 'Профиль недоступен'}\n\n⚠️ Приносим извинения, возникли технические проблемы с отображением анкеты.`;
-                const msg = await ctx.reply(fallbackText, { parse_mode: "HTML" });
+                // 🔥 ПОСЛЕДНЯЯ ПОПЫТКА - ОТПРАВИТЬ ПРОСТОЕ СООБЩЕНИЕ
+                const fallbackText = `
+❌ <b>ОШИБКА ПРИ ОТПРАВКЕ АНКЕТЫ</b>
+
+Приносим извинения, произошла техническая ошибка при загрузке анкеты.
+
+<b>Что можно сделать:</b>
+1. Попробуйте выбрать другой город
+2. Используйте кнопку "🧹 Очистить экран"
+3. Перезапустите поиск
+
+<em>Если ошибка повторяется, напишите в поддержку @MagicAdd</em>
+                `.trim();
+                
+                const msg = await ctx.reply(fallbackText, { 
+                    parse_mode: "HTML",
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: "🧹 Очистить экран", callback_data: "clear_screen" }],
+                            [{ text: "🌍 Все страны", callback_data: "all_countries_with_check" }]
+                        ]
+                    }
+                });
+                
                 messageManager.track(ctx.chat.id, msg.message_id);
                 return msg;
+                
             } catch (finalError) {
-                console.error("💥 Не удалось отправить даже текстовое сообщение:", finalError);
+                console.error(`💀 [FATAL ERROR] Не удалось отправить даже сообщение об ошибке:`, finalError);
                 return null;
             }
         }
     });
 };
-
+bot.command("debug_demo_cache", async (ctx) => {
+    try {
+        // Получаем демо-профили
+        const demoProfiles = cacheManager.getGlobalProfiles(true);
+        
+        if (!demoProfiles || demoProfiles.length === 0) {
+            return ctx.reply("❌ Демо-кэш пуст!");
+        }
+        
+        // Ищем ВСЕ профили
+        let response = `🔍 **ДИАГНОСТИКА ДЕМО-КЭША:**\n\n`;
+        response += `Всего демо-профилей: ${demoProfiles.length}\n\n`;
+        
+        // Группируем по странам
+        const countries = new Map();
+        demoProfiles.forEach(p => {
+            const country = p.c || p.country || 'Без страны';
+            const city = p.ct || p.city || 'Без города';
+            
+            if (!countries.has(country)) {
+                countries.set(country, {
+                    total: 0,
+                    cities: new Map()
+                });
+            }
+            
+            const countryData = countries.get(country);
+            countryData.total++;
+            
+            if (!countryData.cities.has(city)) {
+                countryData.cities.set(city, 0);
+            }
+            countryData.cities.set(city, countryData.cities.get(city) + 1);
+        });
+        
+        // Выводим статистику
+        countries.forEach((data, country) => {
+            response += `**${country}:** ${data.total} профилей\n`;
+            
+            // Выводим города с проблемами
+            data.cities.forEach((count, city) => {
+                if (count === 0 || count === undefined) {
+                    response += `  ⚠️ ${city}: ${count} профилей (ПРОБЛЕМА!)\n`;
+                }
+            });
+            
+            // Находим профиль Сараево
+            if (country === "🇧🇦 Босния") {
+                const sarajevoCount = data.cities.get("Сараево") || 0;
+                const mostarCount = data.cities.get("Мостар") || 0;
+                response += `\n  🎯 **БОСНИЯ ДЕТАЛИ:**\n`;
+                response += `  • Сараево: ${sarajevoCount} профилей\n`;
+                response += `  • Мостар: ${mostarCount} профилей\n`;
+                
+                // Ищем конкретные профили Сараево
+                const sarajevoProfiles = demoProfiles.filter(p => 
+                    (p.c === "🇧🇦 Босния" || p.country === "🇧🇦 Босния") && 
+                    (p.ct === "Сараево" || p.city === "Сараево")
+                );
+                
+                if (sarajevoProfiles.length > 0) {
+                    response += `\n  **Профили Сараево в демо-кэше:**\n`;
+                    sarajevoProfiles.slice(0, 3).forEach((p, i) => {
+                        response += `  ${i+1}. ${p.n || p.name}, ${p.a || p.age}\n`;
+                        response += `     ID: ${p.id}\n`;
+                        response += `     Фото: ${p.p ? '✅' : '❌'}\n`;
+                        response += `     Фото галереи: ${p.phs?.length || 0}\n`;
+                    });
+                } else {
+                    response += `\n  ❌ **НЕТ ПРОФИЛЕЙ САРАЕВО В ДЕМО-КЭШЕ!**\n`;
+                }
+            }
+        });
+        
+        await ctx.reply(response);
+        
+    } catch (error) {
+        console.error("Ошибка debug_demo_cache:", error);
+        await ctx.reply(`❌ Ошибка: ${error.message}`);
+    }
+});
+bot.command("debug_demo_sarajevo_detail", async (ctx) => {
+    try {
+        const demoProfiles = cacheManager.getGlobalProfiles(true);
+        
+        if (!demoProfiles || demoProfiles.length === 0) {
+            return ctx.reply("❌ Демо-кэш пуст!");
+        }
+        
+        // Ищем профили Сараево в демо-кэше
+        const sarajevoProfiles = demoProfiles.filter(p => {
+            const city = cacheManager.normalizeCityName(p.ct || p.city);
+            const country = cacheManager.normalizeCountryName(p.c || p.country);
+            return city === "Сараево" && country === "🇧🇦 Босния";
+        });
+        
+        let response = `🔍 **ДЕТАЛЬНАЯ ДИАГНОСТИКА САРАЕВО:**\n\n`;
+        response += `Всего демо-профилей: ${demoProfiles.length}\n`;
+        response += `Профилей Сараево в демо-кэше: ${sarajevoProfiles.length}\n\n`;
+        
+        if (sarajevoProfiles.length > 0) {
+            sarajevoProfiles.forEach((p, i) => {
+                response += `**Профиль ${i+1}:**\n`;
+                response += `• ID: ${p.id || 'нет'}\n`;
+                response += `• Имя: "${p.n}"\n`;
+                response += `• Возраст: ${p.a}\n`;
+                response += `• Страна: "${p.c}"\n`;
+                response += `• Город: "${p.ct}"\n`;
+                response += `• Основное фото: ${p.p ? '✅' : '❌'}\n`;
+                response += `• Фото галереи: ${p.phs?.length || 0}\n`;
+                response += `• isDemo: ${p.isDemo}\n`;
+                response += `• TG: ${p.tg ? 'скрыто' : 'null'}\n`;
+                response += `• О себе: ${p.ab?.substring(0, 50) || 'нет'}...\n\n`;
+            });
+        } else {
+            response += `❌ **НЕТ ПРОФИЛЕЙ САРАЕВО В ДЕМО-КЭШЕ!**\n\n`;
+            
+            // Проверяем индексы
+            const countryCityIndex = globalDemoCache.get("demo:index:country_city");
+            if (countryCityIndex) {
+                const key = "🇧🇦 Босния:Сараево";
+                const indexes = countryCityIndex.get(key);
+                response += `🔍 Проверка индекса "${key}": ${indexes ? indexes.length : 0} профилей\n`;
+            }
+        }
+        
+        await ctx.reply(response);
+        
+    } catch (error) {
+        console.error("Ошибка debug_demo_sarajevo_detail:", error);
+        await ctx.reply(`❌ Ошибка: ${error.message}`);
+    }
+});
     bot.command("stats", async (ctx) => {
         await messageQueue.add(async () => {
             try {
@@ -5604,8 +6118,7 @@ ${fullProfile.phone ? formatPhone(fullProfile.phone) : ""}${fullProfile.telegram
     module.exports.checkSubscription = checkSubscription;
     module.exports.checkChannelSubscription = checkChannelSubscription;
 
-    // Инициализация глобальных кэшей при старте бота
-    // Инициализация глобальных кэшей при старте бота
+   // В конец функции инициализации добавьте:
 setTimeout(async () => {
     if (!globalCacheInitialized) {
         console.log('🚀 [BOT START] Инициализация глобальных кэшей...');
@@ -5616,11 +6129,8 @@ setTimeout(async () => {
                 await cacheManager.loadGlobalDemoCache(db);
             }
             
-            // Периодическое обновление глобальных кэшей (раз в 7 дней) - ТОЛЬКО АВТОМАТИЧЕСКОЕ
+            // 🔥 ПЕРИОДИЧЕСКОЕ ОБНОВЛЕНИЕ КЭШЕЙ РАЗ В 7 ДНЕЙ
             setInterval(async () => {
-                const randomDelay = Math.random() * 30 * 60 * 1000;
-                await new Promise(resolve => setTimeout(resolve, randomDelay));
-                
                 console.log('🔄 [AUTO CACHE UPDATE] Периодическое обновление глобальных кэшей (раз в 7 дней)...');
                 try {
                     // Обновляем демо-кэш
