@@ -1,204 +1,10 @@
-// diskCache.js - Модуль для сохранения и загрузки кэша с диска
-
-const path = require('path');
-const zlib = require('zlib');
-const fs = require('fs');
-class DiskCache {
-    constructor() {
-        // Папка для кэша будет в корне проекта
-        this.CACHE_DIR = path.join(__dirname, '.render_cache');
-        this.CACHE_FILE = path.join(this.CACHE_DIR, 'cache_backup.bin');
-        
-        // Создаем папку, если её нет
-        if (!fs.existsSync(this.CACHE_DIR)) {
-            fs.mkdirSync(this.CACHE_DIR, { recursive: true });
-        }
-        
-        console.log(`💾 Дисковый кэш: ${this.CACHE_DIR}`);
-    }
-    
-    // 🔧 СОХРАНИТЬ ВСЕ КЭШИ НА ДИСК
-    async saveAllCaches(globalProfilesCache, globalDemoCache, globalFilterCache) {
-        try {
-            console.log('💾 Начинаем сохранение кэша на диск...');
-            const startTime = Date.now();
-            
-            // 1. Собираем ВСЕ данные из всех кэшей
-            const allCacheData = {
-                timestamp: Date.now(),
-                version: '1.0',
-                data: {
-                    // ВАЖНО: Сохраняем ВСЕ ключи, которые есть в кэше
-                    globalProfilesCache: this.extractAllCacheKeys(globalProfilesCache),
-                    globalDemoCache: this.extractAllCacheKeys(globalDemoCache),
-                    globalFilterCache: this.extractAllCacheKeys(globalFilterCache),
-                    
-                    // Сохраняем также индексы из демо-кэша
-                    demoIndexes: {
-                        countryCity: this.mapToArray(globalDemoCache.get('demo:index:country_city')),
-                        country: this.mapToArray(globalDemoCache.get('demo:index:country')),
-                        city: this.mapToArray(globalDemoCache.get('demo:index:city'))
-                    }
-                }
-            };
-            
-            // 2. Сжимаем данные (экономия до 80% места)
-            const jsonData = JSON.stringify(allCacheData);
-            const compressed = zlib.gzipSync(jsonData);
-            
-            // 3. Сохраняем во временный файл, затем атомарно переименовываем
-            const tempFile = this.CACHE_FILE + '.tmp';
-            fs.writeFileSync(tempFile, compressed);
-            fs.renameSync(tempFile, this.CACHE_FILE);
-            
-            const sizeMB = (compressed.length / 1024 / 1024).toFixed(2);
-            const timeMs = Date.now() - startTime;
-            
-            console.log(`✅ Кэш сохранен: ${sizeMB} MB за ${timeMs}ms`);
-            return true;
-            
-        } catch (error) {
-            console.error('❌ Ошибка сохранения кэша:', error.message);
-            return false;
-        }
-    }
-    
-    // 🔧 ЗАГРУЗИТЬ КЭШ С ДИСКА
-    async loadFromDisk(globalProfilesCache, globalDemoCache, globalFilterCache) {
-        try {
-            if (!fs.existsSync(this.CACHE_FILE)) {
-                console.log('📭 Файл кэша не найден, начинаем с чистого листа');
-                return false;
-            }
-            
-            console.log('🔄 Загружаем кэш с диска...');
-            const startTime = Date.now();
-            
-            // 1. Читаем и распаковываем данные
-            const compressed = fs.readFileSync(this.CACHE_FILE);
-            const decompressed = zlib.gunzipSync(compressed);
-            const cacheData = JSON.parse(decompressed.toString());
-            
-            // 2. Проверяем версию и свежесть (не старше 3 дней)
-            const cacheAge = Date.now() - cacheData.timestamp;
-            const MAX_CACHE_AGE = 3 * 24 * 60 * 60 * 1000; // 3 дня
-            
-            if (cacheAge > MAX_CACHE_AGE) {
-                console.log(`⚠️ Кэш устарел (${Math.round(cacheAge/(24*60*60*1000))} дней), игнорируем`);
-                return false;
-            }
-            
-            // 3. Восстанавливаем ВСЕ кэши
-            this.restoreCache(globalProfilesCache, cacheData.data.globalProfilesCache);
-            this.restoreCache(globalDemoCache, cacheData.data.globalDemoCache);
-            this.restoreCache(globalFilterCache, cacheData.data.globalFilterCache);
-            
-            // 4. Восстанавливаем индексы демо-кэша
-            if (cacheData.data.demoIndexes) {
-                globalDemoCache.set('demo:index:country_city', 
-                    this.arrayToMap(cacheData.data.demoIndexes.countryCity));
-                globalDemoCache.set('demo:index:country', 
-                    this.arrayToMap(cacheData.data.demoIndexes.country));
-                globalDemoCache.set('demo:index:city', 
-                    this.arrayToMap(cacheData.data.demoIndexes.city));
-            }
-            
-            const timeMs = Date.now() - startTime;
-            console.log(`✅ Кэш восстановлен за ${timeMs}ms (возраст: ${Math.round(cacheAge/(60*60*1000))}ч)`);
-            
-            return true;
-            
-        } catch (error) {
-            console.error('❌ Ошибка загрузки кэша:', error.message);
-            return false;
-        }
-    }
-    
-    // 🔧 ИЗВЛЕЧЬ ВСЕ КЛЮЧИ ИЗ КЭША
-    extractAllCacheKeys(cacheInstance) {
-        const result = {};
-        const keys = cacheInstance.keys();
-        
-        for (const key of keys) {
-            try {
-                const value = cacheInstance.get(key);
-                // Сохраняем только если значение существует
-                if (value !== undefined) {
-                    result[key] = value;
-                }
-            } catch (error) {
-                console.warn(`⚠️ Не удалось извлечь ключ ${key}:`, error.message);
-            }
-        }
-        
-        return result;
-    }
-    
-    // 🔧 ВОССТАНОВИТЬ КЭШ ИЗ ДАННЫХ
-    restoreCache(cacheInstance, cacheData) {
-        if (!cacheData) return;
-        
-        Object.entries(cacheData).forEach(([key, value]) => {
-            try {
-                cacheInstance.set(key, value);
-            } catch (error) {
-                console.warn(`⚠️ Не удалось восстановить ключ ${key}:`, error.message);
-            }
-        });
-    }
-    
-    // 🔧 КОНВЕРТИРОВАТЬ Map В МАССИВ для сериализации
-    mapToArray(mapInstance) {
-        if (!mapInstance || !(mapInstance instanceof Map)) return [];
-        return Array.from(mapInstance.entries());
-    }
-    
-    // 🔧 КОНВЕРТИРОВАТЬ МАССИВ В Map
-    arrayToMap(arrayData) {
-        if (!Array.isArray(arrayData)) return new Map();
-        return new Map(arrayData);
-    }
-    
-    // 🔧 ПОЛУЧИТЬ ИНФОРМАЦИЮ О КЭШЕ
-    getCacheInfo() {
-        try {
-            if (!fs.existsSync(this.CACHE_FILE)) {
-                return { exists: false, size: '0 MB', age: 'неизвестно' };
-            }
-            
-            const stats = fs.statSync(this.CACHE_FILE);
-            const cacheData = JSON.parse(zlib.gunzipSync(fs.readFileSync(this.CACHE_FILE)).toString());
-            
-            const ageMs = Date.now() - cacheData.timestamp;
-            const ageHours = Math.round(ageMs / (60 * 60 * 1000));
-            const sizeMB = (stats.size / 1024 / 1024).toFixed(2);
-            
-            return {
-                exists: true,
-                size: `${sizeMB} MB`,
-                age: `${ageHours} часов`,
-                timestamp: cacheData.timestamp,
-                date: new Date(cacheData.timestamp).toLocaleString(),
-                keys: {
-                    profiles: Object.keys(cacheData.data?.globalProfilesCache || {}).length,
-                    demo: Object.keys(cacheData.data?.globalDemoCache || {}).length,
-                    filters: Object.keys(cacheData.data?.globalFilterCache || {}).length
-                }
-            };
-        } catch (error) {
-            return { exists: false, error: error.message };
-        }
-    }
-}
-
-module.exports = DiskCache;const RateLimiter = require("telegraf-ratelimit");
+const RateLimiter = require("telegraf-ratelimit");
 const { default: PQueue } = require("p-queue");
 const NodeCache = require("node-cache");
-
+const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
-const DiskCache = require('./diskCache'); // ← ДОБАВЬТЕ ЭТУ СТРОЧКУ
-const diskCache = new DiskCache();        // ← ДОБАВЬТЕ ЭТУ СТРОЧКУ
+
 // ===== УДАЛЕНИЕ LOCK ФАЙЛА ПРИ ЗАПУСКЕ =====
 const LOCK_FILE = path.join(__dirname, 'bot.lock');
 try {
@@ -793,31 +599,7 @@ const globalFilterCache = new NodeCache({
     checkperiod: SCALING_CONFIG.CACHE.CHECKPERIOD,
     maxKeys: SCALING_CONFIG.CACHE.MAX_FILTER_KEYS
 });
-// 🔄 АВТОМАТИЧЕСКАЯ ЗАГРУЗКА КЭША С ДИСКА ПРИ СТАРТЕ
-console.log('🚀 Проверяем наличие кэша на диске...');
-setTimeout(async () => {
-    try {
-        const loaded = await diskCache.loadFromDisk(
-            globalProfilesCache,
-            globalDemoCache, 
-            globalFilterCache
-        );
-        
-        if (loaded) {
-            globalCacheInitialized = true;
-            console.log('✅ Бот запущен с восстановленным кэшем');
-            
-            // Проверяем что загрузилось
-            const demoProfiles = cacheManager.getGlobalProfiles(true);
-            const fullProfiles = cacheManager.getGlobalProfiles(false);
-            console.log(`📊 Загружено: ${demoProfiles?.length || 0} демо-профилей, ${fullProfiles?.length || 0} полных профилей`);
-        } else {
-            console.log('📭 Кэш на диске не найден или устарел, будет загружен при первом запросе');
-        }
-    } catch (error) {
-        console.error('❌ Ошибка загрузки кэша с диска:', error);
-    }
-}, 3000); // Даем боту 3 секунды на инициализацию
+
 // КЭШ ДЛЯ ПОДПИСОК (индивидуальный для каждого пользователя)
 const subscriptionCache = new NodeCache({
     stdTTL: SCALING_CONFIG.CACHE.SUBSCRIPTION_TTL,
@@ -1148,18 +930,12 @@ async loadGlobalFullCache(db) {
         globalProfilesCache.set("profiles:countries", sortedCountries);
         globalProfilesCache.set("profiles:countries_raw", Array.from(countriesSet));
         
-        // СОХРАНЯЕМ ГОРОДА ПО СТРАНАМ В ГЛОБАЛЬНЫЙ КЭШ - ЭТО КРИТИЧЕСКИ ВАЖНО!
-        console.log(`🗺️ Сохранение городов для ${citiesByCountry.size} стран...`);
+        // Сохраняем города по странам
         let totalCities = 0;
         citiesByCountry.forEach((citiesSet, country) => {
             const citiesArray = Array.from(citiesSet).sort();
             globalProfilesCache.set(`profiles:cities:${country}`, citiesArray);
             totalCities += citiesArray.length;
-            
-            // Логи для отладки
-            if (country === "🇧🇦 Босния" || country === "🇷🇺 Россия") {
-                console.log(`   📍 ${country}: ${citiesArray.length} городов (${citiesArray.slice(0, 3).join(', ')})`);
-            }
         });
         
         const geoTime = Date.now() - geoStartTime;
@@ -1203,19 +979,6 @@ async loadGlobalFullCache(db) {
         
         console.log(`✅ [GLOBAL FULL CACHE] КЭШ УСПЕШНО ЗАГРУЖЕН И ГОТОВ К РАБОТЕ!`);
         
-        // 💾 СРАЗУ СОХРАНЯЕМ НА ДИСК
-        console.log('💾 Автоматическое сохранение кэша на диск...');
-        try {
-            await diskCache.saveAllCaches(
-                globalProfilesCache,
-                globalDemoCache,
-                globalFilterCache
-            );
-            console.log('✅ Кэш сохранен на диск');
-        } catch (saveError) {
-            console.error('❌ Ошибка сохранения на диск:', saveError.message);
-        }
-        
         return true;
         
     } catch (error) {
@@ -1225,6 +988,22 @@ async loadGlobalFullCache(db) {
         console.error(`❌ СТЕК ТРЕЙС:`);
         console.error(error.stack);
         console.error('='.repeat(60));
+        
+        // Пытаемся восстановить работоспособность
+        try {
+            console.log('🔄 Попытка восстановления...');
+            
+            // Проверяем демо-кэш
+            const demoProfiles = cacheManager.getGlobalProfiles(true);
+            if (demoProfiles && demoProfiles.length > 0) {
+                console.log(`✅ Демо-кэш доступен: ${demoProfiles.length} профилей`);
+            } else {
+                console.log('⚠️  Демо-кэш недоступен');
+            }
+            
+        } catch (recoveryError) {
+            console.error('❌ Ошибка при восстановлении:', recoveryError.message);
+        }
         
         return false;
         
@@ -1243,75 +1022,56 @@ async loadGlobalFullCache(db) {
 },
 // 2. ЗАГРУЗКА ГЛОБАЛЬНОГО ДЕМО-КЭША (ОПТИМИЗИРОВАННАЯ ВЕРСИЯ)
 async loadGlobalDemoCache(db) {
-    // 🔒 БЛОКИРОВКА: предотвращаем параллельную загрузку
     if (globalDemoCacheLoading) {
-        console.log('⏳ [GLOBAL DEMO CACHE] Уже загружается... ожидаем');
-        // Ждем до 30 секунд
-        const startWait = Date.now();
-        while (globalDemoCacheLoading && Date.now() - startWait < 30000) {
-            await new Promise(resolve => setTimeout(resolve, 1000));
-        }
-        if (globalDemoCacheLoading) {
-            console.log('❌ [GLOBAL DEMO CACHE] Таймаут ожидания загрузки');
-            return false;
-        }
+        console.log('⏳ [GLOBAL DEMO CACHE] Уже загружается...');
+        return false;
     }
     
     globalDemoCacheLoading = true;
-    console.log('🚀 [GLOBAL DEMO CACHE] НАЧИНАЕМ ЗАГРУЗКУ ДЕМО-КЭША');
-    
-    const globalStartTime = Date.now();
-    let allProfiles = [];
-    let totalLoaded = 0;
+    console.log('🚀 [GLOBAL DEMO CACHE] Начинаем загрузку глобального демо-кэша...');
     
     try {
-        // ==================== ЭТАП 1: ПРОВЕРЯЕМ, МОЖЕМ ЛИ ИСПОЛЬЗОВАТЬ ПОЛНЫЙ КЭШ ====================
-        console.log('🔍 Проверяем наличие полного кэша...');
+        // 🔥 ЗАГРУЖАЕМ ПРОФИЛИ ИЗ ПОЛНОГО КЭША, ЕСЛИ ОН УЖЕ ЗАГРУЖЕН
+        // (чтобы не делать лишних чтений из Firestore)
         const fullProfiles = this.getGlobalProfiles(false);
         
         if (fullProfiles && fullProfiles.length > 0) {
-            console.log(`✅ Используем уже загруженные профили из полного кэша: ${fullProfiles.length}`);
+            console.log(`✅ [DEMO CACHE] Используем уже загруженные профили из полного кэша: ${fullProfiles.length}`);
             
-            // СОЗДАЕМ ДЕМО-КЭШ ИЗ ПОЛНОГО
-            const demoCreated = await this.createDemoCacheFromFullProfiles(fullProfiles);
-            
-            if (demoCreated) {
-                // 💾 СОХРАНЯЕМ ДЕМО-КЭШ НА ДИСК
-                console.log('💾 Демо-кэш создан, сохраняем на диск...');
-                await diskCache.saveAllCaches(
-                    globalProfilesCache,
-                    globalDemoCache,
-                    globalFilterCache
-                ).catch(e => console.error('Ошибка сохранения:', e.message));
-                
-                const totalTime = Date.now() - globalStartTime;
-                console.log(`✅ [GLOBAL DEMO CACHE] Демо-кэш создан из полного за ${totalTime}мс`);
-                
-                globalDemoCacheLoading = false;
-                return true;
-            }
+            // ПРОСТО СОЗДАЕМ ДЕМО-ВЕРСИИ ИЗ СУЩЕСТВУЮЩИХ ДАННЫХ
+            return this.createDemoCacheFromFullProfiles(fullProfiles);
         }
         
-        // ==================== ЭТАП 2: ЗАГРУЗКА ИЗ FIRESTORE ====================
-        console.log(`📥 Загружаем демо-профили из Firestore...`);
+        // ЕСЛИ ПОЛНЫЙ КЭШ НЕ ЗАГРУЖЕН - ЗАГРУЖАЕМ ИЗ FIRESTORE
+        console.log(`📥 [DEMO CACHE] Полный кэш не загружен, загружаем из Firestore...`);
         
+        const startTime = Date.now();
+        let allProfiles = [];
         let lastDoc = null;
         let batchCount = 0;
         const BATCH_SIZE = 5000;
         const MAX_PROFILES = 70000;
-        const firestoreStartTime = Date.now();
         
-        while (totalLoaded < MAX_PROFILES) {
+        while (allProfiles.length < MAX_PROFILES) {
             batchCount++;
-            console.log(`📦 [ПАЧКА ${batchCount}] Загрузка ${BATCH_SIZE} анкет...`);
+            console.log(`📦 [DEMO BATCH ${batchCount}] Загрузка ${BATCH_SIZE} анкет...`);
             
             let query = db.collection("profiles")
                 .orderBy("createdAt", "desc")
                 .limit(BATCH_SIZE)
                 .select(
-                    "id", "name", "age", "country", "city", 
-                    "about", "photoUrl", "telegram", "phone", 
-                    "whatsapp", "photos", "createdAt"
+                    "id", 
+                    "name", 
+                    "age", 
+                    "country", 
+                    "city", 
+                    "about", 
+                    "photoUrl", 
+                    "telegram", 
+                    "phone", 
+                    "whatsapp", 
+                    "photos", 
+                    "createdAt"
                 );
             
             if (lastDoc) {
@@ -1324,7 +1084,7 @@ async loadGlobalDemoCache(db) {
             readingStats.addRead('profiles', 'system', docsCount, 'firestore');
             
             if (docsCount === 0) {
-                console.log(`✅ Загрузка завершена. Всего: ${totalLoaded}`);
+                console.log(`✅ [DEMO LOAD COMPLETE] Больше анкет нет. Всего загружено: ${allProfiles.length}`);
                 break;
             }
             
@@ -1334,98 +1094,27 @@ async loadGlobalDemoCache(db) {
             }));
             
             allProfiles.push(...batchProfiles);
-            totalLoaded += docsCount;
             lastDoc = snapshot.docs[docsCount - 1];
             
-            console.log(`📊 [ПАЧКА ${batchCount}] Загружено: ${docsCount} | Всего: ${totalLoaded}`);
+            console.log(`📊 [DEMO BATCH ${batchCount}] Загружено: ${docsCount} анкет | Всего: ${allProfiles.length}`);
             
             if (docsCount === BATCH_SIZE) {
                 await new Promise(resolve => setTimeout(resolve, 100));
             }
-            
-            if (totalLoaded % 20000 === 0) {
-                const elapsed = (Date.now() - firestoreStartTime) / 1000;
-                const speed = (totalLoaded / elapsed).toFixed(1);
-                console.log(`📈 [ПРОГРЕСС] ${totalLoaded} анкет за ${elapsed.toFixed(1)}с (${speed}/сек)`);
-            }
         }
         
-        const firestoreTime = Date.now() - firestoreStartTime;
-        console.log(`✅ Загружено ${totalLoaded} анкет за ${(firestoreTime/1000).toFixed(1)}с`);
+        const loadTime = ((Date.now() - startTime) / 1000).toFixed(2);
+        console.log(`✅ [DEMO LOADED] Загружено ${allProfiles.length} профилей за ${loadTime} секунд`);
         
-        // ==================== ЭТАП 3: СОЗДАНИЕ ДЕМО-КЭША ====================
-        console.log('🔧 Создаем демо-кэш из загруженных профилей...');
-        const demoCreated = await this.createDemoCacheFromFullProfiles(allProfiles);
-        
-        if (!demoCreated) {
-            console.log('❌ Не удалось создать демо-кэш');
-            globalDemoCacheLoading = false;
-            return false;
-        }
-        
-        // ==================== ЭТАП 4: СОХРАНЕНИЕ НА ДИСК ====================
-        console.log('💾 Сохраняем демо-кэш на диск...');
-        const saveSuccess = await diskCache.saveAllCaches(
-            globalProfilesCache,
-            globalDemoCache,
-            globalFilterCache
-        );
-        
-        if (!saveSuccess) {
-            console.log('⚠️ Не удалось сохранить кэш на диск, но в памяти он есть');
-        }
-        
-        // ==================== ЭТАП 5: ОЧИСТКА ПАМЯТИ ====================
-        allProfiles.length = 0;
-        allProfiles = null;
-        
-        if (global.gc) {
-            global.gc();
-            console.log('🧹 Сборка мусора выполнена');
-        }
-        
-        // ==================== ЭТАП 6: ФИНАЛИЗАЦИЯ ====================
-        globalCacheInitialized = true;
-        
-        // Сохраняем время последней загрузки
-        globalProfilesCache.set("last_load_time", Date.now(), 7 * 24 * 60 * 60);
-        globalProfilesCache.set("profiles_count", totalLoaded, 7 * 24 * 60 * 60);
-        
-        const totalTime = Date.now() - globalStartTime;
-        console.log(`✅ [GLOBAL DEMO CACHE] Демо-кэш загружен и сохранен за ${(totalTime/1000).toFixed(1)}с`);
-        
-        return true;
+        // 🔥 СОЗДАЕМ ДЕМО-КЭШ ИЗ ЗАГРУЖЕННЫХ ПРОФИЛЕЙ
+        return this.createDemoCacheFromFullProfiles(allProfiles);
         
     } catch (error) {
-        console.error('❌ ========== КРИТИЧЕСКАЯ ОШИБКА ЗАГРУЗКИ ДЕМО-КЭША ==========');
-        console.error(`❌ ТИП ОШИБКИ: ${error.name}`);
-        console.error(`❌ СООБЩЕНИЕ: ${error.message}`);
+        console.error(`❌ [GLOBAL DEMO CACHE] Ошибка:`, error.message);
         console.error(error.stack);
-        console.error('='.repeat(60));
-        
-        // Пытаемся восстановить работоспособность
-        try {
-            console.log('🔄 Попытка восстановления...');
-            const demoProfiles = this.getGlobalProfiles(true);
-            if (demoProfiles && demoProfiles.length > 0) {
-                console.log(`✅ Демо-кэш доступен в памяти: ${demoProfiles.length} профилей`);
-            }
-        } catch (recoveryError) {
-            console.error('❌ Ошибка при восстановлении:', recoveryError.message);
-        }
-        
         return false;
-        
     } finally {
         globalDemoCacheLoading = false;
-        console.log(`🔓 [GLOBAL DEMO CACHE] Блокировка загрузки снята`);
-        
-        // Отчет о памяти
-        if (process.memoryUsage) {
-            const mem = process.memoryUsage();
-            const usedMB = (mem.heapUsed / 1024 / 1024).toFixed(2);
-            console.log(`💾 Использование памяти: ${usedMB}MB`);
-        }
     }
 },
     
@@ -1437,14 +1126,15 @@ async createDemoCacheFromFullProfiles(fullProfiles) {
         const demoProfiles = [];
         const countriesSet = new Set();
         const citiesByCountry = new Map();
-        const cityProfilesMap = new Map(); // Мапа для хранения профилей по городам
+        const cityProfilesCount = new Map();
         
+        // 🔥 СОЗДАЕМ ДЕМО-ВЕРСИИ (3 анкеты на город, скрываем контакты)
         console.log(`👤 [DEMO PROCESSING] Обработка ${fullProfiles.length} профилей...`);
         
-        // 🔥 ШАГ 1: ГРУППИРУЕМ ПРОФИЛИ ПО ГОРОДАМ
         for (let i = 0; i < fullProfiles.length; i++) {
             const profile = fullProfiles[i];
             
+            // Получаем данные из профиля
             const originalName = profile.n || profile.name || '';
             const originalAge = profile.a || profile.age || 0;
             const originalCountry = profile.c || profile.country || '';
@@ -1459,11 +1149,6 @@ async createDemoCacheFromFullProfiles(fullProfiles) {
             const normalizedCity = originalCity ? 
                 this.normalizeCityName(originalCity) : 'Не указан';
             
-            // Пропускаем без страны или города
-            if (normalizedCountry === 'Не указана' || normalizedCity === 'Не указан') {
-                continue;
-            }
-            
             // Сохраняем страны и города для списков
             if (normalizedCountry && normalizedCountry !== 'Не указана') {
                 countriesSet.add(normalizedCountry);
@@ -1476,66 +1161,49 @@ async createDemoCacheFromFullProfiles(fullProfiles) {
                 }
             }
             
-            // Создаем ключ города
+            // Проверяем лимит 3 анкеты на город
             const cityKey = `${normalizedCountry}_${normalizedCity}`;
+            const currentCount = cityProfilesCount.get(cityKey) || 0;
             
-            if (!cityProfilesMap.has(cityKey)) {
-                cityProfilesMap.set(cityKey, []);
+            if (currentCount >= 3) {
+                continue; // Пропускаем, если уже есть 3 анкеты для этого города
             }
             
-            // Добавляем профиль в массив для этого города
-            cityProfilesMap.get(cityKey).push({
-                index: i,
-                name: originalName,
-                age: originalAge,
-                country: normalizedCountry,
-                city: normalizedCity,
-                about: originalAbout,
-                photoUrl: originalPhotoUrl,
-                photos: originalPhotos,
-                profile: profile
-            });
+            cityProfilesCount.set(cityKey, currentCount + 1);
+            
+            // 🔥 СОЗДАЕМ ДЕМО-ПРОФИЛЬ (скрываем контакты)
+            const demoProfile = {
+                id: profile.id || `demo_${Date.now()}_${i}`,
+                n: originalName || `Анкета ${i + 1}`,
+                a: parseInt(originalAge) || 0,
+                c: normalizedCountry,
+                ct: normalizedCity,
+                ab: replaceSitesInAbout(originalAbout),
+                p: originalPhotoUrl,
+                phs: originalPhotos,
+                tg: null, // 🔥 КОНТАКТЫ СКРЫТЫ
+                tel: null,
+                wa: null,
+                ca: profile.ca || profile.createdAt || new Date(),
+                isDemo: true
+            };
+            
+            // Проверяем наличие фото
+            const hasPhoto = demoProfile.p && demoProfile.p.trim() !== '';
+            const hasPhotos = demoProfile.phs && demoProfile.phs.length > 0;
+            
+            if (!hasPhoto && !hasPhotos) {
+                console.log(`⚠️ [DEMO SKIP] Профиль "${demoProfile.n}" без фото, пропускаем`);
+                continue;
+            }
+            
+            demoProfiles.push(demoProfile);
+            
+            // Прогресс каждые 5000 профилей
+            if (i % 5000 === 0 && i > 0) {
+                console.log(`📊 [DEMO PROGRESS] Обработано ${i}/${fullProfiles.length}, создано ${demoProfiles.length} демо-профилей`);
+            }
         }
-        
-        console.log(`📊 [CITY GROUPS] Создано ${cityProfilesMap.size} групп по городам`);
-        
-        // 🔥 ШАГ 2: ДЛЯ КАЖДОГО ГОРОДА БЕРЕМ МАКСИМУМ 3 АНКЕТЫ
-        cityProfilesMap.forEach((cityProfiles, cityKey) => {
-            // Берем максимум 3 профиля для этого города
-            const maxProfiles = Math.min(cityProfiles.length, 3);
-            
-            // Выбираем первые 3 профиля (или все, если меньше 3)
-            const selectedProfiles = cityProfiles.slice(0, maxProfiles);
-            
-            selectedProfiles.forEach((profileData, index) => {
-                const profile = profileData.profile;
-                
-                // 🔥 СОЗДАЕМ ДЕМО-ПРОФИЛЬ (скрываем контакты)
-                const demoProfile = {
-                    id: profile.id || `demo_${Date.now()}_${cityKey}_${index}`,
-                    n: profileData.name || `Анкета ${index + 1}`,
-                    a: parseInt(profileData.age) || 0,
-                    c: profileData.country,
-                    ct: profileData.city,
-                    ab: replaceSitesInAbout(profileData.about),
-                    p: profileData.photoUrl,
-                    phs: profileData.photos,
-                    tg: null, // 🔥 КОНТАКТЫ СКРЫТЫ
-                    tel: null,
-                    wa: null,
-                    ca: profile.ca || profile.createdAt || new Date(),
-                    isDemo: true
-                };
-                
-                // Проверяем наличие фото
-                const hasPhoto = demoProfile.p && demoProfile.p.trim() !== '';
-                const hasPhotos = demoProfile.phs && demoProfile.phs.length > 0;
-                
-                if (hasPhoto || hasPhotos) {
-                    demoProfiles.push(demoProfile);
-                }
-            });
-        });
         
         console.log(`✅ [DEMO CREATION] Создано ${demoProfiles.length} демо-профилей (из ${fullProfiles.length} полных)`);
         
@@ -1548,7 +1216,7 @@ async createDemoCacheFromFullProfiles(fullProfiles) {
         console.log(`💾 [DEMO CACHE] Кэширование ${demoProfiles.length} демо-профилей...`);
         await this.cacheGlobalProfiles(demoProfiles, true);
         
-        // 🔥 СОХРАНЯЕМ СТРАНЫ И ГОРОДА
+        // 🔥 СОХРАНЯЕМ СТРАНЫ И ГОРОДЫ
         console.log(`🗺️ [DEMO GEO] Сохранение стран и городов...`);
         const sortedCountries = Array.from(countriesSet).sort();
         globalDemoCache.set("demo:countries", sortedCountries);
@@ -1559,20 +1227,24 @@ async createDemoCacheFromFullProfiles(fullProfiles) {
             globalDemoCache.set(`demo:cities:${country}`, Array.from(citiesSet).sort());
         });
         
-        // 🔥 СОЗДАЕМ ИНДЕКСЫ ДЛЯ ДЕМО-КЭША
+        // 🔥 СОЗДАЕМ ИНДЕКСЫ ДЛЯ ДЕМО-КЭША (ПОЛНОСТЬЮ ПЕРЕПИСАНО)
         console.log(`📇 [DEMO INDEX] Создание индексов для демо-кэша из ${demoProfiles.length} профилей...`);
         
         const demoCountryCityIndex = new Map();
         const demoCountryIndex = new Map();
-        const demoCityIndex = new Map();
+        const demoCityIndex = new Map(); // 🔥 НОВЫЙ: индекс только по городам
         
         let indexedProfiles = 0;
+        let profilesWithCountry = 0;
+        let profilesWithCity = 0;
         
         for (let i = 0; i < demoProfiles.length; i++) {
             const profile = demoProfiles[i];
             const country = profile.c;
             
             if (country && country !== 'Не указана') {
+                profilesWithCountry++;
+                
                 // 1. Индекс по стране
                 if (!demoCountryIndex.has(country)) {
                     demoCountryIndex.set(country, []);
@@ -1582,13 +1254,14 @@ async createDemoCacheFromFullProfiles(fullProfiles) {
                 // 2. Индекс по стране+городу
                 const city = profile.ct;
                 if (city && city !== 'Не указан') {
+                    profilesWithCity++;
                     const key = `${country}:${city}`;
                     if (!demoCountryCityIndex.has(key)) {
                         demoCountryCityIndex.set(key, []);
                     }
                     demoCountryCityIndex.get(key).push(i);
                     
-                    // 3. Индекс только по городу
+                    // 3. Индекс только по городу (для быстрого поиска)
                     if (!demoCityIndex.has(city)) {
                         demoCityIndex.set(city, []);
                     }
@@ -1597,6 +1270,11 @@ async createDemoCacheFromFullProfiles(fullProfiles) {
                 
                 indexedProfiles++;
             }
+            
+            // Прогресс создания индексов
+            if (i % 1000 === 0 && i > 0) {
+                console.log(`📊 [INDEX PROGRESS] Индексировано ${i}/${demoProfiles.length} профилей`);
+            }
         }
         
         // Сохраняем индексы в демо-кэш
@@ -1604,11 +1282,12 @@ async createDemoCacheFromFullProfiles(fullProfiles) {
         globalDemoCache.set("demo:index:country", demoCountryIndex);
         globalDemoCache.set("demo:index:city", demoCityIndex);
         
+        const indexTime = Date.now();
         console.log(`✅ [DEMO INDEX] Индексы созданы: ${demoCountryIndex.size} стран, ${demoCountryCityIndex.size} пар страна+город, ${demoCityIndex.size} городов`);
-        console.log(`📊 [DEMO INDEX STATS] Профилей: ${indexedProfiles}`);
+        console.log(`📊 [DEMO INDEX STATS] Профилей: ${indexedProfiles}, с указанной страной: ${profilesWithCountry}, с указанным городом: ${profilesWithCity}`);
         
-        // 🔥 ПРОВЕРКА КОНКРЕТНЫХ ГОРОДОВ
-        console.log(`🔍 [DEMO INDEX CHECK] Проверка индексов для городов...`);
+        // 🔥 ПРОВЕРКА ИНДЕКСОВ НА КОНКРЕТНЫХ ГОРОДАХ
+        console.log(`🔍 [DEMO INDEX CHECK] Проверка индексов для Сараево...`);
         
         const checkCities = [
             { country: "🇧🇦 Босния", city: "Сараево" },
@@ -1621,29 +1300,34 @@ async createDemoCacheFromFullProfiles(fullProfiles) {
             const key = `${country}:${city}`;
             const profilesCount = demoCountryCityIndex.get(key)?.length || 0;
             console.log(`   📍 ${country} → ${city}: ${profilesCount} профилей в индексе`);
+            
+            if (profilesCount > 0) {
+                // Получаем первый профиль для проверки
+                const firstIndex = demoCountryCityIndex.get(key)[0];
+                const sampleProfile = demoProfiles[firstIndex];
+                console.log(`       👤 Пример: "${sampleProfile.n}", ${sampleProfile.a} лет, фото: ${sampleProfile.p ? 'есть' : 'нет'}, фото галереи: ${sampleProfile.phs?.length || 0}`);
+            }
         });
         
-        // 🔥 ОСОБАЯ ПРОВЕРКА МОСКВЫ
-        const moscowKey = "🇷🇺 Россия:Москва";
-        const moscowProfilesCount = demoCountryCityIndex.get(moscowKey)?.length || 0;
-        console.log(`🎯 [MOSCOW CHECK] Москва в демо-кэше: ${moscowProfilesCount} профилей (должно быть 3 если есть)`);
+        // Статистика
+        console.log(`📊 [DEMO STATS] Профилей: ${demoProfiles.length}, Стран: ${countriesSet.size}`);
         
-        if (moscowProfilesCount > 0 && moscowProfilesCount < 3) {
-            // Проверяем, сколько реально профилей Москвы в полном кэше
-            const allMoscowProfiles = fullProfiles.filter(p => {
-                const pCountry = cacheManager.normalizeCountryName(p.c || p.country);
-                const pCity = cacheManager.normalizeCityName(p.ct || p.city);
-                return pCountry === "🇷🇺 Россия" && pCity === "Москва";
-            });
+        // Проверяем Сараево
+        const bosniaKey = "🇧🇦 Босния";
+        if (citiesByCountry.has(bosniaKey)) {
+            const bosniaCities = citiesByCountry.get(bosniaKey);
+            console.log(`🇧🇦 [BOSNIA] Городов: ${bosniaCities.size}`);
             
-            console.log(`🔍 [MOSCOW FULL] В полном кэше: ${allMoscowProfiles.length} профилей Москвы`);
+            const sarajevoProfiles = demoProfiles.filter(p => 
+                p.c === bosniaKey && p.ct === "Сараево"
+            );
+            console.log(`🇧🇦 [SARAJEVO] Профилей: ${sarajevoProfiles.length}`);
             
-            if (allMoscowProfiles.length >= 3) {
-                console.log(`⚠️ [MOSCOW ISSUE] В полном кэше есть ${allMoscowProfiles.length} анкет Москвы, но в демо только ${moscowProfilesCount}!`);
+            if (sarajevoProfiles.length > 0) {
+                const sample = sarajevoProfiles[0];
+                console.log(`   👤 Пример профиля: "${sample.n}", фото: ${sample.p ? 'есть' : 'нет'}, фото галереи: ${sample.phs?.length || 0}`);
             }
         }
-        
-        console.log(`📊 [DEMO STATS] Профилей: ${demoProfiles.length}, Стран: ${countriesSet.size}`);
         
         return true;
         
@@ -1929,213 +1613,43 @@ getGlobalProfiles(isDemo = false) {
     },
     
     // 15. ЛЕНИВАЯ ЗАГРУЗКА ПОЛНОГО КЭША (когда первый пользователь с подпиской запросит)
-   async lazyLoadGlobalFullCache(db, userId = 'system') {
-    // 🔒 СИЛЬНАЯ БЛОКИРОВКА: предотвращаем множественную загрузку
-    if (globalFullCacheLoading) {
-        console.log('⏳ [LAZY GLOBAL CACHE] Полный кэш уже загружается...');
-        
-        // Ждем завершения текущей загрузки (до 2 минут)
-        const startWait = Date.now();
-        while (globalFullCacheLoading && Date.now() - startWait < 120000) {
-            console.log(`⏳ Ожидаем завершения загрузки... (${Math.round((Date.now() - startWait)/1000)}с)`);
-            await new Promise(resolve => setTimeout(resolve, 5000));
-        }
-        
+    async lazyLoadGlobalFullCache(db, userId = 'system') {
+        // ЕСЛИ УЖЕ ЗАГРУЖАЕТСЯ - ЖДЕМ
         if (globalFullCacheLoading) {
-            console.log('❌ [LAZY GLOBAL CACHE] Таймаут ожидания загрузки');
+            console.log('⏳ [LAZY GLOBAL CACHE] Полный кэш уже загружается...');
             return false;
         }
         
-        // Проверяем, загрузился ли кэш пока мы ждали
+        // ЕСЛИ УЖЕ ЗАГРУЖЕН
         if (this.isGlobalFullCacheLoaded()) {
-            console.log('✅ [LAZY GLOBAL CACHE] Кэш загрузился пока мы ждали');
+            console.log('✅ [LAZY GLOBAL CACHE] Полный кэш уже загружен');
             return true;
         }
+        
+        console.log(`🚀 [LAZY GLOBAL CACHE] Запускаем загрузку полного кэша (инициатор: ${userId})...`);
+        
+        try {
+            // ПОКАЗЫВАЕМ СООБЩЕНИЕ О ЗАГРУЗКЕ (если есть контекст)
+            if (userId !== 'system') {
+                // Здесь можно отправить сообщение пользователю, что загружается кэш
+            }
+            
+            // ЗАГРУЖАЕМ ПОЛНЫЙ КЭШ
+            const success = await this.loadGlobalFullCache(db);
+            
+            if (success) {
+                console.log('✅ [LAZY GLOBAL CACHE] Полный кэш успешно загружен');
+                return true;
+            } else {
+                console.log('❌ [LAZY GLOBAL CACHE] Не удалось загрузить полный кэш');
+                return false;
+            }
+            
+        } catch (error) {
+            console.error('❌ [LAZY GLOBAL CACHE] Ошибка загрузки:', error);
+            return false;
+        }
     }
-    
-    // ЕСЛИ УЖЕ ЗАГРУЖЕН
-    if (this.isGlobalFullCacheLoaded()) {
-        console.log('✅ [LAZY GLOBAL CACHE] Полный кэш уже загружен');
-        return true;
-    }
-    
-    console.log(`🚀 [LAZY GLOBAL CACHE] Запускаем загрузку полного кэша (инициатор: ${userId})...`);
-    globalFullCacheLoading = true;
-    
-    try {
-        // 🔔 УВЕДОМЛЕНИЕ О ЗАГРУЗКЕ (если есть контекст)
-        if (userId !== 'system') {
-            console.log(`📢 Пользователь ${userId} инициировал загрузку полного кэша`);
-        }
-        
-        // ==================== ЭТАП 1: ЗАГРУЗКА ИЗ FIRESTORE ====================
-        console.log('📥 [FULL CACHE] Загружаем полный кэш из Firestore...');
-        
-        const startTime = Date.now();
-        let allProfiles = [];
-        let lastDoc = null;
-        let batchCount = 0;
-        const BATCH_SIZE = 5000;
-        const MAX_PROFILES = 70000;
-        
-        while (allProfiles.length < MAX_PROFILES) {
-            batchCount++;
-            console.log(`📦 [FULL BATCH ${batchCount}] Загрузка ${BATCH_SIZE} анкет...`);
-            
-            let query = db.collection("profiles")
-                .orderBy("createdAt", "desc")
-                .limit(BATCH_SIZE)
-                .select(
-                    "id", "name", "age", "country", "city", 
-                    "about", "photoUrl", "telegram", "phone", 
-                    "whatsapp", "photos", "createdAt"
-                );
-            
-            if (lastDoc) {
-                query = query.startAfter(lastDoc);
-            }
-            
-            const snapshot = await query.get();
-            const docsCount = snapshot.docs.length;
-            
-            readingStats.addRead('profiles', 'system', docsCount, 'firestore');
-            
-            if (docsCount === 0) {
-                console.log(`✅ [FULL LOAD COMPLETE] Больше анкет нет. Всего: ${allProfiles.length}`);
-                break;
-            }
-            
-            const batchProfiles = snapshot.docs.map(doc => ({
-                id: doc.id,
-                ...doc.data()
-            }));
-            
-            allProfiles.push(...batchProfiles);
-            lastDoc = snapshot.docs[docsCount - 1];
-            
-            console.log(`📊 [FULL BATCH ${batchCount}] Загружено: ${docsCount} | Всего: ${allProfiles.length}`);
-            
-            if (docsCount === BATCH_SIZE) {
-                await new Promise(resolve => setTimeout(resolve, 100));
-            }
-            
-            if (allProfiles.length % 20000 === 0) {
-                const elapsed = (Date.now() - startTime) / 1000;
-                const speed = (allProfiles.length / elapsed).toFixed(1);
-                console.log(`📈 [FULL PROGRESS] ${allProfiles.length} анкет за ${elapsed.toFixed(1)}с (${speed}/сек)`);
-            }
-        }
-        
-        const loadTime = ((Date.now() - startTime) / 1000).toFixed(2);
-        console.log(`✅ [FULL CACHE] Загружено ${allProfiles.length} профилей за ${loadTime}с`);
-        
-        // ==================== ЭТАП 2: ПОДГОТОВКА И КЭШИРОВАНИЕ ====================
-        console.log('🔧 [FULL CACHE] Подготавливаем и кэшируем данные...');
-        
-        // Нормализуем профили
-        const normalizedProfiles = allProfiles.map(profile => ({
-            id: profile.id,
-            n: profile.name || '',
-            a: parseInt(profile.age) || 0,
-            c: profile.country ? this.normalizeCountryName(profile.country) : '',
-            ct: profile.city ? this.normalizeCityName(profile.city) : '',
-            ab: profile.about ? profile.about.substring(0, 500) : "",
-            p: profile.photoUrl || '',
-            phs: profile.photos || [],
-            tg: profile.telegram || '',
-            tel: profile.phone || '',
-            wa: profile.whatsapp || '',
-            ca: profile.createdAt || new Date(),
-            isDemo: false
-        }));
-        
-        // Собираем страны и города
-        const countriesSet = new Set();
-        const citiesByCountry = new Map();
-        
-        normalizedProfiles.forEach(profile => {
-            if (profile.c) {
-                countriesSet.add(profile.c);
-                
-                if (profile.ct) {
-                    if (!citiesByCountry.has(profile.c)) {
-                        citiesByCountry.set(profile.c, new Set());
-                    }
-                    citiesByCountry.get(profile.c).add(profile.ct);
-                }
-            }
-        });
-        
-        // Сжимаем и сохраняем в глобальный кэш
-        const jsonString = JSON.stringify(normalizedProfiles);
-        const compressed = zlib.gzipSync(jsonString);
-        globalProfilesCache.set("profiles:all", compressed);
-        
-        // Сохраняем страны
-        const sortedCountries = Array.from(countriesSet).sort();
-        globalProfilesCache.set("profiles:countries", sortedCountries);
-        
-        // ВАЖНО: СОХРАНЯЕМ ГОРОДА ПО СТРАНАМ
-        console.log(`🗺️ Сохранение городов для ${citiesByCountry.size} стран...`);
-        citiesByCountry.forEach((citiesSet, country) => {
-            const citiesArray = Array.from(citiesSet).sort();
-            globalProfilesCache.set(`profiles:cities:${country}`, citiesArray);
-        });
-        
-        const originalSizeMB = (jsonString.length / 1024 / 1024).toFixed(2);
-        const compressedSizeMB = (compressed.length / 1024 / 1024).toFixed(2);
-        const compressionRatio = Math.round((1 - compressed.length/jsonString.length) * 100);
-        
-        console.log(`📦 Сжатие: ${originalSizeMB}MB → ${compressedSizeMB}MB (${compressionRatio}%)`);
-        console.log(`🌍 Стран: ${countriesSet.size}`);
-        console.log(`🏙️ Городов по странам сохранено: ${citiesByCountry.size} стран`);
-        
-        // Создаем индексы
-        console.log('📇 Создаем индексы для быстрого поиска...');
-        const indexResult = asyncFilterManager.createIndexes(normalizedProfiles);
-        console.log(`✅ Индексы: ${indexResult.countryIndexSize} стран, ${indexResult.countryCityIndexSize} пар`);
-        
-        // ==================== ЭТАП 3: СОХРАНЕНИЕ НА ДИСК ====================
-        console.log('💾 [FULL CACHE] Сохраняем полный кэш на диск...');
-        const saveSuccess = await diskCache.saveAllCaches(
-            globalProfilesCache,
-            globalDemoCache,
-            globalFilterCache
-        );
-        
-        if (saveSuccess) {
-            console.log('✅ [FULL CACHE] Кэш успешно сохранен на диск');
-        } else {
-            console.log('⚠️ [FULL CACHE] Не удалось сохранить кэш на диск');
-        }
-        
-        // ==================== ЭТАП 4: ОЧИСТКА ПАМЯТИ ====================
-        allProfiles.length = 0;
-        allProfiles = null;
-        normalizedProfiles.length = 0;
-        
-        if (global.gc) {
-            global.gc();
-            console.log('🧹 Сборка мусора выполнена');
-        }
-        
-        // ==================== ЭТАП 5: ФИНАЛИЗАЦИЯ ====================
-        const totalTime = Date.now() - startTime;
-        console.log(`🎉 [LAZY GLOBAL CACHE] ПОЛНЫЙ КЭШ УСПЕШНО ЗАГРУЖЕН И СОХРАНЕН!`);
-        console.log(`⏱️  Общее время: ${(totalTime/1000).toFixed(1)} секунд`);
-        
-        return true;
-        
-    } catch (error) {
-        console.error('❌ [LAZY GLOBAL CACHE] Ошибка загрузки:', error);
-        console.error(error.stack);
-        return false;
-        
-    } finally {
-        globalFullCacheLoading = false;
-        console.log(`🔓 [LAZY GLOBAL CACHE] Блокировка снята`);
-    }
-}
 };
 
 // ===================== ОПТИМИЗИРОВАННАЯ СИСТЕМА ФИЛЬТРАЦИИ =====================
@@ -6467,64 +5981,4 @@ setTimeout(async () => {
             console.log(`✅ [AFTER PAYMENT] Глобальный полный кэш уже загружен`);
         }
     };
-    setInterval(() => {
-        if (globalCacheInitialized) {
-            console.log('💾 Плановое сохранение кэша на диск...');
-            diskCache.saveAllCaches(
-                globalProfilesCache,
-                globalDemoCache,
-                globalFilterCache
-            ).catch(e => console.error('Ошибка планового сохранения:', e.message));
-        }
-    }, 30 * 60 * 1000); // 30 минут
-
-    // 💾 СОХРАНЕНИЕ ПРИ ВЫКЛЮЧЕНИИ БОТА
-    const saveCacheOnExit = () => {
-        console.log('🔻 Сохраняем кэш перед выходом...');
-        diskCache.saveAllCaches(
-            globalProfilesCache,
-            globalDemoCache,
-            globalFilterCache
-        ).finally(() => {
-            console.log('✅ Кэш сохранен, завершаем работу');
-            if (fs.existsSync(LOCK_FILE)) fs.unlinkSync(LOCK_FILE);
-            process.exit(0);
-        });
-    };
-
-    process.on('SIGINT', saveCacheOnExit);
-    process.on('SIGTERM', saveCacheOnExit);
-
-    // 📊 КОМАНДА ДЛЯ ПРОВЕРКИ КЭША
-    bot.command('cache_info', async (ctx) => {
-        const cacheInfo = diskCache.getCacheInfo();
-        const demoCount = cacheManager.getGlobalProfiles(true)?.length || 0;
-        const fullCount = cacheManager.getGlobalProfiles(false)?.length || 0;
-        
-        let message = `💾 <b>Информация о дисковом кэше</b>\n\n`;
-        
-        if (cacheInfo.exists) {
-            message += `📂 Файл кэша: ✅ Существует\n`;
-            message += `📦 Размер: ${cacheInfo.size}\n`;
-            message += `🕐 Возраст: ${cacheInfo.age}\n`;
-            message += `📅 Создан: ${cacheInfo.date}\n\n`;
-            message += `🗂️ Ключей в кэше:\n`;
-            message += `• Профилей: ${cacheInfo.keys.profiles}\n`;
-            message += `• Демо-данных: ${cacheInfo.keys.demo}\n`;
-            message += `• Фильтров: ${cacheInfo.keys.filters}\n\n`;
-        } else {
-            message += `📂 Файл кэша: ❌ Отсутствует\n\n`;
-        }
-        
-        message += `📊 <b>В оперативной памяти:</b>\n`;
-        message += `• Демо-профилей: ${demoCount}\n`;
-        message += `• Полных профилей: ${fullCount}\n`;
-        message += `• Стран в демо: ${cacheManager.getGlobalCountries(true)?.length || 0}\n`;
-        message += `• Фильтров в кэше: ${globalFilterCache.keys().length}\n\n`;
-        message += `<code>Кэш сохраняется каждые 30 минут</code>`;
-        
-        await ctx.reply(message, { parse_mode: 'HTML' });
-    });
-
-    console.log(`✅ Модуль профилей с ДИСКОВЫМ КЭШЕМ инициализирован`);
 };
