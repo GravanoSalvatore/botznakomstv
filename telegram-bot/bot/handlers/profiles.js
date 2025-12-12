@@ -1238,6 +1238,8 @@ async loadGlobalDemoCache(db) {
 },
     
  // ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ: СОЗДАНИЕ ДЕМО-КЭША ИЗ ПОЛНЫХ ПРОФИЛЕЙ (ПОЛНОСТЬЮ ПЕРЕПИСАНА С ИНДЕКСАМИ)
+
+ // В методе createDemoCacheFromFullProfiles исправьте ШАГ 2:
 async createDemoCacheFromFullProfiles(fullProfiles) {
     try {
         console.log(`🔧 [DEMO CREATION] Создаем демо-кэш из ${fullProfiles.length} профилей...`);
@@ -1249,7 +1251,7 @@ async createDemoCacheFromFullProfiles(fullProfiles) {
         
         console.log(`👤 [DEMO PROCESSING] Обработка ${fullProfiles.length} профилей...`);
         
-        // 🔥 ШАГ 1: ГРУППИРУЕМ ПРОФИЛИ ПО ГОРОДАМ
+        // 🔥 ШАГ 1: ГРУППИРУЕМ ПРОФИЛИ ПО ГОРОДАМ (ИСПРАВЛЕНАЯ ВЕРСИЯ)
         for (let i = 0; i < fullProfiles.length; i++) {
             const profile = fullProfiles[i];
             
@@ -1269,6 +1271,13 @@ async createDemoCacheFromFullProfiles(fullProfiles) {
             
             // Пропускаем без страны или города
             if (normalizedCountry === 'Не указана' || normalizedCity === 'Не указан') {
+                continue;
+            }
+            
+            // Пропускаем без фото
+            const hasPhoto = originalPhotoUrl && originalPhotoUrl.trim() !== '';
+            const hasPhotos = Array.isArray(originalPhotos) && originalPhotos.length > 0;
+            if (!hasPhoto && !hasPhotos) {
                 continue;
             }
             
@@ -1307,13 +1316,18 @@ async createDemoCacheFromFullProfiles(fullProfiles) {
         
         console.log(`📊 [CITY GROUPS] Создано ${cityProfilesMap.size} групп по городам`);
         
-        // 🔥 ШАГ 2: ДЛЯ КАЖДОГО ГОРОДА БЕРЕМ МАКСИМУМ 3 АНКЕТЫ
+        // 🔥 ШАГ 2: ДЛЯ КАЖДОГО ГОРОДА БЕРЕМ МАКСИМУМ 3 АНКЕТЫ (ИСПРАВЛЕНАЯ ВЕРСИЯ)
         cityProfilesMap.forEach((cityProfiles, cityKey) => {
-            // Берем максимум 3 профиля для этого города
-            const maxProfiles = Math.min(cityProfiles.length, 3);
+            // Сортируем профили по дате создания (сначала новые)
+            const sortedProfiles = cityProfiles.sort((a, b) => {
+                const dateA = a.profile.ca || a.profile.createdAt || new Date(0);
+                const dateB = b.profile.ca || b.profile.createdAt || new Date(0);
+                return new Date(dateB) - new Date(dateA);
+            });
             
-            // Выбираем первые 3 профиля (или все, если меньше 3)
-            const selectedProfiles = cityProfiles.slice(0, maxProfiles);
+            // Берем максимум 3 САМЫХ СВЕЖИХ профиля для этого города
+            const maxProfiles = Math.min(sortedProfiles.length, 3);
+            const selectedProfiles = sortedProfiles.slice(0, maxProfiles);
             
             selectedProfiles.forEach((profileData, index) => {
                 const profile = profileData.profile;
@@ -1341,6 +1355,11 @@ async createDemoCacheFromFullProfiles(fullProfiles) {
                 
                 if (hasPhoto || hasPhotos) {
                     demoProfiles.push(demoProfile);
+                    
+                    // Для отладки - логируем города с профилями
+                    if (demoProfile.ct === "Сараево" && demoProfile.c === "🇧🇦 Босния") {
+                        console.log(`🎯 [SARAJEVO DEBUG] Добавлен демо-профиль Сараево: ${demoProfile.n}`);
+                    }
                 }
             });
         });
@@ -1351,6 +1370,18 @@ async createDemoCacheFromFullProfiles(fullProfiles) {
             console.log(`❌ [DEMO CRITICAL] Не создано ни одного демо-профиля!`);
             return false;
         }
+        
+        // Проверяем Сараево специально
+        const sarajevoProfiles = demoProfiles.filter(p => 
+            p.ct === "Сараево" && p.c === "🇧🇦 Босния"
+        );
+        console.log(`🎯 [SARAJEVO CHECK] Демо-профилей Сараево создано: ${sarajevoProfiles.length}`);
+        
+        // Проверяем Дубай
+        const dubaiProfiles = demoProfiles.filter(p => 
+            p.ct === "Дубай" && p.c === "🇦🇪 ОАЭ"
+        );
+        console.log(`🏙️ [DUBAI CHECK] Демо-профилей Дубай создано: ${dubaiProfiles.length}`);
         
         // 🔥 КЭШИРУЕМ ДЕМО-ПРОФИЛИ
         console.log(`💾 [DEMO CACHE] Кэширование ${demoProfiles.length} демо-профилей...`);
@@ -1415,7 +1446,7 @@ async createDemoCacheFromFullProfiles(fullProfiles) {
         console.log(`✅ [DEMO INDEX] Индексы созданы: ${demoCountryIndex.size} стран, ${demoCountryCityIndex.size} пар страна+город, ${demoCityIndex.size} городов`);
         console.log(`📊 [DEMO INDEX STATS] Профилей: ${indexedProfiles}`);
         
-        // 🔥 ПРОВЕРКА КОНКРЕТНЫХ ГОРОДОВ
+        // 🔥 ОСОБАЯ ПРОВЕРКА ГОРОДОВ
         console.log(`🔍 [DEMO INDEX CHECK] Проверка индексов для городов...`);
         
         const checkCities = [
@@ -1431,23 +1462,22 @@ async createDemoCacheFromFullProfiles(fullProfiles) {
             console.log(`   📍 ${country} → ${city}: ${profilesCount} профилей в индексе`);
         });
         
-        // 🔥 ОСОБАЯ ПРОВЕРКА МОСКВЫ
-        const moscowKey = "🇷🇺 Россия:Москва";
-        const moscowProfilesCount = demoCountryCityIndex.get(moscowKey)?.length || 0;
-        console.log(`🎯 [MOSCOW CHECK] Москва в демо-кэше: ${moscowProfilesCount} профилей (должно быть 3 если есть)`);
+        // 🔥 ПРОВЕРКА КЭША ПОСЛЕ СОЗДАНИЯ
+        const cachedDemoProfiles = this.getGlobalProfiles(true);
+        console.log(`📊 [DEMO VERIFY] Проверка после кэширования: ${cachedDemoProfiles?.length || 0} профилей в кэше`);
         
-        if (moscowProfilesCount > 0 && moscowProfilesCount < 3) {
-            // Проверяем, сколько реально профилей Москвы в полном кэше
-            const allMoscowProfiles = fullProfiles.filter(p => {
-                const pCountry = cacheManager.normalizeCountryName(p.c || p.country);
-                const pCity = cacheManager.normalizeCityName(p.ct || p.city);
-                return pCountry === "🇷🇺 Россия" && pCity === "Москва";
-            });
+        if (cachedDemoProfiles) {
+            const sarajevoInCache = cachedDemoProfiles.filter(p => 
+                p.ct === "Сараево" && p.c === "🇧🇦 Босния"
+            );
+            console.log(`🎯 [SARAJEVO IN CACHE] В кэше: ${sarajevoInCache.length} профилей Сараево`);
             
-            console.log(`🔍 [MOSCOW FULL] В полном кэше: ${allMoscowProfiles.length} профилей Москвы`);
-            
-            if (allMoscowProfiles.length >= 3) {
-                console.log(`⚠️ [MOSCOW ISSUE] В полном кэше есть ${allMoscowProfiles.length} анкет Москвы, но в демо только ${moscowProfilesCount}!`);
+            // Выводим имена профилей Сараево для отладки
+            if (sarajevoInCache.length > 0) {
+                console.log(`📋 [SARAJEVO PROFILES]:`);
+                sarajevoInCache.forEach((p, i) => {
+                    console.log(`   ${i+1}. ${p.n}, фото: ${p.p ? 'есть' : 'нет'}`);
+                });
             }
         }
         
@@ -1460,6 +1490,228 @@ async createDemoCacheFromFullProfiles(fullProfiles) {
         return false;
     }
 },
+// async createDemoCacheFromFullProfiles(fullProfiles) {
+//     try {
+//         console.log(`🔧 [DEMO CREATION] Создаем демо-кэш из ${fullProfiles.length} профилей...`);
+        
+//         const demoProfiles = [];
+//         const countriesSet = new Set();
+//         const citiesByCountry = new Map();
+//         const cityProfilesMap = new Map(); // Мапа для хранения профилей по городам
+        
+//         console.log(`👤 [DEMO PROCESSING] Обработка ${fullProfiles.length} профилей...`);
+        
+//         // 🔥 ШАГ 1: ГРУППИРУЕМ ПРОФИЛИ ПО ГОРОДАМ
+//         for (let i = 0; i < fullProfiles.length; i++) {
+//             const profile = fullProfiles[i];
+            
+//             const originalName = profile.n || profile.name || '';
+//             const originalAge = profile.a || profile.age || 0;
+//             const originalCountry = profile.c || profile.country || '';
+//             const originalCity = profile.ct || profile.city || '';
+//             const originalAbout = profile.ab || profile.about || '';
+//             const originalPhotoUrl = profile.p || profile.photoUrl || '';
+//             const originalPhotos = profile.phs || profile.photos || [];
+            
+//             // Нормализуем страну и город
+//             const normalizedCountry = originalCountry ? 
+//                 this.normalizeCountryName(originalCountry) : 'Не указана';
+//             const normalizedCity = originalCity ? 
+//                 this.normalizeCityName(originalCity) : 'Не указан';
+            
+//             // Пропускаем без страны или города
+//             if (normalizedCountry === 'Не указана' || normalizedCity === 'Не указан') {
+//                 continue;
+//             }
+            
+//             // Сохраняем страны и города для списков
+//             if (normalizedCountry && normalizedCountry !== 'Не указана') {
+//                 countriesSet.add(normalizedCountry);
+                
+//                 if (!citiesByCountry.has(normalizedCountry)) {
+//                     citiesByCountry.set(normalizedCountry, new Set());
+//                 }
+//                 if (normalizedCity && normalizedCity !== 'Не указан') {
+//                     citiesByCountry.get(normalizedCountry).add(normalizedCity);
+//                 }
+//             }
+            
+//             // Создаем ключ города
+//             const cityKey = `${normalizedCountry}_${normalizedCity}`;
+            
+//             if (!cityProfilesMap.has(cityKey)) {
+//                 cityProfilesMap.set(cityKey, []);
+//             }
+            
+//             // Добавляем профиль в массив для этого города
+//             cityProfilesMap.get(cityKey).push({
+//                 index: i,
+//                 name: originalName,
+//                 age: originalAge,
+//                 country: normalizedCountry,
+//                 city: normalizedCity,
+//                 about: originalAbout,
+//                 photoUrl: originalPhotoUrl,
+//                 photos: originalPhotos,
+//                 profile: profile
+//             });
+//         }
+        
+//         console.log(`📊 [CITY GROUPS] Создано ${cityProfilesMap.size} групп по городам`);
+        
+//         // 🔥 ШАГ 2: ДЛЯ КАЖДОГО ГОРОДА БЕРЕМ МАКСИМУМ 3 АНКЕТЫ
+//         cityProfilesMap.forEach((cityProfiles, cityKey) => {
+//             // Берем максимум 3 профиля для этого города
+//             const maxProfiles = Math.min(cityProfiles.length, 3);
+            
+//             // Выбираем первые 3 профиля (или все, если меньше 3)
+//             const selectedProfiles = cityProfiles.slice(0, maxProfiles);
+            
+//             selectedProfiles.forEach((profileData, index) => {
+//                 const profile = profileData.profile;
+                
+//                 // 🔥 СОЗДАЕМ ДЕМО-ПРОФИЛЬ (скрываем контакты)
+//                 const demoProfile = {
+//                     id: profile.id || `demo_${Date.now()}_${cityKey}_${index}`,
+//                     n: profileData.name || `Анкета ${index + 1}`,
+//                     a: parseInt(profileData.age) || 0,
+//                     c: profileData.country,
+//                     ct: profileData.city,
+//                     ab: replaceSitesInAbout(profileData.about),
+//                     p: profileData.photoUrl,
+//                     phs: profileData.photos,
+//                     tg: null, // 🔥 КОНТАКТЫ СКРЫТЫ
+//                     tel: null,
+//                     wa: null,
+//                     ca: profile.ca || profile.createdAt || new Date(),
+//                     isDemo: true
+//                 };
+                
+//                 // Проверяем наличие фото
+//                 const hasPhoto = demoProfile.p && demoProfile.p.trim() !== '';
+//                 const hasPhotos = demoProfile.phs && demoProfile.phs.length > 0;
+                
+//                 if (hasPhoto || hasPhotos) {
+//                     demoProfiles.push(demoProfile);
+//                 }
+//             });
+//         });
+        
+//         console.log(`✅ [DEMO CREATION] Создано ${demoProfiles.length} демо-профилей (из ${fullProfiles.length} полных)`);
+        
+//         if (demoProfiles.length === 0) {
+//             console.log(`❌ [DEMO CRITICAL] Не создано ни одного демо-профиля!`);
+//             return false;
+//         }
+        
+//         // 🔥 КЭШИРУЕМ ДЕМО-ПРОФИЛИ
+//         console.log(`💾 [DEMO CACHE] Кэширование ${demoProfiles.length} демо-профилей...`);
+//         await this.cacheGlobalProfiles(demoProfiles, true);
+        
+//         // 🔥 СОХРАНЯЕМ СТРАНЫ И ГОРОДА
+//         console.log(`🗺️ [DEMO GEO] Сохранение стран и городов...`);
+//         const sortedCountries = Array.from(countriesSet).sort();
+//         globalDemoCache.set("demo:countries", sortedCountries);
+//         globalDemoCache.set("demo:countries_raw", Array.from(countriesSet));
+        
+//         // Сохраняем города по странам
+//         citiesByCountry.forEach((citiesSet, country) => {
+//             globalDemoCache.set(`demo:cities:${country}`, Array.from(citiesSet).sort());
+//         });
+        
+//         // 🔥 СОЗДАЕМ ИНДЕКСЫ ДЛЯ ДЕМО-КЭША
+//         console.log(`📇 [DEMO INDEX] Создание индексов для демо-кэша из ${demoProfiles.length} профилей...`);
+        
+//         const demoCountryCityIndex = new Map();
+//         const demoCountryIndex = new Map();
+//         const demoCityIndex = new Map();
+        
+//         let indexedProfiles = 0;
+        
+//         for (let i = 0; i < demoProfiles.length; i++) {
+//             const profile = demoProfiles[i];
+//             const country = profile.c;
+            
+//             if (country && country !== 'Не указана') {
+//                 // 1. Индекс по стране
+//                 if (!demoCountryIndex.has(country)) {
+//                     demoCountryIndex.set(country, []);
+//                 }
+//                 demoCountryIndex.get(country).push(i);
+                
+//                 // 2. Индекс по стране+городу
+//                 const city = profile.ct;
+//                 if (city && city !== 'Не указан') {
+//                     const key = `${country}:${city}`;
+//                     if (!demoCountryCityIndex.has(key)) {
+//                         demoCountryCityIndex.set(key, []);
+//                     }
+//                     demoCountryCityIndex.get(key).push(i);
+                    
+//                     // 3. Индекс только по городу
+//                     if (!demoCityIndex.has(city)) {
+//                         demoCityIndex.set(city, []);
+//                     }
+//                     demoCityIndex.get(city).push(i);
+//                 }
+                
+//                 indexedProfiles++;
+//             }
+//         }
+        
+//         // Сохраняем индексы в демо-кэш
+//         globalDemoCache.set("demo:index:country_city", demoCountryCityIndex);
+//         globalDemoCache.set("demo:index:country", demoCountryIndex);
+//         globalDemoCache.set("demo:index:city", demoCityIndex);
+        
+//         console.log(`✅ [DEMO INDEX] Индексы созданы: ${demoCountryIndex.size} стран, ${demoCountryCityIndex.size} пар страна+город, ${demoCityIndex.size} городов`);
+//         console.log(`📊 [DEMO INDEX STATS] Профилей: ${indexedProfiles}`);
+        
+//         // 🔥 ПРОВЕРКА КОНКРЕТНЫХ ГОРОДОВ
+//         console.log(`🔍 [DEMO INDEX CHECK] Проверка индексов для городов...`);
+        
+//         const checkCities = [
+//             { country: "🇧🇦 Босния", city: "Сараево" },
+//             { country: "🇧🇦 Босния", city: "Мостар" },
+//             { country: "🇦🇪 ОАЭ", city: "Дубай" },
+//             { country: "🇷🇺 Россия", city: "Москва" }
+//         ];
+        
+//         checkCities.forEach(({ country, city }) => {
+//             const key = `${country}:${city}`;
+//             const profilesCount = demoCountryCityIndex.get(key)?.length || 0;
+//             console.log(`   📍 ${country} → ${city}: ${profilesCount} профилей в индексе`);
+//         });
+        
+//         // 🔥 ОСОБАЯ ПРОВЕРКА МОСКВЫ
+//         const moscowKey = "🇷🇺 Россия:Москва";
+//         const moscowProfilesCount = demoCountryCityIndex.get(moscowKey)?.length || 0;
+//         console.log(`🎯 [MOSCOW CHECK] Москва в демо-кэше: ${moscowProfilesCount} профилей (должно быть 3 если есть)`);
+        
+//         if (moscowProfilesCount > 0 && moscowProfilesCount < 3) {
+//             // Проверяем, сколько реально профилей Москвы в полном кэше
+//             const allMoscowProfiles = fullProfiles.filter(p => {
+//                 const pCountry = cacheManager.normalizeCountryName(p.c || p.country);
+//                 const pCity = cacheManager.normalizeCityName(p.ct || p.city);
+//                 return pCountry === "🇷🇺 Россия" && pCity === "Москва";
+//             });
+            
+//             console.log(`🔍 [MOSCOW FULL] В полном кэше: ${allMoscowProfiles.length} профилей Москвы`);
+            
+//             if (allMoscowProfiles.length >= 3) {
+//                 console.log(`⚠️ [MOSCOW ISSUE] В полном кэше есть ${allMoscowProfiles.length} анкет Москвы, но в демо только ${moscowProfilesCount}!`);
+//             }
+//         }
+        
+//         console.log(`📊 [DEMO STATS] Профилей: ${demoProfiles.length}, Стран: ${countriesSet.size}`);
+        
+//         return true;
+        
+//     } catch (error) {
+//         console.error(`❌ [DEMO CREATION ERROR] Ошибка создания демо-кэша:`, error);
+//         return false;
+//     }
+// },
 // 3. КЭШИРОВАНИЕ ПРОФИЛЕЙ В ГЛОБАЛЬНЫЙ КЭШ (ИСПРАВЛЕННАЯ ВЕРСИЯ)
 async cacheGlobalProfiles(profiles, isDemo = false) {
     try {
