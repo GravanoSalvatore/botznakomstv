@@ -2,7 +2,7 @@
 
 const path = require('path');
 const zlib = require('zlib');
-
+const fs = require('fs');
 class DiskCache {
     constructor() {
         // Папка для кэша будет в корне проекта
@@ -194,7 +194,7 @@ class DiskCache {
 module.exports = DiskCache;const RateLimiter = require("telegraf-ratelimit");
 const { default: PQueue } = require("p-queue");
 const NodeCache = require("node-cache");
-const fs = require('fs');
+
 const path = require('path');
 const zlib = require('zlib');
 const DiskCache = require('./diskCache'); // ← ДОБАВЬТЕ ЭТУ СТРОЧКУ
