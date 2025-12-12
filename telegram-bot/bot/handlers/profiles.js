@@ -1239,248 +1239,137 @@ async loadGlobalDemoCache(db) {
     
  // ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ: СОЗДАНИЕ ДЕМО-КЭША ИЗ ПОЛНЫХ ПРОФИЛЕЙ (ПОЛНОСТЬЮ ПЕРЕПИСАНА С ИНДЕКСАМИ)
 
- // ВАЖНОЕ ИСПРАВЛЕНИЕ: ФУНКЦИЯ СОЗДАНИЯ ДЕМО-КЭША
-// 🔥 ПРАВИЛЬНАЯ ФУНКЦИЯ СОЗДАНИЯ ДЕМО-КЭША БЕЗ Firestore
-// 🔥 ОПТИМИЗИРОВАННАЯ ФУНКЦИЯ СОЗДАНИЯ ДЕМО-КЭША ДЛЯ 70,000+ ПРОФИЛЕЙ
+ // 🔥 РАБОЧАЯ ФУНКЦИЯ СОЗДАНИЯ ДЕМО-КЭША (без лишнего кода)
 async createDemoCacheFromFullProfiles(fullProfiles) {
-    try {
-        console.log(`🔧 [DEMO] Создаем кэш из ${fullProfiles?.length || 0} профилей (все 70,000+)`);
-        
-        if (!fullProfiles || fullProfiles.length === 0) {
-            console.log(`❌ [DEMO] Нет полных профилей в памяти!`);
-            return false;
-        }
-        
-        // 🔥 ВАЖНО: РАЗБИВАЕМ НА ПАКЕТЫ ДЛЯ ИЗБЕЖАНИЯ ПЕРЕПОЛНЕНИЯ ПАМЯТИ
-        const BATCH_SIZE = 10000;
-        const demoProfiles = [];
-        const countriesSet = new Set();
-        const citiesByCountry = new Map();
-        const cityGroups = new Map();
-        
-        console.log(`👤 [DEMO] Обрабатываем ${fullProfiles.length} профилей пачками по ${BATCH_SIZE}...`);
-        
-        // 🔥 ОБРАБОТКА ПАЧКАМИ ДЛЯ ЭКОНОМИИ ПАМЯТИ
-        for (let batchStart = 0; batchStart < fullProfiles.length; batchStart += BATCH_SIZE) {
-            const batchEnd = Math.min(batchStart + BATCH_SIZE, fullProfiles.length);
-            console.log(`📦 [DEMO BATCH] Пачка ${Math.floor(batchStart/BATCH_SIZE) + 1}: ${batchStart}-${batchEnd}`);
-            
-            for (let i = batchStart; i < batchEnd; i++) {
-                const p = fullProfiles[i];
-                
-                // 🔥 БЫСТРОЕ ИЗВЛЕЧЕНИЕ ДАННЫХ
-                const name = p.n || p.name || '';
-                const age = parseInt(p.a || p.age) || 0;
-                let country = p.c || p.country || '';
-                let city = p.ct || p.city || '';
-                
-                // Пропускаем без страны или города
-                if (!country || !city || country.trim() === '' || city.trim() === '') {
-                    continue;
-                }
-                
-                // 🔥 НОРМАЛИЗАЦИЯ
-                country = this.normalizeCountryName(country);
-                city = this.normalizeCityName(city);
-                
-                if (!country || !city || country === 'Не указана' || city === 'Не указан') {
-                    continue;
-                }
-                
-                // 🔥 СБОР СТАТИСТИКИ
-                countriesSet.add(country);
-                
-                if (!citiesByCountry.has(country)) {
-                    citiesByCountry.set(country, new Set());
-                }
-                citiesByCountry.get(country).add(city);
-                
-                // 🔥 ГРУППИРОВКА ПО ГОРОДАМ
-                const cityKey = `${country}_${city}`;
-                if (!cityGroups.has(cityKey)) {
-                    cityGroups.set(cityKey, []);
-                }
-                
-                // Сохраняем только необходимые данные для демо
-                cityGroups.get(cityKey).push({
-                    name,
-                    age,
-                    country,
-                    city,
-                    about: p.ab || p.about || '',
-                    photoUrl: p.p || p.photoUrl || '',
-                    photos: Array.isArray(p.phs || p.photos) ? (p.phs || p.photos) : [],
-                    id: p.id || p._id || `profile_${i}`
-                });
-            }
-            
-            // 🔥 ПРОМЕЖУТОЧНЫЙ ОТЧЕТ
-            if (batchEnd % 20000 === 0 || batchEnd >= fullProfiles.length) {
-                console.log(`📊 [DEMO PROGRESS] Обработано ${batchEnd}/${fullProfiles.length} профилей, городов: ${cityGroups.size}`);
-            }
-        }
-        
-        console.log(`📊 [DEMO] Обработка завершена. Городов: ${cityGroups.size}, Стран: ${countriesSet.size}`);
-        
-        // 🔥 СОЗДАНИЕ ДЕМО-ПРОФИЛЕЙ (до 3 на город)
-        console.log(`🎭 [DEMO] Создаем демо-профили (до 3 на город)...`);
-        let totalCitiesWithProfiles = 0;
-        
-        cityGroups.forEach((profiles, cityKey) => {
-            const profilesToTake = Math.min(profiles.length, 3);
-            totalCitiesWithProfiles++;
-            
-            for (let i = 0; i < profilesToTake; i++) {
-                const p = profiles[i];
-                
-                // 🔥 ПРОВЕРКА: Должно быть хотя бы одно фото
-                const hasPhoto = p.photoUrl && p.photoUrl.trim() !== '';
-                const hasPhotos = p.photos && p.photos.length > 0;
-                
-                if (!hasPhoto && !hasPhotos) {
-                    console.log(`⚠️ [DEMO SKIP] Профиль без фото пропущен: ${cityKey}_${i}`);
-                    continue;
-                }
-                
-                // 🔥 СОЗДАЕМ ДЕМО-ПРОФИЛЬ
-                demoProfiles.push({
-                    id: p.id || `demo_${cityKey}_${i}`,
-                    n: p.name || `Анкета ${i + 1}`,
-                    a: p.age,
-                    c: p.country,
-                    ct: p.city,
-                    ab: replaceSitesInAbout(p.about),
-                    p: p.photoUrl,
-                    phs: p.photos,
-                    tg: null,  // 🔥 КОНТАКТЫ СКРЫТЫ
-                    tel: null,
-                    wa: null,
-                    ca: new Date(),
-                    isDemo: true
-                });
-            }
-        });
-        
-        console.log(`✅ [DEMO] Создано ${demoProfiles.length} демо-профилей для ${totalCitiesWithProfiles} городов`);
-        
-        if (demoProfiles.length === 0) {
-            console.log(`❌ [DEMO CRITICAL] Не создано ни одного демо-профиля!`);
-            
-            // 🔥 АВАРИЙНОЕ СОЗДАНИЕ ТЕСТОВЫХ ДАННЫХ
-            console.log(`🆘 [DEMO EMERGENCY] Создаю тестовые демо-профили...`);
-            
-            const emergencyProfiles = [];
-            const testCities = [
-                {country: "🇷🇺 Россия", city: "Москва"},
-                {country: "🇺🇦 Украина", city: "Киев"}, 
-                {country: "🇧🇦 Босния", city: "Сараево"},
-                {country: "🇦🇪 ОАЭ", city: "Дубай"}
-            ];
-            
-            testCities.forEach(({country, city}, cityIndex) => {
-                for (let i = 0; i < 3; i++) {
-                    emergencyProfiles.push({
-                        id: `emergency_${country}_${city}_${i}`,
-                        n: `Тест ${cityIndex * 3 + i + 1}`,
-                        a: 25 + i,
-                        c: country,
-                        ct: city,
-                        ab: `Тестовая демо-анкета ${i + 1} для города ${city}`,
-                        p: `https://via.placeholder.com/600x800/0088cc/ffffff?text=Demo+${city}+${i + 1}`,
-                        phs: [],
-                        tg: null,
-                        tel: null,
-                        wa: null,
-                        ca: new Date(),
-                        isDemo: true
-                    });
-                }
-            });
-            
-            demoProfiles.push(...emergencyProfiles);
-            console.log(`🆘 [DEMO EMERGENCY] Добавлено ${emergencyProfiles.length} тестовых профилей`);
-        }
-        
-        // 🔥 КЭШИРОВАНИЕ ДЕМО-ПРОФИЛЕЙ
-        console.log(`💾 [DEMO] Кэшируем ${demoProfiles.length} демо-профилей...`);
-        const compressed = zlib.gzipSync(JSON.stringify(demoProfiles));
-        globalDemoCache.set("demo:profiles", compressed);
-        
-        // 🔥 СОХРАНЕНИЕ ГЕОДАННЫХ
-        console.log(`🗺️ [DEMO] Сохраняем ${countriesSet.size} стран...`);
-        globalDemoCache.set("demo:countries", Array.from(countriesSet).sort());
-        
-        console.log(`🏙️ [DEMO] Сохраняем города по ${citiesByCountry.size} странам...`);
-        citiesByCountry.forEach((citiesSet, country) => {
-            globalDemoCache.set(`demo:cities:${country}`, Array.from(citiesSet).sort());
-        });
-        
-        // 🔥 СОЗДАНИЕ ИНДЕКСОВ ДЛЯ БЫСТРОГО ПОИСКА
-        console.log(`📇 [DEMO] Создаем индексы...`);
-        
-        const demoCountryCityIndex = new Map();
-        const demoCountryIndex = new Map();
-        const demoCityIndex = new Map();
-        
-        demoProfiles.forEach((profile, index) => {
-            const country = profile.c;
-            const city = profile.ct;
-            
-            if (country && city) {
-                // Индекс по стране
-                if (!demoCountryIndex.has(country)) {
-                    demoCountryIndex.set(country, []);
-                }
-                demoCountryIndex.get(country).push(index);
-                
-                // Индекс по стране+городу
-                const key = `${country}:${city}`;
-                if (!demoCountryCityIndex.has(key)) {
-                    demoCountryCityIndex.set(key, []);
-                }
-                demoCountryCityIndex.get(key).push(index);
-                
-                // Индекс по городу (для поиска без страны)
-                if (!demoCityIndex.has(city)) {
-                    demoCityIndex.set(city, []);
-                }
-                demoCityIndex.get(city).push(index);
-            }
-        });
-        
-        // 🔥 СОХРАНЕНИЕ ИНДЕКСОВ
-        globalDemoCache.set("demo:index:country_city", demoCountryCityIndex);
-        globalDemoCache.set("demo:index:country", demoCountryIndex);
-        globalDemoCache.set("demo:index:city", demoCityIndex);
-        
-        console.log(`✅ [DEMO] Индексы созданы: ${demoCountryIndex.size} стран, ${demoCityIndex.size} городов, ${demoCountryCityIndex.size} пар`);
-        
-        // 🔥 ПРОВЕРКА РЕЗУЛЬТАТОВ
-        console.log(`🔍 [DEMO VERIFY] Проверяем результаты...`);
-        
-        // Проверяем ключевые города
-        const checkCities = [
-            {country: "🇷🇺 Россия", city: "Москва"},
-            {country: "🇺🇦 Украина", city: "Киев"},
-            {country: "🇧🇦 Босния", city: "Сараево"},
-            {country: "🇦🇪 ОАЭ", city: "Дубай"}
-        ];
-        
-        checkCities.forEach(({country, city}) => {
-            const key = `${country}:${city}`;
-            const count = demoCountryCityIndex.get(key)?.length || 0;
-            console.log(`📍 ${city}: ${count} анкет ${count === 3 ? '✅' : count > 0 ? '⚠️' : '❌'}`);
-        });
-        
-        console.log(`🎉 [DEMO] Демо-кэш успешно создан для 70,000+ профилей!`);
-        
-        return true;
-        
-    } catch (error) {
-        console.error(`❌ [DEMO CRITICAL ERROR] Ошибка создания демо-кэша:`, error);
-        console.error(error.stack);
+    console.log(`🔄 Создаем демо-кэш из ${fullProfiles?.length || 0} профилей`);
+    
+    if (!fullProfiles || fullProfiles.length === 0) {
+        console.log('❌ Нет данных');
         return false;
     }
+    
+    // ШАГ 1: Группируем профили по городам
+    const cityMap = new Map(); // ключ: "Страна_Город", значение: массив профилей
+    const countries = new Set();
+    
+    for (let i = 0; i < fullProfiles.length; i++) {
+        const p = fullProfiles[i];
+        
+        // Извлекаем данные
+        const name = p.n || p.name || '';
+        const age = parseInt(p.a || p.age) || 0;
+        const country = this.normalizeCountryName(p.c || p.country || '');
+        const city = this.normalizeCityName(p.ct || p.city || '');
+        
+        // Пропускаем без города или страны
+        if (!city || !country || city === 'Не указан' || country === 'Не указана') {
+            continue;
+        }
+        
+        // Добавляем страну
+        countries.add(country);
+        
+        // Группируем по городу
+        const cityKey = `${country}_${city}`;
+        if (!cityMap.has(cityKey)) {
+            cityMap.set(cityKey, []);
+        }
+        
+        // Сохраняем профиль
+        cityMap.get(cityKey).push({
+            name,
+            age,
+            country,
+            city,
+            about: p.ab || p.about || '',
+            photoUrl: p.p || p.photoUrl || '',
+            photos: p.phs || p.photos || [],
+            id: p.id || `p_${i}`
+        });
+    }
+    
+    // ШАГ 2: Создаем демо-профили (до 3 на город)
+    const demoProfiles = [];
+    const citiesByCountry = new Map();
+    
+    cityMap.forEach((profiles, cityKey) => {
+        // Берем до 3 профилей
+        const toTake = Math.min(profiles.length, 3);
+        
+        for (let i = 0; i < toTake; i++) {
+            const p = profiles[i];
+            
+            // Создаем демо-профиль без контактов
+            demoProfiles.push({
+                id: p.id || `demo_${cityKey}_${i}`,
+                n: p.name,
+                a: p.age,
+                c: p.country,
+                ct: p.city,
+                ab: p.about,
+                p: p.photoUrl,
+                phs: p.photos,
+                tg: null,
+                tel: null,
+                wa: null,
+                ca: new Date(),
+                isDemo: true
+            });
+            
+            // Сохраняем город для страны
+            if (!citiesByCountry.has(p.country)) {
+                citiesByCountry.set(p.country, new Set());
+            }
+            citiesByCountry.get(p.country).add(p.city);
+        }
+    });
+    
+    console.log(`✅ Создано ${demoProfiles.length} демо-профилей для ${cityMap.size} городов`);
+    
+    // ШАГ 3: Кэшируем
+    // Демо-профили
+    const compressed = zlib.gzipSync(JSON.stringify(demoProfiles));
+    globalDemoCache.set("demo:profiles", compressed);
+    
+    // Страны
+    globalDemoCache.set("demo:countries", Array.from(countries).sort());
+    
+    // Города по странам
+    citiesByCountry.forEach((citiesSet, country) => {
+        globalDemoCache.set(`demo:cities:${country}`, Array.from(citiesSet).sort());
+    });
+    
+    // ШАГ 4: Создаем индексы для быстрого поиска
+    const demoCountryCityIndex = new Map();
+    const demoCountryIndex = new Map();
+    
+    demoProfiles.forEach((profile, idx) => {
+        const country = profile.c;
+        const city = profile.ct;
+        
+        if (country && city) {
+            // Индекс по стране
+            if (!demoCountryIndex.has(country)) {
+                demoCountryIndex.set(country, []);
+            }
+            demoCountryIndex.get(country).push(idx);
+            
+            // Индекс по стране+городу
+            const key = `${country}:${city}`;
+            if (!demoCountryCityIndex.has(key)) {
+                demoCountryCityIndex.set(key, []);
+            }
+            demoCountryCityIndex.get(key).push(idx);
+        }
+    });
+    
+    // Сохраняем индексы
+    globalDemoCache.set("demo:index:country_city", demoCountryCityIndex);
+    globalDemoCache.set("demo:index:country", demoCountryIndex);
+    
+    console.log(`✅ Демо-кэш создан! ${demoProfiles.length} профилей, ${demoCountryIndex.size} стран`);
+    
+    return true;
 },
 // async createDemoCacheFromFullProfiles(fullProfiles) {
 //     try {
@@ -3045,249 +2934,179 @@ const getUniqueCitiesForCountry = async (country, isDemo = false) => {
 
 // ===================== ОПТИМИЗИРОВАННАЯ ФУНКЦИЯ ПОЛУЧЕНИЯ ПРОФИЛЕЙ =====================
 // 🔥 ПОЛНОСТЬЮ ПЕРЕПИСАННАЯ ФУНКЦИЯ getProfilesPage С АВТО-ИСПРАВЛЕНИЕМ
+// 🔥 ПОЛНОСТЬЮ ПЕРЕПИСАННАЯ getProfilesPage С ФИКСОМ 3 АНКЕТ В ДЕМО
 const getProfilesPage = async (page = 0, searchCountry = null, ageRange = null, searchCity = null, isDemo = false) => {
     try {
-        console.log(`🔍 [PROFILES PAGE] Запрос страницы ${page}, демо=${isDemo}, страна="${searchCountry}", город="${searchCity}"`);
+        console.log(`📄 [PAGE ${page}] Демо: ${isDemo}, Страна: "${searchCountry}", Город: "${searchCity}"`);
         
-        // 🔥 АВТО-ИСПРАВЛЕНИЕ: Если в демо-режиме и запрошен город - проверяем демо-кэш
-        if (isDemo && searchCity) {
-            const demoProfiles = cacheManager.getGlobalProfiles(true);
-            
-            if (demoProfiles && demoProfiles.length > 0) {
-                // Проверяем, сколько анкет для этого города
-                const cityProfiles = demoProfiles.filter(p => {
-                    const profileCity = p.ct || p.city;
-                    return profileCity === searchCity;
-                });
-                
-                if (cityProfiles.length === 0) {
-                    console.log(`⚠️ [DEMO CHECK] Город ${searchCity} не найден в демо-кэше!`);
-                    
-                    // 🔥 АВТО-ИСПРАВЛЕНИЕ: Перестраиваем демо-кэш в фоне
-                    setTimeout(async () => {
-                        try {
-                            const fullProfiles = cacheManager.getGlobalProfiles(false);
-                            if (fullProfiles && fullProfiles.length > 0) {
-                                console.log(`🔄 [AUTO-FIX DEMO] Автоматическое исправление демо-кэша...`);
-                                const success = await cacheManager.createDemoCacheFromFullProfiles(fullProfiles);
-                                if (success) {
-                                    console.log(`✅ [AUTO-FIX DEMO] Демо-кэш исправлен`);
-                                }
-                            } else {
-                                console.log(`❌ [AUTO-FIX DEMO] Нет полного кэша для исправления`);
-                            }
-                        } catch (error) {
-                            console.error(`❌ [AUTO-FIX DEMO ERROR]`, error.message);
-                        }
-                    }, 500);
-                } else if (cityProfiles.length < 3) {
-                    console.log(`⚠️ [DEMO CHECK] Город ${searchCity}: только ${cityProfiles.length} анкет (ожидается до 3)`);
-                }
-            }
-        }
-        
-        // 🔥 ВАЖНО: ИСПОЛЬЗУЕМ ГЛОБАЛЬНЫЙ КЭШ
+        // 🔥 ГЛАВНОЕ: ПОЛУЧАЕМ ПРОФИЛИ ИЗ ГЛОБАЛЬНОГО КЭША
         let allProfiles = cacheManager.getGlobalProfiles(isDemo);
         
+        // 🔥 ЕСЛИ ДЕМО-КЭШ ПУСТ, НО ЕСТЬ ПОЛНЫЙ КЭШ - СОЗДАЕМ ДЕМО НА ЛЕТУ
+        if (isDemo && (!allProfiles || allProfiles.length === 0)) {
+            console.log(`⚠️ Демо-кэш пуст, проверяю полный кэш...`);
+            const fullProfiles = cacheManager.getGlobalProfiles(false);
+            
+            if (fullProfiles && fullProfiles.length > 0) {
+                console.log(`🔄 Создаю демо-кэш из ${fullProfiles.length} полных профилей...`);
+                await cacheManager.createDemoCacheFromFullProfiles(fullProfiles);
+                
+                // Получаем свежий демо-кэш
+                allProfiles = cacheManager.getGlobalProfiles(true);
+                console.log(`✅ Создано ${allProfiles?.length || 0} демо-профилей`);
+            }
+        }
+        
         if (!allProfiles || allProfiles.length === 0) {
-            console.log(`❌ [PROFILES PAGE] Нет профилей в глобальном кэше (демо: ${isDemo})`);
-            
-            // 🔥 АВТО-ИСПРАВЛЕНИЕ: Если демо-кэш пуст, но есть полный кэш - создаем демо
-            if (isDemo) {
-                console.log(`🔄 [DEMO AUTO-CREATE] Демо-кэш пуст, пытаемся создать из полного кэша...`);
-                const fullProfiles = cacheManager.getGlobalProfiles(false);
-                
-                if (fullProfiles && fullProfiles.length > 0) {
-                    console.log(`🔄 [DEMO AUTO-CREATE] Создаем демо-кэш из ${fullProfiles.length} полных профилей...`);
-                    await cacheManager.createDemoCacheFromFullProfiles(fullProfiles);
-                    
-                    // Пробуем снова
-                    allProfiles = cacheManager.getGlobalProfiles(true);
-                    console.log(`✅ [DEMO AUTO-CREATE] Демо-кэш создан: ${allProfiles?.length || 0} профилей`);
-                }
-            }
-            
-            if (!allProfiles || allProfiles.length === 0) {
-                return [];
-            }
-        }
-
-        const normalizedSearchCity = searchCity ? cacheManager.normalizeCityName(searchCity) : null;
-        const normalizedSearchCountry = searchCountry ? cacheManager.normalizeCountryName(searchCountry) : null;
-        
-        // 🔥 КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: ИСПОЛЬЗУЕМ ИНДЕКСЫ ДЛЯ ДЕМО-КЭША
-        const filterKey = `country:${normalizedSearchCountry || 'all'}:age:${ageRange?.label || 'all'}:city:${normalizedSearchCity || 'all'}`;
-        
-        // ПРОВЕРЯЕМ КЭШ ФИЛЬТРОВ
-        let filteredProfiles = cacheManager.getGlobalFilter(filterKey, isDemo);
-        
-        if (!filteredProfiles) {
-            console.log(`🔍 [FILTER] Промах глобального кэша фильтров: ${filterKey} (демо: ${isDemo})`);
-            console.log(`📊 [FILTER] Всего профилей в глобальном кэше: ${allProfiles.length} (демо: ${isDemo})`);
-            
-            // 🔥 ВАЖНОЕ ИСПРАВЛЕНИЕ: ДЛЯ ДЕМО-РЕЖИМА ИСПОЛЬЗУЕМ ИНДЕКСЫ ИЗ ДЕМО-КЭША
-            if (isDemo) {
-                console.log(`🎯 [DEMO INDEX SEARCH] Ищем в демо-индексах...`);
-                
-                // Получаем индексы из демо-кэша
-                const demoCountryCityIndex = globalDemoCache.get("demo:index:country_city");
-                const demoCountryIndex = globalDemoCache.get("demo:index:country");
-                const demoCityIndex = globalDemoCache.get("demo:index:city");
-                
-                if (demoCountryCityIndex && demoCountryIndex && demoCityIndex) {
-                    console.log(`✅ [DEMO INDEXES LOADED] Страны: ${demoCountryIndex.size}, Города: ${demoCityIndex.size}, Пары: ${demoCountryCityIndex.size}`);
-                    
-                    let profileIndexes = [];
-                    
-                    // СЦЕНАРИЙ 1: Страна + Город (самый точный поиск)
-                    if (normalizedSearchCountry && normalizedSearchCity) {
-                        const key = `${normalizedSearchCountry}:${normalizedSearchCity}`;
-                        profileIndexes = demoCountryCityIndex.get(key) || [];
-                        console.log(`⚡ [DEMO INDEX 1] Страна+Город "${key}": ${profileIndexes.length} профилей`);
-                    }
-                    // СЦЕНАРИЙ 2: Только Страна
-                    else if (normalizedSearchCountry && !normalizedSearchCity) {
-                        profileIndexes = demoCountryIndex.get(normalizedSearchCountry) || [];
-                        console.log(`⚡ [DEMO INDEX 2] Только страна "${normalizedSearchCountry}": ${profileIndexes.length} профилей`);
-                    }
-                    // СЦЕНАРИЙ 3: Только Город (используем индекс только по городам)
-                    else if (!normalizedSearchCountry && normalizedSearchCity) {
-                        profileIndexes = demoCityIndex.get(normalizedSearchCity) || [];
-                        console.log(`⚡ [DEMO INDEX 3] Только город "${normalizedSearchCity}": ${profileIndexes.length} профилей`);
-                    }
-                    
-                    // Если нашли профили через индексы
-                    if (profileIndexes.length > 0) {
-                        filteredProfiles = [];
-                        let validProfilesFound = 0;
-                        
-                        for (let i = 0; i < profileIndexes.length; i++) {
-                            const profileIndex = profileIndexes[i];
-                            
-                            // Проверяем что индекс в пределах массива
-                            if (profileIndex >= 0 && profileIndex < allProfiles.length) {
-                                const profile = allProfiles[profileIndex];
-                                
-                                // Проверяем что профиль существует и имеет данные
-                                if (profile && (profile.id || profile.n || profile.name)) {
-                                    // Применяем фильтр по возрасту если есть
-                                    if (ageRange) {
-                                        const age = parseInt(profile.a) || 0;
-                                        const minAge = ageRange.min || 0;
-                                        const maxAge = ageRange.max || 999;
-                                        
-                                        if (age >= minAge && age <= maxAge) {
-                                            filteredProfiles.push(profile);
-                                            validProfilesFound++;
-                                        }
-                                    } else {
-                                        filteredProfiles.push(profile);
-                                        validProfilesFound++;
-                                    }
-                                } else {
-                                    console.log(`⚠️ [DEMO INDEX WARNING] Профиль по индексу ${profileIndex} невалидный`);
-                                }
-                            } else {
-                                console.log(`⚠️ [DEMO INDEX ERROR] Индекс ${profileIndex} вне диапазона (0-${allProfiles.length - 1})`);
-                            }
-                        }
-                        
-                        console.log(`✅ [DEMO INDEX RESULT] Найдено через индексы: ${validProfilesFound} валидных профилей`);
-                        
-                        // Если нашли через индексы - сохраняем в кэш и возвращаем
-                        if (filteredProfiles.length > 0) {
-                            cacheManager.cacheGlobalFilter(filterKey, filteredProfiles, isDemo);
-                            console.log(`💾 [DEMO CACHE SAVED] Сохранено в кэш фильтров: ${filterKey}`);
-                        }
-                    } else {
-                        console.log(`⚠️ [DEMO INDEX EMPTY] Не найдено профилей через индексы, используем стандартную фильтрацию`);
-                    }
-                } else {
-                    console.log(`❌ [DEMO INDEX MISSING] Индексы не найдены в демо-кэше`);
-                }
-            }
-            
-            // 🔥 ЕСЛИ НЕ НАШЛИ ЧЕРЕЗ ИНДЕКСЫ ИЛИ НЕ ДЕМО-РЕЖИМ - ИСПОЛЬЗУЕМ СТАНДАРТНУЮ ФИЛЬТРАЦИЮ
-            if (!filteredProfiles || filteredProfiles.length === 0) {
-                console.log(`🔍 [STANDARD FILTER] Используем стандартную фильтрацию`);
-                filteredProfiles = await asyncFilterManager.filterProfilesAsync(allProfiles, {
-                    country: normalizedSearchCountry,
-                    city: normalizedSearchCity,
-                    ageRange: ageRange
-                }, isDemo);
-                
-                console.log(`✅ [STANDARD FILTER RESULT] Отфильтровано: ${filteredProfiles?.length || 0} профилей`);
-            }
-            
-            // 🔥 КРИТИЧЕСКАЯ ПРОВЕРКА: УБИРАЕМ НЕВАЛИДНЫЕ ПРОФИЛИ
-            if (filteredProfiles) {
-                const validProfiles = filteredProfiles.filter(profile => 
-                    profile && 
-                    (profile.id || profile._id) && 
-                    (profile.n || profile.name)
-                );
-                
-                if (validProfiles.length !== filteredProfiles.length) {
-                    console.log(`⚠️ [FILTER CLEANUP] Удалено ${filteredProfiles.length - validProfiles.length} некорректных профилей`);
-                    filteredProfiles = validProfiles;
-                }
-                
-                // Сохраняем в кэш фильтров (если еще не сохранили через демо-индексы)
-                if (!cacheManager.getGlobalFilter(filterKey, isDemo)) {
-                    cacheManager.cacheGlobalFilter(filterKey, filteredProfiles, isDemo);
-                }
-            }
-        } else {
-            console.log(`✅ [CACHE HIT] Используем кэш для фильтра ${filterKey}: ${filteredProfiles.length} профилей`);
-            
-            // Проверяем кэшированные профили
-            const validCachedProfiles = filteredProfiles.filter(profile => 
-                profile && 
-                (profile.id || profile._id) && 
-                (profile.n || profile.name)
-            );
-            
-            if (validCachedProfiles.length !== filteredProfiles.length) {
-                console.log(`⚠️ [CACHE CLEANUP] В кэше ${filteredProfiles.length - validCachedProfiles.length} некорректных профилей`);
-                filteredProfiles = validCachedProfiles;
-                cacheManager.cacheGlobalFilter(filterKey, filteredProfiles, isDemo);
-            }
-        }
-
-        if (!filteredProfiles || filteredProfiles.length === 0) {
-            console.log(`❌ [PAGE] Нет профилей после фильтрации`);
+            console.log(`❌ Нет профилей в кэше (демо: ${isDemo})`);
             return [];
         }
-
+        
+        console.log(`📊 В кэше: ${allProfiles.length} профилей (демо: ${isDemo})`);
+        
+        // 🔥 НОРМАЛИЗАЦИЯ ФИЛЬТРОВ
+        const normalizedCountry = searchCountry ? cacheManager.normalizeCountryName(searchCountry) : null;
+        const normalizedCity = searchCity ? cacheManager.normalizeCityName(searchCity) : null;
+        
+        // 🔥 КЛЮЧ ДЛЯ КЭША ФИЛЬТРОВ
+        const filterKey = `country:${normalizedCountry || 'all'}:age:${ageRange?.label || 'all'}:city:${normalizedCity || 'all'}:demo:${isDemo}`;
+        
+        // 🔥 ПРОВЕРЯЕМ КЭШ ФИЛЬТРОВ (TTL: 24 часа)
+        let filteredProfiles = cacheManager.getGlobalFilter(filterKey, isDemo);
+        
+        if (filteredProfiles) {
+            console.log(`✅ Используем кэш фильтра: ${filteredProfiles.length} профилей`);
+        } else {
+            console.log(`🔍 Кэш фильтра промах, фильтруем...`);
+            
+            // 🔥 ДЛЯ ДЕМО: ИСПОЛЬЗУЕМ ИНДЕКСЫ ДЛЯ БЫСТРОГО ПОИСКА
+            if (isDemo && (normalizedCountry || normalizedCity)) {
+                const demoIndex = globalDemoCache.get("demo:index:country_city");
+                
+                if (demoIndex && (normalizedCountry || normalizedCity)) {
+                    let profileIndexes = [];
+                    
+                    // 1. Поиск по стране+городу
+                    if (normalizedCountry && normalizedCity) {
+                        const key = `${normalizedCountry}:${normalizedCity}`;
+                        profileIndexes = demoIndex.get(key) || [];
+                        console.log(`🎯 Индекс страна+город: ${profileIndexes.length} профилей`);
+                    }
+                    // 2. Поиск только по стране
+                    else if (normalizedCountry && !normalizedCity) {
+                        const countryIndex = globalDemoCache.get("demo:index:country");
+                        profileIndexes = countryIndex?.get(normalizedCountry) || [];
+                        console.log(`🌍 Индекс по стране: ${profileIndexes.length} профилей`);
+                    }
+                    // 3. Поиск только по городу
+                    else if (!normalizedCountry && normalizedCity) {
+                        const cityIndex = globalDemoCache.get("demo:index:city");
+                        profileIndexes = cityIndex?.get(normalizedCity) || [];
+                        console.log(`🏙️ Индекс по городу: ${profileIndexes.length} профилей`);
+                    }
+                    
+                    // Получаем профили по индексам
+                    if (profileIndexes.length > 0) {
+                        filteredProfiles = [];
+                        for (const idx of profileIndexes) {
+                            if (idx >= 0 && idx < allProfiles.length) {
+                                filteredProfiles.push(allProfiles[idx]);
+                            }
+                        }
+                        console.log(`✅ Найдено через индексы: ${filteredProfiles.length} профилей`);
+                    }
+                }
+            }
+            
+            // 🔥 ЕСЛИ НЕ НАШЛИ ЧЕРЕЗ ИНДЕКСЫ - ФИЛЬТРУЕМ ВРУЧНУЮ
+            if (!filteredProfiles) {
+                filteredProfiles = [];
+                const minAge = ageRange?.min || 0;
+                const maxAge = ageRange?.max || 999;
+                
+                console.log(`🔍 Фильтрация ${allProfiles.length} профилей вручную...`);
+                
+                // 🔥 БЫСТРАЯ ФИЛЬТРАЦИЯ
+                for (let i = 0; i < allProfiles.length; i++) {
+                    const profile = allProfiles[i];
+                    
+                    // 1. Фильтр по стране
+                    if (normalizedCountry) {
+                        const profileCountry = cacheManager.normalizeCountryName(profile.c || profile.country || '');
+                        if (profileCountry !== normalizedCountry) continue;
+                    }
+                    
+                    // 2. Фильтр по городу
+                    if (normalizedCity) {
+                        const profileCity = cacheManager.normalizeCityName(profile.ct || profile.city || '');
+                        if (profileCity !== normalizedCity) continue;
+                    }
+                    
+                    // 3. Фильтр по возрасту
+                    if (ageRange) {
+                        const age = parseInt(profile.a || profile.age) || 0;
+                        if (age < minAge || age > maxAge) continue;
+                    }
+                    
+                    filteredProfiles.push(profile);
+                    
+                    // 🔥 В ДЕМО-РЕЖИМЕ: МАКСИМУМ 3 ПРОФИЛЯ НА ГОРОД
+                    if (isDemo && normalizedCity && filteredProfiles.length >= 3) {
+                        console.log(`🎭 Демо-лимит: найдено 3 профиля для города ${normalizedCity}`);
+                        break;
+                    }
+                }
+                
+                console.log(`✅ Отфильтровано: ${filteredProfiles.length} профилей`);
+            }
+            
+            // 🔥 СОХРАНЯЕМ РЕЗУЛЬТАТ В КЭШ ФИЛЬТРОВ
+            if (filteredProfiles.length > 0) {
+                cacheManager.cacheGlobalFilter(filterKey, filteredProfiles, isDemo);
+                console.log(`💾 Сохранено в кэш фильтров (24ч)`);
+            }
+        }
+        
+        // 🔥 ЕСЛИ НЕТ РЕЗУЛЬТАТОВ
+        if (!filteredProfiles || filteredProfiles.length === 0) {
+            console.log(`❌ Нет профилей после фильтрации`);
+            return [];
+        }
+        
+        // 🔥 ПАГИНАЦИЯ
         const startIndex = page * SCALING_CONFIG.PERFORMANCE.PROFILES_PER_PAGE;
         const endIndex = startIndex + SCALING_CONFIG.PERFORMANCE.PROFILES_PER_PAGE;
-        
         const result = filteredProfiles.slice(startIndex, endIndex);
         
-        // 🔥 ВАЖНО: ПРОВЕРЯЕМ КАЖДЫЙ ПРОФИЛЬ В РЕЗУЛЬТАТЕ
+        // 🔥 ОЧИСТКА ОТ НЕВАЛИДНЫХ ПРОФИЛЕЙ
         const validResult = result.filter(profile => 
-            profile && 
-            (profile.id || profile._id) && 
-            (profile.n || profile.name)
+            profile && (profile.id || profile._id) && (profile.n || profile.name)
         );
         
         if (validResult.length !== result.length) {
-            console.log(`⚠️ [RESULT CLEANUP] Удалено ${result.length - validResult.length} некорректных профилей из результата`);
+            console.log(`⚠️ Удалено ${result.length - validResult.length} невалидных профилей`);
         }
         
-        console.log(`📄 [PAGE] Возвращаем страницу ${page}: ${validResult.length} профилей (всего ${filteredProfiles.length})`);
+        console.log(`📄 Возвращаем страницу ${page}: ${validResult.length} профилей (всего ${filteredProfiles.length})`);
         
-        // 🔥 ДЛЯ ОТЛАДКИ: выводим первый профиль
-        if (validResult.length > 0) {
-            const firstProfile = validResult[0];
-            console.log(`📋 [FIRST PROFILE DEBUG] ID: ${firstProfile.id || firstProfile._id || 'нет'}, Имя: "${firstProfile.n || firstProfile.name || 'нет'}", Возраст: ${firstProfile.a || firstProfile.age || 0}, Город: "${firstProfile.ct || firstProfile.city || 'нет'}", isDemo: ${firstProfile.isDemo || isDemo}`);
-            console.log(`   📸 Фото: ${firstProfile.p || firstProfile.photoUrl ? 'есть' : 'нет'}, Фото галереи: ${firstProfile.phs?.length || firstProfile.photos?.length || 0}`);
+        // 🔥 ОТЛАДКА: ПЕРВЫЙ ПРОФИЛЬ
+        if (validResult.length > 0 && isDemo) {
+            const first = validResult[0];
+            console.log(`🔍 Первый демо-профиль: ${first.n}, ${first.a}, ${first.ct}, фото: ${first.p ? 'есть' : 'нет'}`);
+            
+            // ПРОВЕРКА: СКОЛЬКО ПРОФИЛЕЙ ДЛЯ ЭТОГО ГОРОДА
+            if (normalizedCity) {
+                const cityCount = filteredProfiles.filter(p => 
+                    cacheManager.normalizeCityName(p.ct || p.city) === normalizedCity
+                ).length;
+                console.log(`🏙️ Для города ${normalizedCity}: ${cityCount} профилей (должно быть 3)`);
+            }
         }
         
         return validResult;
-
+        
     } catch (error) {
-        console.error("❌ [PROFILES PAGE] Ошибка загрузки анкет:", error);
+        console.error(`💥 Ошибка в getProfilesPage:`, error);
         return [];
     }
 };
