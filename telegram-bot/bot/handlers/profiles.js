@@ -1,5 +1,5 @@
 // diskCache.js - Модуль для сохранения и загрузки кэша с диска
-const fs = require('fs');
+
 const path = require('path');
 const zlib = require('zlib');
 
