@@ -1053,7 +1053,7 @@ bot.action("show_stars_plans", async (ctx) => {
     console.log(`Пользователь ${ctx.from.id} выбрал "Тарифы Stars"`);
   } catch (error) {
     console.error("Ошибка в show_stars_plans:", error);
-    await ctx.reply("❌ Ошибка при загрузке тарифов Stars");
+    await ctx.reply("❌ Ошибка при загрузке тарифов Stars!");
   }
 });
 
