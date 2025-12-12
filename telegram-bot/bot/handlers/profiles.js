@@ -5,7 +5,8 @@ const NodeCache = require("node-cache");
 const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
-
+const DiskCache = require('./diskCache'); // ← ДОБАВЬТЕ ЭТУ СТРОЧКУ
+const diskCache = new DiskCache();        // ← ДОБАВЬТЕ ЭТУ СТРОЧКУ
 // ===== УДАЛЕНИЕ LOCK ФАЙЛА ПРИ ЗАПУСКЕ =====
 const LOCK_FILE = path.join(__dirname, 'bot.lock');
 try {
@@ -600,7 +601,31 @@ const globalFilterCache = new NodeCache({
     checkperiod: SCALING_CONFIG.CACHE.CHECKPERIOD,
     maxKeys: SCALING_CONFIG.CACHE.MAX_FILTER_KEYS
 });
-
+// 🔄 АВТОМАТИЧЕСКАЯ ЗАГРУЗКА КЭША С ДИСКА ПРИ СТАРТЕ
+console.log('🚀 Проверяем наличие кэша на диске...');
+setTimeout(async () => {
+    try {
+        const loaded = await diskCache.loadFromDisk(
+            globalProfilesCache,
+            globalDemoCache, 
+            globalFilterCache
+        );
+        
+        if (loaded) {
+            globalCacheInitialized = true;
+            console.log('✅ Бот запущен с восстановленным кэшем');
+            
+            // Проверяем что загрузилось
+            const demoProfiles = cacheManager.getGlobalProfiles(true);
+            const fullProfiles = cacheManager.getGlobalProfiles(false);
+            console.log(`📊 Загружено: ${demoProfiles?.length || 0} демо-профилей, ${fullProfiles?.length || 0} полных профилей`);
+        } else {
+            console.log('📭 Кэш на диске не найден или устарел, будет загружен при первом запросе');
+        }
+    } catch (error) {
+        console.error('❌ Ошибка загрузки кэша с диска:', error);
+    }
+}, 3000); // Даем боту 3 секунды на инициализацию
 // КЭШ ДЛЯ ПОДПИСОК (индивидуальный для каждого пользователя)
 const subscriptionCache = new NodeCache({
     stdTTL: SCALING_CONFIG.CACHE.SUBSCRIPTION_TTL,
@@ -1023,56 +1048,75 @@ async loadGlobalFullCache(db) {
 },
 // 2. ЗАГРУЗКА ГЛОБАЛЬНОГО ДЕМО-КЭША (ОПТИМИЗИРОВАННАЯ ВЕРСИЯ)
 async loadGlobalDemoCache(db) {
+    // 🔒 БЛОКИРОВКА: предотвращаем параллельную загрузку
     if (globalDemoCacheLoading) {
-        console.log('⏳ [GLOBAL DEMO CACHE] Уже загружается...');
-        return false;
+        console.log('⏳ [GLOBAL DEMO CACHE] Уже загружается... ожидаем');
+        // Ждем до 30 секунд
+        const startWait = Date.now();
+        while (globalDemoCacheLoading && Date.now() - startWait < 30000) {
+            await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+        if (globalDemoCacheLoading) {
+            console.log('❌ [GLOBAL DEMO CACHE] Таймаут ожидания загрузки');
+            return false;
+        }
     }
     
     globalDemoCacheLoading = true;
-    console.log('🚀 [GLOBAL DEMO CACHE] Начинаем загрузку глобального демо-кэша...');
+    console.log('🚀 [GLOBAL DEMO CACHE] НАЧИНАЕМ ЗАГРУЗКУ ДЕМО-КЭША');
+    
+    const globalStartTime = Date.now();
+    let allProfiles = [];
+    let totalLoaded = 0;
     
     try {
-        // 🔥 ЗАГРУЖАЕМ ПРОФИЛИ ИЗ ПОЛНОГО КЭША, ЕСЛИ ОН УЖЕ ЗАГРУЖЕН
-        // (чтобы не делать лишних чтений из Firestore)
+        // ==================== ЭТАП 1: ПРОВЕРЯЕМ, МОЖЕМ ЛИ ИСПОЛЬЗОВАТЬ ПОЛНЫЙ КЭШ ====================
+        console.log('🔍 Проверяем наличие полного кэша...');
         const fullProfiles = this.getGlobalProfiles(false);
         
         if (fullProfiles && fullProfiles.length > 0) {
-            console.log(`✅ [DEMO CACHE] Используем уже загруженные профили из полного кэша: ${fullProfiles.length}`);
+            console.log(`✅ Используем уже загруженные профили из полного кэша: ${fullProfiles.length}`);
             
-            // ПРОСТО СОЗДАЕМ ДЕМО-ВЕРСИИ ИЗ СУЩЕСТВУЮЩИХ ДАННЫХ
-            return this.createDemoCacheFromFullProfiles(fullProfiles);
+            // СОЗДАЕМ ДЕМО-КЭШ ИЗ ПОЛНОГО
+            const demoCreated = await this.createDemoCacheFromFullProfiles(fullProfiles);
+            
+            if (demoCreated) {
+                // 💾 СОХРАНЯЕМ ДЕМО-КЭШ НА ДИСК
+                console.log('💾 Демо-кэш создан, сохраняем на диск...');
+                await diskCache.saveAllCaches(
+                    globalProfilesCache,
+                    globalDemoCache,
+                    globalFilterCache
+                ).catch(e => console.error('Ошибка сохранения:', e.message));
+                
+                const totalTime = Date.now() - globalStartTime;
+                console.log(`✅ [GLOBAL DEMO CACHE] Демо-кэш создан из полного за ${totalTime}мс`);
+                
+                globalDemoCacheLoading = false;
+                return true;
+            }
         }
         
-        // ЕСЛИ ПОЛНЫЙ КЭШ НЕ ЗАГРУЖЕН - ЗАГРУЖАЕМ ИЗ FIRESTORE
-        console.log(`📥 [DEMO CACHE] Полный кэш не загружен, загружаем из Firestore...`);
+        // ==================== ЭТАП 2: ЗАГРУЗКА ИЗ FIRESTORE ====================
+        console.log(`📥 Загружаем демо-профили из Firestore...`);
         
-        const startTime = Date.now();
-        let allProfiles = [];
         let lastDoc = null;
         let batchCount = 0;
         const BATCH_SIZE = 5000;
         const MAX_PROFILES = 70000;
+        const firestoreStartTime = Date.now();
         
-        while (allProfiles.length < MAX_PROFILES) {
+        while (totalLoaded < MAX_PROFILES) {
             batchCount++;
-            console.log(`📦 [DEMO BATCH ${batchCount}] Загрузка ${BATCH_SIZE} анкет...`);
+            console.log(`📦 [ПАЧКА ${batchCount}] Загрузка ${BATCH_SIZE} анкет...`);
             
             let query = db.collection("profiles")
                 .orderBy("createdAt", "desc")
                 .limit(BATCH_SIZE)
                 .select(
-                    "id", 
-                    "name", 
-                    "age", 
-                    "country", 
-                    "city", 
-                    "about", 
-                    "photoUrl", 
-                    "telegram", 
-                    "phone", 
-                    "whatsapp", 
-                    "photos", 
-                    "createdAt"
+                    "id", "name", "age", "country", "city", 
+                    "about", "photoUrl", "telegram", "phone", 
+                    "whatsapp", "photos", "createdAt"
                 );
             
             if (lastDoc) {
@@ -1085,7 +1129,7 @@ async loadGlobalDemoCache(db) {
             readingStats.addRead('profiles', 'system', docsCount, 'firestore');
             
             if (docsCount === 0) {
-                console.log(`✅ [DEMO LOAD COMPLETE] Больше анкет нет. Всего загружено: ${allProfiles.length}`);
+                console.log(`✅ Загрузка завершена. Всего: ${totalLoaded}`);
                 break;
             }
             
@@ -1095,27 +1139,98 @@ async loadGlobalDemoCache(db) {
             }));
             
             allProfiles.push(...batchProfiles);
+            totalLoaded += docsCount;
             lastDoc = snapshot.docs[docsCount - 1];
             
-            console.log(`📊 [DEMO BATCH ${batchCount}] Загружено: ${docsCount} анкет | Всего: ${allProfiles.length}`);
+            console.log(`📊 [ПАЧКА ${batchCount}] Загружено: ${docsCount} | Всего: ${totalLoaded}`);
             
             if (docsCount === BATCH_SIZE) {
                 await new Promise(resolve => setTimeout(resolve, 100));
             }
+            
+            if (totalLoaded % 20000 === 0) {
+                const elapsed = (Date.now() - firestoreStartTime) / 1000;
+                const speed = (totalLoaded / elapsed).toFixed(1);
+                console.log(`📈 [ПРОГРЕСС] ${totalLoaded} анкет за ${elapsed.toFixed(1)}с (${speed}/сек)`);
+            }
         }
         
-        const loadTime = ((Date.now() - startTime) / 1000).toFixed(2);
-        console.log(`✅ [DEMO LOADED] Загружено ${allProfiles.length} профилей за ${loadTime} секунд`);
+        const firestoreTime = Date.now() - firestoreStartTime;
+        console.log(`✅ Загружено ${totalLoaded} анкет за ${(firestoreTime/1000).toFixed(1)}с`);
         
-        // 🔥 СОЗДАЕМ ДЕМО-КЭШ ИЗ ЗАГРУЖЕННЫХ ПРОФИЛЕЙ
-        return this.createDemoCacheFromFullProfiles(allProfiles);
+        // ==================== ЭТАП 3: СОЗДАНИЕ ДЕМО-КЭША ====================
+        console.log('🔧 Создаем демо-кэш из загруженных профилей...');
+        const demoCreated = await this.createDemoCacheFromFullProfiles(allProfiles);
+        
+        if (!demoCreated) {
+            console.log('❌ Не удалось создать демо-кэш');
+            globalDemoCacheLoading = false;
+            return false;
+        }
+        
+        // ==================== ЭТАП 4: СОХРАНЕНИЕ НА ДИСК ====================
+        console.log('💾 Сохраняем демо-кэш на диск...');
+        const saveSuccess = await diskCache.saveAllCaches(
+            globalProfilesCache,
+            globalDemoCache,
+            globalFilterCache
+        );
+        
+        if (!saveSuccess) {
+            console.log('⚠️ Не удалось сохранить кэш на диск, но в памяти он есть');
+        }
+        
+        // ==================== ЭТАП 5: ОЧИСТКА ПАМЯТИ ====================
+        allProfiles.length = 0;
+        allProfiles = null;
+        
+        if (global.gc) {
+            global.gc();
+            console.log('🧹 Сборка мусора выполнена');
+        }
+        
+        // ==================== ЭТАП 6: ФИНАЛИЗАЦИЯ ====================
+        globalCacheInitialized = true;
+        
+        // Сохраняем время последней загрузки
+        globalProfilesCache.set("last_load_time", Date.now(), 7 * 24 * 60 * 60);
+        globalProfilesCache.set("profiles_count", totalLoaded, 7 * 24 * 60 * 60);
+        
+        const totalTime = Date.now() - globalStartTime;
+        console.log(`✅ [GLOBAL DEMO CACHE] Демо-кэш загружен и сохранен за ${(totalTime/1000).toFixed(1)}с`);
+        
+        return true;
         
     } catch (error) {
-        console.error(`❌ [GLOBAL DEMO CACHE] Ошибка:`, error.message);
+        console.error('❌ ========== КРИТИЧЕСКАЯ ОШИБКА ЗАГРУЗКИ ДЕМО-КЭША ==========');
+        console.error(`❌ ТИП ОШИБКИ: ${error.name}`);
+        console.error(`❌ СООБЩЕНИЕ: ${error.message}`);
         console.error(error.stack);
+        console.error('='.repeat(60));
+        
+        // Пытаемся восстановить работоспособность
+        try {
+            console.log('🔄 Попытка восстановления...');
+            const demoProfiles = this.getGlobalProfiles(true);
+            if (demoProfiles && demoProfiles.length > 0) {
+                console.log(`✅ Демо-кэш доступен в памяти: ${demoProfiles.length} профилей`);
+            }
+        } catch (recoveryError) {
+            console.error('❌ Ошибка при восстановлении:', recoveryError.message);
+        }
+        
         return false;
+        
     } finally {
         globalDemoCacheLoading = false;
+        console.log(`🔓 [GLOBAL DEMO CACHE] Блокировка загрузки снята`);
+        
+        // Отчет о памяти
+        if (process.memoryUsage) {
+            const mem = process.memoryUsage();
+            const usedMB = (mem.heapUsed / 1024 / 1024).toFixed(2);
+            console.log(`💾 Использование памяти: ${usedMB}MB`);
+        }
     }
 },
     
@@ -1614,43 +1729,194 @@ getGlobalProfiles(isDemo = false) {
     },
     
     // 15. ЛЕНИВАЯ ЗАГРУЗКА ПОЛНОГО КЭША (когда первый пользователь с подпиской запросит)
-    async lazyLoadGlobalFullCache(db, userId = 'system') {
-        // ЕСЛИ УЖЕ ЗАГРУЖАЕТСЯ - ЖДЕМ
+   async lazyLoadGlobalFullCache(db, userId = 'system') {
+    // 🔒 СИЛЬНАЯ БЛОКИРОВКА: предотвращаем множественную загрузку
+    if (globalFullCacheLoading) {
+        console.log('⏳ [LAZY GLOBAL CACHE] Полный кэш уже загружается...');
+        
+        // Ждем завершения текущей загрузки (до 2 минут)
+        const startWait = Date.now();
+        while (globalFullCacheLoading && Date.now() - startWait < 120000) {
+            console.log(`⏳ Ожидаем завершения загрузки... (${Math.round((Date.now() - startWait)/1000)}с)`);
+            await new Promise(resolve => setTimeout(resolve, 5000));
+        }
+        
         if (globalFullCacheLoading) {
-            console.log('⏳ [LAZY GLOBAL CACHE] Полный кэш уже загружается...');
+            console.log('❌ [LAZY GLOBAL CACHE] Таймаут ожидания загрузки');
             return false;
         }
         
-        // ЕСЛИ УЖЕ ЗАГРУЖЕН
+        // Проверяем, загрузился ли кэш пока мы ждали
         if (this.isGlobalFullCacheLoaded()) {
-            console.log('✅ [LAZY GLOBAL CACHE] Полный кэш уже загружен');
+            console.log('✅ [LAZY GLOBAL CACHE] Кэш загрузился пока мы ждали');
             return true;
         }
-        
-        console.log(`🚀 [LAZY GLOBAL CACHE] Запускаем загрузку полного кэша (инициатор: ${userId})...`);
-        
-        try {
-            // ПОКАЗЫВАЕМ СООБЩЕНИЕ О ЗАГРУЗКЕ (если есть контекст)
-            if (userId !== 'system') {
-                // Здесь можно отправить сообщение пользователю, что загружается кэш
-            }
-            
-            // ЗАГРУЖАЕМ ПОЛНЫЙ КЭШ
-            const success = await this.loadGlobalFullCache(db);
-            
-            if (success) {
-                console.log('✅ [LAZY GLOBAL CACHE] Полный кэш успешно загружен');
-                return true;
-            } else {
-                console.log('❌ [LAZY GLOBAL CACHE] Не удалось загрузить полный кэш');
-                return false;
-            }
-            
-        } catch (error) {
-            console.error('❌ [LAZY GLOBAL CACHE] Ошибка загрузки:', error);
-            return false;
-        }
     }
+    
+    // ЕСЛИ УЖЕ ЗАГРУЖЕН
+    if (this.isGlobalFullCacheLoaded()) {
+        console.log('✅ [LAZY GLOBAL CACHE] Полный кэш уже загружен');
+        return true;
+    }
+    
+    console.log(`🚀 [LAZY GLOBAL CACHE] Запускаем загрузку полного кэша (инициатор: ${userId})...`);
+    globalFullCacheLoading = true;
+    
+    try {
+        // 🔔 УВЕДОМЛЕНИЕ О ЗАГРУЗКЕ (если есть контекст)
+        if (userId !== 'system') {
+            // Можно отправить сообщение пользователю, но здесь просто логируем
+            console.log(`📢 Пользователь ${userId} инициировал загрузку полного кэша`);
+        }
+        
+        // ==================== ЭТАП 1: ЗАГРУЗКА ИЗ FIRESTORE ====================
+        console.log('📥 [FULL CACHE] Загружаем полный кэш из Firestore...');
+        
+        const startTime = Date.now();
+        let allProfiles = [];
+        let lastDoc = null;
+        let batchCount = 0;
+        const BATCH_SIZE = 5000;
+        const MAX_PROFILES = 70000;
+        
+        while (allProfiles.length < MAX_PROFILES) {
+            batchCount++;
+            console.log(`📦 [FULL BATCH ${batchCount}] Загрузка ${BATCH_SIZE} анкет...`);
+            
+            let query = db.collection("profiles")
+                .orderBy("createdAt", "desc")
+                .limit(BATCH_SIZE)
+                .select(
+                    "id", "name", "age", "country", "city", 
+                    "about", "photoUrl", "telegram", "phone", 
+                    "whatsapp", "photos", "createdAt"
+                );
+            
+            if (lastDoc) {
+                query = query.startAfter(lastDoc);
+            }
+            
+            const snapshot = await query.get();
+            const docsCount = snapshot.docs.length;
+            
+            readingStats.addRead('profiles', 'system', docsCount, 'firestore');
+            
+            if (docsCount === 0) {
+                console.log(`✅ [FULL LOAD COMPLETE] Больше анкет нет. Всего: ${allProfiles.length}`);
+                break;
+            }
+            
+            const batchProfiles = snapshot.docs.map(doc => ({
+                id: doc.id,
+                ...doc.data()
+            }));
+            
+            allProfiles.push(...batchProfiles);
+            lastDoc = snapshot.docs[docsCount - 1];
+            
+            console.log(`📊 [FULL BATCH ${batchCount}] Загружено: ${docsCount} | Всего: ${allProfiles.length}`);
+            
+            if (docsCount === BATCH_SIZE) {
+                await new Promise(resolve => setTimeout(resolve, 100));
+            }
+            
+            if (allProfiles.length % 20000 === 0) {
+                const elapsed = (Date.now() - startTime) / 1000;
+                const speed = (allProfiles.length / elapsed).toFixed(1);
+                console.log(`📈 [FULL PROGRESS] ${allProfiles.length} анкет за ${elapsed.toFixed(1)}с (${speed}/сек)`);
+            }
+        }
+        
+        const loadTime = ((Date.now() - startTime) / 1000).toFixed(2);
+        console.log(`✅ [FULL CACHE] Загружено ${allProfiles.length} профилей за ${loadTime}с`);
+        
+        // ==================== ЭТАП 2: ПОДГОТОВКА И КЭШИРОВАНИЕ ====================
+        console.log('🔧 [FULL CACHE] Подготавливаем и кэшируем данные...');
+        
+        // Нормализуем профили
+        const normalizedProfiles = allProfiles.map(profile => ({
+            id: profile.id,
+            n: profile.name || '',
+            a: parseInt(profile.age) || 0,
+            c: profile.country ? this.normalizeCountryName(profile.country) : '',
+            ct: profile.city ? this.normalizeCityName(profile.city) : '',
+            ab: profile.about ? profile.about.substring(0, 500) : "",
+            p: profile.photoUrl || '',
+            phs: profile.photos || [],
+            tg: profile.telegram || '',
+            tel: profile.phone || '',
+            wa: profile.whatsapp || '',
+            ca: profile.createdAt || new Date(),
+            isDemo: false
+        }));
+        
+        // Сжимаем и сохраняем в глобальный кэш
+        const jsonString = JSON.stringify(normalizedProfiles);
+        const compressed = zlib.gzipSync(jsonString);
+        globalProfilesCache.set("profiles:all", compressed);
+        
+        const originalSizeMB = (jsonString.length / 1024 / 1024).toFixed(2);
+        const compressedSizeMB = (compressed.length / 1024 / 1024).toFixed(2);
+        const compressionRatio = Math.round((1 - compressed.length/jsonString.length) * 100);
+        
+        console.log(`📦 Сжатие: ${originalSizeMB}MB → ${compressedSizeMB}MB (${compressionRatio}%)`);
+        
+        // Создаем индексы
+        console.log('📇 Создаем индексы для быстрого поиска...');
+        const indexResult = asyncFilterManager.createIndexes(normalizedProfiles);
+        console.log(`✅ Индексы: ${indexResult.countryIndexSize} стран, ${indexResult.countryCityIndexSize} пар`);
+        
+        // Сохраняем страны
+        const countriesSet = new Set();
+        normalizedProfiles.forEach(p => {
+            if (p.c) countriesSet.add(p.c);
+        });
+        const sortedCountries = Array.from(countriesSet).sort();
+        globalProfilesCache.set("profiles:countries", sortedCountries);
+        
+        console.log(`🌍 Сохранено ${countriesSet.size} стран`);
+        
+        // ==================== ЭТАП 3: СОХРАНЕНИЕ НА ДИСК ====================
+        console.log('💾 [FULL CACHE] Сохраняем полный кэш на диск...');
+        const saveSuccess = await diskCache.saveAllCaches(
+            globalProfilesCache,
+            globalDemoCache,
+            globalFilterCache
+        );
+        
+        if (saveSuccess) {
+            console.log('✅ [FULL CACHE] Кэш успешно сохранен на диск');
+        } else {
+            console.log('⚠️ [FULL CACHE] Не удалось сохранить кэш на диск');
+        }
+        
+        // ==================== ЭТАП 4: ОЧИСТКА ПАМЯТИ ====================
+        allProfiles.length = 0;
+        allProfiles = null;
+        normalizedProfiles.length = 0;
+        
+        if (global.gc) {
+            global.gc();
+            console.log('🧹 Сборка мусора выполнена');
+        }
+        
+        // ==================== ЭТАП 5: ФИНАЛИЗАЦИЯ ====================
+        const totalTime = Date.now() - startTime;
+        console.log(`🎉 [LAZY GLOBAL CACHE] ПОЛНЫЙ КЭШ УСПЕШНО ЗАГРУЖЕН И СОХРАНЕН!`);
+        console.log(`⏱️  Общее время: ${(totalTime/1000).toFixed(1)} секунд`);
+        
+        return true;
+        
+    } catch (error) {
+        console.error('❌ [LAZY GLOBAL CACHE] Ошибка загрузки:', error);
+        console.error(error.stack);
+        return false;
+        
+    } finally {
+        globalFullCacheLoading = false;
+        console.log(`🔓 [LAZY GLOBAL CACHE] Блокировка снята`);
+    }
+}
 };
 
 // ===================== ОПТИМИЗИРОВАННАЯ СИСТЕМА ФИЛЬТРАЦИИ =====================
@@ -5982,4 +6248,64 @@ setTimeout(async () => {
             console.log(`✅ [AFTER PAYMENT] Глобальный полный кэш уже загружен`);
         }
     };
+    setInterval(() => {
+        if (globalCacheInitialized) {
+            console.log('💾 Плановое сохранение кэша на диск...');
+            diskCache.saveAllCaches(
+                globalProfilesCache,
+                globalDemoCache,
+                globalFilterCache
+            ).catch(e => console.error('Ошибка планового сохранения:', e.message));
+        }
+    }, 30 * 60 * 1000); // 30 минут
+
+    // 💾 СОХРАНЕНИЕ ПРИ ВЫКЛЮЧЕНИИ БОТА
+    const saveCacheOnExit = () => {
+        console.log('🔻 Сохраняем кэш перед выходом...');
+        diskCache.saveAllCaches(
+            globalProfilesCache,
+            globalDemoCache,
+            globalFilterCache
+        ).finally(() => {
+            console.log('✅ Кэш сохранен, завершаем работу');
+            if (fs.existsSync(LOCK_FILE)) fs.unlinkSync(LOCK_FILE);
+            process.exit(0);
+        });
+    };
+
+    process.on('SIGINT', saveCacheOnExit);
+    process.on('SIGTERM', saveCacheOnExit);
+
+    // 📊 КОМАНДА ДЛЯ ПРОВЕРКИ КЭША
+    bot.command('cache_info', async (ctx) => {
+        const cacheInfo = diskCache.getCacheInfo();
+        const demoCount = cacheManager.getGlobalProfiles(true)?.length || 0;
+        const fullCount = cacheManager.getGlobalProfiles(false)?.length || 0;
+        
+        let message = `💾 <b>Информация о дисковом кэше</b>\n\n`;
+        
+        if (cacheInfo.exists) {
+            message += `📂 Файл кэша: ✅ Существует\n`;
+            message += `📦 Размер: ${cacheInfo.size}\n`;
+            message += `🕐 Возраст: ${cacheInfo.age}\n`;
+            message += `📅 Создан: ${cacheInfo.date}\n\n`;
+            message += `🗂️ Ключей в кэше:\n`;
+            message += `• Профилей: ${cacheInfo.keys.profiles}\n`;
+            message += `• Демо-данных: ${cacheInfo.keys.demo}\n`;
+            message += `• Фильтров: ${cacheInfo.keys.filters}\n\n`;
+        } else {
+            message += `📂 Файл кэша: ❌ Отсутствует\n\n`;
+        }
+        
+        message += `📊 <b>В оперативной памяти:</b>\n`;
+        message += `• Демо-профилей: ${demoCount}\n`;
+        message += `• Полных профилей: ${fullCount}\n`;
+        message += `• Стран в демо: ${cacheManager.getGlobalCountries(true)?.length || 0}\n`;
+        message += `• Фильтров в кэше: ${globalFilterCache.keys().length}\n\n`;
+        message += `<code>Кэш сохраняется каждые 30 минут</code>`;
+        
+        await ctx.reply(message, { parse_mode: 'HTML' });
+    });
+
+    console.log(`✅ Модуль профилей с ДИСКОВЫМ КЭШЕМ инициализирован`);
 };
