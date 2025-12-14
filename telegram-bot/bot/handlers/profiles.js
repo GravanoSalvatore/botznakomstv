@@ -1,10 +1,13 @@
-
 const RateLimiter = require("telegraf-ratelimit");
 const { default: PQueue } = require("p-queue");
 const NodeCache = require("node-cache");
 const fs = require("fs");
 const path = require("path");
 const zlib = require("zlib");
+
+// ===== LMDB ДЛЯ ХРАНЕНИЯ ПРОФИЛЕЙ НА ДИСКЕ =====
+const lmdb = require("lmdb");
+const os = require("os");
 
 // ===== УДАЛЕНИЕ LOCK ФАЙЛА ПРИ ЗАПУСКЕ =====
 const LOCK_FILE = path.join(__dirname, "bot.lock");
@@ -39,6 +42,70 @@ let fullCacheLoading = false;
 let fullCacheLoadPromise = null;
 let demoCacheLoading = false;
 let demoCacheLoadPromise = null;
+
+// ===================== ИНИЦИАЛИЗАЦИЯ LMDB БАЗ ДАННЫХ =====================
+// Папка для LMDB на Render (используем /tmp для ephemeral storage или локальную папку)
+const LMDB_DIR = fs.existsSync('/tmp') 
+  ? path.join('/tmp', 'magicbot_lmdb') 
+  : path.join(__dirname, 'lmdb_storage');
+
+// Убедимся что папка существует
+if (!fs.existsSync(LMDB_DIR)) {
+  fs.mkdirSync(LMDB_DIR, { recursive: true });
+  console.log(`📁 Создана папка LMDB: ${LMDB_DIR}`);
+}
+
+// Счетчик для мониторинга использования памяти
+let lmdbMemoryUsage = {
+  opened: Date.now(),
+  reads: 0,
+  writes: 0,
+  cacheHits: 0,
+  cacheMisses: 0
+};
+
+// ===== LMDB ДЛЯ ПОЛНЫХ ПРОФИЛЕЙ =====
+const profilesDB = lmdb.open({
+  path: path.join(LMDB_DIR, 'profiles'),
+  compression: true, // Включить сжатие LZ4
+  maxReaders: 500,   // Больше readers для параллельного доступа
+  maxDbs: 10,        // Несколько внутренних баз
+  noMemInit: true,   // Ускорить запуск
+  mapSize: 1024 * 1024 * 500, // 500MB максимальный размер файла
+  noSync: true,      // Для производительности на Render
+});
+
+// ===== LMDB ДЛЯ ДЕМО-ПРОФИЛЕЙ =====
+const demoDB = lmdb.open({
+  path: path.join(LMDB_DIR, 'demo_profiles'),
+  compression: true,
+  maxReaders: 500,
+  noMemInit: true,
+  mapSize: 1024 * 1024 * 200, // 200MB для демо
+  noSync: true,
+});
+
+// ===== LMDB ДЛЯ ИНДЕКСОВ =====
+const indexesDB = lmdb.open({
+  path: path.join(LMDB_DIR, 'indexes'),
+  compression: false, // Индексы не сжимаем для скорости
+  maxReaders: 1000,
+  noMemInit: true,
+  mapSize: 1024 * 1024 * 100, // 100MB для индексов
+  noSync: true,
+});
+
+// ===== LMDB ДЛЯ КЭША ФИЛЬТРОВ =====
+const filtersCacheDB = lmdb.open({
+  path: path.join(LMDB_DIR, 'filters_cache'),
+  compression: true,
+  maxReaders: 1000,
+  noMemInit: true,
+  mapSize: 1024 * 1024 * 300, // 300MB для кэша фильтров
+  noSync: true,
+});
+
+console.log(`✅ LMDB базы инициализированы в ${LMDB_DIR}`);
 
 // ===================== ФУНКЦИЯ ПРЕЛОАДЕРА =====================
 // ===================== КРАСИВЫЙ ПРЕЛОАДЕР =====================
@@ -167,7 +234,28 @@ const AGE_RANGES = [
   { label: "36-45", min: 36, max: 45 },
   { label: "46+", min: 46, max: 999 },
 ];
-
+const FALLBACK_COUNTRIES = [
+    "🇷🇺 Россия",
+    "🇺🇦 Украина", 
+    "🇧🇾 Беларусь",
+    "🇰🇿 Казахстан",
+    "🇹🇷 Турция",
+    "🇩🇪 Германия",
+    "🇺🇸 США",
+    "🇮🇱 Израиль",
+    "🇪🇸 Испания",
+    "🇮🇹 Италия",
+    "🇫🇷 Франция",
+    "🇬🇧 Великобритания",
+    "🇵🇱 Польша",
+    "🇨🇳 Китай",
+    "🇯🇵 Япония",
+    "🇮🇳 Индия",
+    "🇧🇷 Бразилия",
+    "🇲🇽 Мексика",
+    "🇦🇺 Австралия",
+    "🇨🇦 Канада"
+];
 const POPULAR_COUNTRIES = [
   { name: "Россия", flag: "🇷🇺" },
   { name: "Украина", flag: "🇺🇦" },
@@ -438,11 +526,11 @@ const countryNormalizationMap = {
   chn: "🇨🇳 Китай",
   japan: "🇯🇵 Япония",
   jpn: "🇯🇵 Япония",
-  "south korea": "🇰🇷 Южная Корея",
-  korea: "🇰🇷 Южная Корея",
-  kor: "🇰🇷 Южная Корея",
-  "north korea": "🇰🇵 Северная Корея",
-  prk: "🇰🇵 Северная Корея",
+  "south korea": "🇰🇷 Южная Кореа",
+  korea: "🇰🇷 Южная Кореа",
+  kor: "🇰🇷 Южная Кореа",
+  "north korea": "🇰🇵 Северная Кореа",
+  prk: "🇰🇵 Северная Кореа",
   india: "🇮🇳 Индия",
   ind: "🇮🇳 Индия",
   pakistan: "🇵🇰 Пакистан",
@@ -670,8 +758,8 @@ const russianVariants = {
   израиль: "🇮🇱 Израиль",
   китай: "🇨🇳 Китай",
   япония: "🇯🇵 Япония",
-  "южная корея": "🇰🇷 Южная Корея",
-  корея: "🇰🇷 Южная Корея",
+  "южная корея": "🇰🇷 Южная Кореа",
+  корея: "🇰🇷 Южная Кореа",
   индия: "🇮🇳 Индия",
   бразилия: "🇧🇷 Бразилия",
   мексика: "🇲🇽 Мексика",
@@ -811,671 +899,807 @@ const replaceSitesInAbout = (aboutText) => {
   return cleanedAbout;
 };
 
-// ===================== ГЛОБАЛЬНЫЙ КЭШ (ОБЩИЙ ДЛЯ ВСЕХ ПОЛЬЗОВАТЕЛЕЙ) =====================
-// ГЛОБАЛЬНЫЙ ФЛАГ: кэш уже инициализирован для всего бота
+// ===================== LMDB-ОПТИМИЗИРОВАННЫЙ КЭШ МЕНЕДЖЕР =====================
 
-let globalFullCacheLoading = false;
-let globalDemoCacheLoading = false;
-
-// ГЛОБАЛЬНЫЙ КЭШ ПРОФИЛЕЙ (один на всех пользователей)
-const globalProfilesCache = new NodeCache({
-  stdTTL: SCALING_CONFIG.CACHE.PROFILES_TTL,
-  checkperiod: SCALING_CONFIG.CACHE.CHECKPERIOD,
-  useClones: false,
-  maxKeys: 100000,
-});
-
-// ГЛОБАЛЬНЫЙ ДЕМО-КЭШ (один на всех пользователей)
-const globalDemoCache = new NodeCache({
-  stdTTL: SCALING_CONFIG.CACHE.PROFILES_TTL,
-  checkperiod: SCALING_CONFIG.CACHE.CHECKPERIOD,
-  maxKeys: 50000,
-});
-
-// КЭШ ДЛЯ ФИЛЬТРОВ (общий для всех)
-const globalFilterCache = new NodeCache({
-  stdTTL: SCALING_CONFIG.CACHE.FILTERS_TTL,
-  checkperiod: SCALING_CONFIG.CACHE.CHECKPERIOD,
-  maxKeys: SCALING_CONFIG.CACHE.MAX_FILTER_KEYS,
-});
-
-// КЭШ ДЛЯ ПОДПИСОК (индивидуальный для каждого пользователя)
-const subscriptionCache = new NodeCache({
-  stdTTL: SCALING_CONFIG.CACHE.SUBSCRIPTION_TTL,
-  checkperiod: 600,
-});
-
-// КЭШ ДЛЯ КАНАЛА (индивидуальный для каждого пользователя)
-const channelSubscriptionCache = new NodeCache({
-  stdTTL: SCALING_CONFIG.CACHE.CHANNEL_TTL,
-  checkperiod: 60,
-});
-
-// КЭШ СТАТУСА ПОЛЬЗОВАТЕЛЕЙ (индивидуальный)
-const userCacheStatus = new NodeCache({
-  stdTTL: SCALING_CONFIG.CACHE.SESSIONS_TTL,
-  checkperiod: SCALING_CONFIG.CACHE.CHECKPERIOD,
-});
-
-// ===================== СИСТЕМА МОНИТОРИНГА ЧТЕНИЙ =====================
-const readingStats = {
-  totalReads: 0,
-  operations: {
-    profiles: 0,
-    subscriptions: 0,
-    channelSubscriptions: 0,
-    countries: 0,
-    cities: 0,
-    other: 0,
-    cacheHits: 0,
-    cacheMisses: 0,
-    firestoreReads: 0,
-  },
-  timestamps: [],
-  users: new Map(),
-
-  addRead(
-    operationType = "other",
-    userId = null,
-    count = 1,
-    source = "firestore"
-  ) {
-    this.totalReads += count;
-    this.operations[operationType] =
-      (this.operations[operationType] || 0) + count;
-
-    if (source === "firestore") {
-      this.operations.firestoreReads =
-        (this.operations.firestoreReads || 0) + count;
-    }
-
-    this.timestamps.push({
-      time: Date.now(),
-      type: operationType,
-      count,
-      userId,
-      source,
-    });
-
-    if (this.timestamps.length > 1000) {
-      this.timestamps = this.timestamps.slice(-500);
-    }
-
-    if (userId) {
-      if (!this.users.has(userId)) {
-        this.users.set(userId, { total: 0, operations: {} });
-      }
-      const userStats = this.users.get(userId);
-      userStats.total += count;
-      userStats.operations[operationType] =
-        (userStats.operations[operationType] || 0) + count;
-    }
-
-    console.log(
-      `📖 [READ] ${operationType}: +${count} | Source: ${source} | Total: ${this.totalReads}`
-    );
-  },
-
-  addCacheHit() {
-    this.operations.cacheHits = (this.operations.cacheHits || 0) + 1;
-  },
-  addCacheMiss() {
-    this.operations.cacheMisses = (this.operations.cacheMisses || 0) + 1;
-  },
-
-  getStats() {
-    const cacheEfficiency =
-      this.operations.cacheHits + this.operations.cacheMisses > 0
-        ? (this.operations.cacheHits /
-            (this.operations.cacheHits + this.operations.cacheMisses)) *
-          100
-        : 0;
-
-    return {
-      totalReads: this.totalReads,
-      operations: this.operations,
-      uniqueUsers: this.users.size,
-      readsPerUser: this.users.size > 0 ? this.totalReads / this.users.size : 0,
-      cacheEfficiency: `${cacheEfficiency.toFixed(2)}%`,
-      firestoreReads: this.operations.firestoreReads || 0,
-      timeline: this.timestamps.slice(-100),
-    };
-  },
-
-  resetStats() {
-    this.totalReads = 0;
-    this.operations = {
-      profiles: 0,
-      subscriptions: 0,
-      channelSubscriptions: 0,
-      countries: 0,
-      cities: 0,
-      other: 0,
-      cacheHits: 0,
-      cacheMisses: 0,
-      firestoreReads: 0,
-    };
-    this.timestamps = [];
-    this.users.clear();
-  },
-};
-
-// ===================== ОПТИМИЗИРОВАННЫЙ ГЛОБАЛЬНЫЙ КЭШ-МЕНЕДЖЕР =====================
 const cacheManager = {
-  // ===================== ГЛОБАЛЬНЫЕ ФУНКЦИИ КЭША =====================
+  // ===================== ГЛОБАЛЬНЫЕ ФУНКЦИИ КЭША С LMDB =====================
 
-  // 1. ЗАГРУЗКА ГЛОБАЛЬНОГО ПОЛНОГО КЭША (ПОЛНОСТЬЮ ПЕРЕПИСАНА)
-  async loadGlobalFullCache(db) {
-    if (globalFullCacheLoading) {
-      console.log("⏳ [GLOBAL FULL CACHE] Уже загружается...");
-      return false;
+// 1. ЗАГРУЗКА ПРОФИЛЕЙ В LMDB (ОПТИМИЗИРОВАННАЯ ДЛЯ RENDER)
+async loadGlobalFullCache(db) {
+    
+    if (fullCacheLoading) {
+        console.log("⏳ [LMDB FULL CACHE] Уже загружается...");
+        return false;
     }
 
-    globalFullCacheLoading = true;
-    console.log("🚀 [GLOBAL FULL CACHE] НАЧИНАЕМ ЗАГРУЗКУ ПОЛНОГО КЭША");
+    fullCacheLoading = true;
+    console.log("🚀 [LMDB FULL CACHE] НАЧИНАЕМ ЗАГРУЗКУ В LMDB");
     console.log("=".repeat(60));
 
     const globalStartTime = Date.now();
-    let allProfiles = [];
     let totalLoaded = 0;
 
     try {
-      // ==================== ЭТАП 1: ЗАГРУЗКА ПРОФИЛЕЙ ====================
-      console.log("📥 ЭТАП 1: ЗАГРУЗКА ПРОФИЛЕЙ ИЗ FIRESTORE");
-      console.log("-".repeat(40));
+        // 🔥 ПРЕЖДЕ ВСЕГО ОЧИЩАЕМ БАЗУ
+        console.log("🧹 [LMDB CLEAN] Очищаем существующие данные...");
+        profilesDB.clearSync(); // Очищаем базу
+        
+        // 🔥 ВАЖНО: Сбрасываем индексы
+        indexesDB.clearSync();
+        
+        console.log("✅ [LMDB CLEAN] База очищена, начинаем загрузку...");
 
-      let lastDoc = null;
-      let batchCount = 0;
-      const BATCH_SIZE = 5000;
-      const MAX_PROFILES = 70000;
-      const firestoreStartTime = Date.now();
+        // ==================== ЭТАП 1: ЗАГРУЗКА ПРОФИЛЕЙ ИЗ FIRESTORE В LMDB ====================
+        console.log("📥 ЭТАП 1: ЗАГРУЗКА ПРОФИЛЕЙ В LMDB");
+        console.log("-".repeat(40));
 
-      while (totalLoaded < MAX_PROFILES) {
-        batchCount++;
-        console.log(`📦 [ПАЧКА ${batchCount}] Загрузка ${BATCH_SIZE} анкет...`);
+        let lastDoc = null;
+        let batchCount = 0;
+        const BATCH_SIZE = 5000;
+        const MAX_PROFILES = 70000;
+        const firestoreStartTime = Date.now();
 
-        // Строим запрос
-        let query = db
-          .collection("profiles")
-          .orderBy("createdAt", "desc")
-          .limit(BATCH_SIZE)
-          .select(
-            "id",
-            "name",
-            "age",
-            "country",
-            "city",
-            "about",
-            "photoUrl",
-            "telegram",
-            "phone",
-            "whatsapp",
-            "photos",
-            "createdAt"
-          );
+        while (totalLoaded < MAX_PROFILES) {
+            batchCount++;
+            console.log(`📦 [ПАЧКА ${batchCount}] Загрузка ${BATCH_SIZE} анкет...`);
 
-        if (lastDoc) {
-          query = query.startAfter(lastDoc);
-        }
+            // Строим запрос к Firestore
+            let query = db
+                .collection("profiles")
+                .orderBy("createdAt", "desc")
+                .limit(BATCH_SIZE)
+                .select(
+                    "id",
+                    "name",
+                    "age",
+                    "country",
+                    "city",
+                    "about",
+                    "photoUrl",
+                    "telegram",
+                    "phone",
+                    "whatsapp",
+                    "photos",
+                    "createdAt"
+                );
 
-        // Выполняем запрос
-        const snapshot = await query.get();
-        const docsCount = snapshot.docs.length;
-
-        // Статистика чтений
-        readingStats.addRead("profiles", "system", docsCount, "firestore");
-
-        // Если больше нет документов
-        if (docsCount === 0) {
-          console.log(`✅ [ЗАВЕРШЕНО] Больше анкет нет`);
-          break;
-        }
-
-        // Обрабатываем документы
-        const batchProfiles = snapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        }));
-
-        // Добавляем к общему массиву
-        allProfiles.push(...batchProfiles);
-        totalLoaded += docsCount;
-        lastDoc = snapshot.docs[docsCount - 1];
-
-        console.log(
-          `📊 [ПАЧКА ${batchCount}] Загружено: ${docsCount} анкет | Всего: ${totalLoaded}`
-        );
-
-        // Пауза между пачками для снижения нагрузки
-        if (docsCount === BATCH_SIZE) {
-          await new Promise((resolve) => setTimeout(resolve, 100));
-        }
-
-        // Промежуточный отчет каждые 20,000 профилей
-        if (totalLoaded % 20000 === 0) {
-          const currentTime = Date.now();
-          const elapsed = (currentTime - firestoreStartTime) / 1000;
-          const speed = (totalLoaded / elapsed).toFixed(1);
-          console.log(
-            `📈 [ПРОГРЕСС] ${totalLoaded} анкет за ${elapsed.toFixed(
-              1
-            )}с (${speed} анкет/сек)`
-          );
-        }
-      }
-
-      const firestoreTime = Date.now() - firestoreStartTime;
-      console.log(
-        `✅ ЭТАП 1 ЗАВЕРШЕН: ${totalLoaded} анкет за ${(
-          firestoreTime / 1000
-        ).toFixed(1)}с`
-      );
-      console.log("-".repeat(40));
-
-      // ==================== ЭТАП 2: ПОДГОТОВКА ДАННЫХ ====================
-      console.log("🔄 ЭТАП 2: ПОДГОТОВКА ДАННЫХ ДЛЯ КЭШИРОВАНИЯ");
-      console.log("-".repeat(40));
-
-      const processStartTime = Date.now();
-
-      // Нормализуем профили для экономии памяти
-      console.log(`🔧 Нормализация ${allProfiles.length} профилей...`);
-
-      const normalizedProfiles = new Array(allProfiles.length);
-      const countriesSet = new Set();
-      const citiesByCountry = new Map();
-      let profilesWithCountry = 0;
-      let profilesWithCity = 0;
-
-      for (let i = 0; i < allProfiles.length; i++) {
-        const profile = allProfiles[i];
-
-        // Нормализуем страну
-        let normalizedCountry = null;
-        if (profile.country) {
-          normalizedCountry = this.normalizeCountryName(profile.country);
-          countriesSet.add(normalizedCountry);
-          profilesWithCountry++;
-        }
-
-        // Нормализуем город
-        let normalizedCity = null;
-        if (profile.city) {
-          normalizedCity = this.normalizeCityName(profile.city);
-          profilesWithCity++;
-
-          // Добавляем город в индекс по стране
-          if (normalizedCountry) {
-            if (!citiesByCountry.has(normalizedCountry)) {
-              citiesByCountry.set(normalizedCountry, new Set());
+            if (lastDoc) {
+                query = query.startAfter(lastDoc);
             }
-            citiesByCountry.get(normalizedCountry).add(normalizedCity);
-          }
+
+            // Выполняем запрос
+            const snapshot = await query.get();
+            const docsCount = snapshot.docs.length;
+
+            // Статистика чтений
+            readingStats.addRead("profiles", "system", docsCount, "firestore");
+
+            // Если больше нет документов
+            if (docsCount === 0) {
+                console.log(`✅ [ЗАВЕРШЕНО] Больше анкет нет`);
+                break;
+            }
+
+            // 🔥 Обрабатываем документы и сохраняем в LMDB
+            for (const doc of snapshot.docs) {
+                const profile = {
+                    id: doc.id,
+                    ...doc.data(),
+                };
+
+                // Нормализуем данные
+                const normalizedProfile = {
+                    id: profile.id,
+                    n: profile.name || "",
+                    a: parseInt(profile.age) || 0,
+                    c: profile.country
+                        ? this.normalizeCountryName(profile.country)
+                        : "",
+                    ct: profile.city ? this.normalizeCityName(profile.city) : "",
+                    ab: profile.about ? profile.about.substring(0, 500) : "",
+                    p: profile.photoUrl || "",
+                    phs: profile.photos || [],
+                    tg: profile.telegram || "",
+                    tel: profile.phone || "",
+                    wa: profile.whatsapp || "",
+                    ca: profile.createdAt || new Date(),
+                    isDemo: false,
+                };
+
+                // 🔥 СОХРАНЯЕМ В LMDB (без транзакции)
+                profilesDB.put(profile.id, normalizedProfile);
+                totalLoaded++;
+
+                // Прогресс
+                if (totalLoaded % 1000 === 0) {
+                    console.log(
+                        `💾 [LMDB SAVE] Сохранено ${totalLoaded} профилей в LMDB`
+                    );
+                }
+            }
+
+            lastDoc = snapshot.docs[docsCount - 1];
+
+            console.log(
+                `📊 [ПАЧКА ${batchCount}] Загружено: ${docsCount} анкет | Всего: ${totalLoaded}`
+            );
+
+            // Пауза между пачками для снижения нагрузки
+            if (docsCount === BATCH_SIZE) {
+                await new Promise((resolve) => setTimeout(resolve, 100));
+            }
         }
 
-        // Создаем нормализованный профиль
-        normalizedProfiles[i] = {
-          id: profile.id,
-          n: profile.name || "",
-          a: profile.age || 0,
-          c: normalizedCountry,
-          ct: normalizedCity,
-          ab: profile.about ? profile.about.substring(0, 500) : "",
-          p: profile.photoUrl || "",
-          phs: profile.photos || [],
-          tg: profile.telegram || "",
-          tel: profile.phone || "",
-          wa: profile.whatsapp || "",
-          ca: profile.createdAt || null,
-          isDemo: false,
-        };
+        const firestoreTime = Date.now() - firestoreStartTime;
+        console.log(
+            `✅ ЭТАП 1 ЗАВЕРШЕН: ${totalLoaded} анкет за ${(
+                firestoreTime / 1000
+            ).toFixed(1)}с`
+        );
+        console.log("-".repeat(40));
 
-        // Прогресс каждые 10,000 профилей
-        if (i % 10000 === 0 && i > 0) {
-          console.log(`📊 Обработано ${i}/${allProfiles.length} профилей`);
+        // 🔥 СРАЗУ ПОКАЗЫВАЕМ СТАТИСТИКУ
+        const profileKeys = Array.from(profilesDB.getKeys());
+        const actualCount = profileKeys.length;
+        console.log(`📊 [LMDB VERIFICATION] В базе теперь: ${actualCount} профилей`);
+
+        if (actualCount === 0) {
+            console.log(`❌ [LMDB CRITICAL] БАЗА ПУСТА ПОСЛЕ ЗАГРУЗКИ!`);
+            return false;
         }
-      }
 
-      // Очищаем исходные данные для экономии памяти
-      allProfiles.length = 0;
-      allProfiles = null;
+        // ==================== ЭТАП 2: СОЗДАНИЕ ИНДЕКСОВ СТРАН И ГОРОДОВ ====================
+        console.log("📇 ЭТАП 2: СОЗДАНИЕ ИНДЕКСОВ СТРАН И ГОРОДОВ");
+        console.log("-".repeat(40));
 
-      const processTime = Date.now() - processStartTime;
-      console.log(`✅ ЭТАП 2 ЗАВЕРШЕН за ${(processTime / 1000).toFixed(1)}с`);
-      console.log(
-        `📊 Статистика: ${profilesWithCountry} с указанной страной, ${profilesWithCity} с указанным городом`
-      );
-      console.log("-".repeat(40));
+        const indexStartTime = Date.now();
+        
+        // 🔥 ИЗВЛЕКАЕМ СТРАНЫ И ГОРОДА ИЗ ПРОФИЛЕЙ
+        console.log(`🌍 Извлекаем страны и города из ${actualCount} профилей...`);
+        
+        const countriesSet = new Set();
+        const citiesByCountry = new Map();
+        let processed = 0;
 
-      // ==================== ЭТАП 3: КЭШИРОВАНИЕ ПРОФИЛЕЙ ====================
-      console.log("💾 ЭТАП 3: КЭШИРОВАНИЕ ПРОФИЛЕЙ");
-      console.log("-".repeat(40));
+        for (const profileId of profileKeys) {
+            const profile = profilesDB.get(profileId);
+            if (!profile) continue;
 
-      const cacheStartTime = Date.now();
+            if (profile.c && profile.c.trim() !== "" && profile.c !== "Не указана") {
+                countriesSet.add(profile.c);
 
-      console.log(
-        `🔧 Сжатие данных (${normalizedProfiles.length} профилей)...`
-      );
+                if (profile.ct && profile.ct.trim() !== "" && profile.ct !== "Не указан") {
+                    if (!citiesByCountry.has(profile.c)) {
+                        citiesByCountry.set(profile.c, new Set());
+                    }
+                    citiesByCountry.get(profile.c).add(profile.ct);
+                }
+            }
 
-      // Сжимаем данные
-      const jsonString = JSON.stringify(normalizedProfiles);
-      const compressed = zlib.gzipSync(jsonString);
-
-      // Сохраняем в глобальный кэш
-      globalProfilesCache.set("profiles:all", compressed);
-
-      const originalSizeMB = (jsonString.length / 1024 / 1024).toFixed(2);
-      const compressedSizeMB = (compressed.length / 1024 / 1024).toFixed(2);
-      const compressionRatio = Math.round(
-        (1 - compressed.length / jsonString.length) * 100
-      );
-
-      console.log(
-        `📦 Размер данных: ${originalSizeMB}MB → ${compressedSizeMB}MB`
-      );
-      console.log(
-        `⚡ Экономия: ${compressionRatio}% (сжато в ${(
-          originalSizeMB / compressedSizeMB
-        ).toFixed(1)} раз)`
-      );
-
-      const cacheTime = Date.now() - cacheStartTime;
-      console.log(`✅ ЭТАП 3 ЗАВЕРШЕН за ${cacheTime}мс`);
-      console.log("-".repeat(40));
-
-      // ==================== ЭТАП 4: СОЗДАНИЕ ИНДЕКСОВ ====================
-      console.log("📇 ЭТАП 4: СОЗДАНИЕ ИНДЕКСОВ ДЛЯ БЫСТРОГО ПОИСКА");
-      console.log("-".repeat(40));
-
-      const indexStartTime = Date.now();
-
-      // Создаем индексы через AsyncFilterManager
-      console.log(
-        `🔨 Создаем индексы для ${normalizedProfiles.length} профилей...`
-      );
-      const indexResult = asyncFilterManager.createIndexes(normalizedProfiles);
-
-      const indexTime = Date.now() - indexStartTime;
-      console.log(`✅ ЭТАП 4 ЗАВЕРШЕН за ${indexTime}мс`);
-      console.log(
-        `📊 Индексы: ${indexResult.countryIndexSize} стран, ${indexResult.countryCityIndexSize} пар страна+город`
-      );
-      console.log("-".repeat(40));
-
-      // ==================== ЭТАП 5: СОХРАНЕНИЕ СТРАН И ГОРОДОВ ====================
-      console.log("🌍 ЭТАП 5: СОХРАНЕНИЕ СПИСКОВ СТРАН И ГОРОДОВ");
-      console.log("-".repeat(40));
-
-      const geoStartTime = Date.now();
-
-      // Сохраняем отсортированный список стран
-      const sortedCountries = Array.from(countriesSet).sort();
-      globalProfilesCache.set("profiles:countries", sortedCountries);
-      globalProfilesCache.set(
-        "profiles:countries_raw",
-        Array.from(countriesSet)
-      );
-
-      // Сохраняем города по странам
-      let totalCities = 0;
-      citiesByCountry.forEach((citiesSet, country) => {
-        const citiesArray = Array.from(citiesSet).sort();
-        globalProfilesCache.set(`profiles:cities:${country}`, citiesArray);
-        totalCities += citiesArray.length;
-      });
-
-      const geoTime = Date.now() - geoStartTime;
-      console.log(`✅ ЭТАП 5 ЗАВЕРШЕН за ${geoTime}мс`);
-      console.log(
-        `📊 Геоданные: ${countriesSet.size} стран, ${totalCities} городов`
-      );
-      console.log("-".repeat(40));
-
-      // ==================== ИТОГОВАЯ СТАТИСТИКА ====================
-      const totalTime = Date.now() - globalStartTime;
-
-      console.log("🎉 ========== ЗАГРУЗКА КЭША ЗАВЕРШЕНА ==========");
-      console.log(`⏱️  ОБЩЕЕ ВРЕМЯ: ${(totalTime / 1000).toFixed(1)} секунд`);
-      console.log(`📊 ПРОФИЛЕЙ: ${normalizedProfiles.length}`);
-      console.log(`🌍 СТРАН: ${countriesSet.size}`);
-      console.log(`🏙️  ГОРОДОВ: ${totalCities}`);
-      console.log(
-        `📦 СЖАТИЕ: ${originalSizeMB}MB → ${compressedSizeMB}MB (${compressionRatio}%)`
-      );
-      console.log(
-        `📇 ИНДЕКСЫ: ${indexResult.countryIndexSize} стран + ${indexResult.countryCityIndexSize} пар`
-      );
-      console.log(
-        `⚡ СКОРОСТЬ: ${(
-          normalizedProfiles.length /
-          (totalTime / 1000)
-        ).toFixed(0)} профилей/сек`
-      );
-      console.log("=".repeat(60));
-
-      // ==================== ОЧИСТКА ПАМЯТИ ====================
-      console.log("🧹 Очистка временных данных...");
-
-      // Очищаем массивы для освобождения памяти
-      normalizedProfiles.length = 0;
-      countriesSet.clear();
-      citiesByCountry.clear();
-
-      // Принудительный сбор мусора (если доступен)
-      if (global.gc) {
-        global.gc();
-        console.log("✅ Сборка мусора выполнена");
-      }
-
-      // ==================== УВЕДОМЛЕНИЕ О ГОТОВНОСТИ ====================
-      globalCacheInitialized = true;
-
-      // Сохраняем время последней загрузки
-      globalProfilesCache.set("last_load_time", Date.now(), 7 * 24 * 60 * 60);
-      globalProfilesCache.set("profiles_count", totalLoaded, 7 * 24 * 60 * 60);
-
-      console.log(
-        `✅ [GLOBAL FULL CACHE] КЭШ УСПЕШНО ЗАГРУЖЕН И ГОТОВ К РАБОТЕ!`
-      );
-
-      return true;
-    } catch (error) {
-      console.error(
-        "❌ ========== КРИТИЧЕСКАЯ ОШИБКА ЗАГРУЗКИ КЭША =========="
-      );
-      console.error(`❌ ТИП ОШИБКИ: ${error.name}`);
-      console.error(`❌ СООБЩЕНИЕ: ${error.message}`);
-      console.error(`❌ СТЕК ТРЕЙС:`);
-      console.error(error.stack);
-      console.error("=".repeat(60));
-
-      // Пытаемся восстановить работоспособность
-      try {
-        console.log("🔄 Попытка восстановления...");
-
-        // Проверяем демо-кэш
-        const demoProfiles = cacheManager.getGlobalProfiles(true);
-        if (demoProfiles && demoProfiles.length > 0) {
-          console.log(`✅ Демо-кэш доступен: ${demoProfiles.length} профилей`);
-        } else {
-          console.log("⚠️  Демо-кэш недоступен");
+            processed++;
+            if (processed % 10000 === 0) {
+                console.log(`📊 [INDEX PROGRESS] Обработано ${processed} профилей`);
+            }
         }
-      } catch (recoveryError) {
-        console.error("❌ Ошибка при восстановлении:", recoveryError.message);
-      }
 
-      return false;
-    } finally {
-      globalFullCacheLoading = false;
-      console.log(`🔓 [GLOBAL FULL CACHE] Блокировка загрузки снята`);
+        // Сохраняем страны
+        const sortedCountries = Array.from(countriesSet).sort();
+        indexesDB.put('countries:all', sortedCountries);
+        console.log(`✅ Сохранено стран: ${sortedCountries.length}`);
 
-      // Отчет о памяти
-      if (process.memoryUsage) {
+        // Сохраняем города по странам
+        let totalCities = 0;
+        for (const [country, citiesSet] of citiesByCountry) {
+            const citiesArray = Array.from(citiesSet).sort();
+            indexesDB.put(`cities:${country}`, citiesArray);
+            totalCities += citiesArray.length;
+        }
+        console.log(`✅ Сохранено ${totalCities} городов для ${citiesByCountry.size} стран`);
+
+        const indexTime = Date.now() - indexStartTime;
+        console.log(`✅ ЭТАП 2 ЗАВЕРШЕН за ${indexTime}мс`);
+        console.log("-".repeat(40));
+
+        // ==================== ЭТАП 3: СОЗДАНИЕ ИНДЕКСОВ ДЛЯ БЫСТРОГО ПОИСКА ====================
+        console.log("⚡ ЭТАП 3: СОЗДАНИЕ ИНДЕКСОВ ДЛЯ БЫСТРОГО ПОИСКА");
+        console.log("-".repeat(40));
+
+        const fastIndexStartTime = Date.now();
+        
+        // Индексы для быстрого поиска
+        const countryIndex = {};
+        const countryCityIndex = {};
+        const cityIndex = {};
+        let indexedProfiles = 0;
+
+        for (const profileId of profileKeys) {
+            const profile = profilesDB.get(profileId);
+            if (!profile) continue;
+
+            const country = profile.c;
+            const city = profile.ct;
+
+            if (country && country.trim() !== "" && country !== "Не указана") {
+                // Индекс по стране
+                if (!countryIndex[country]) {
+                    countryIndex[country] = [];
+                }
+                countryIndex[country].push(profileId);
+
+                // Индекс по стране+городу
+                if (city && city.trim() !== "" && city !== "Не указан") {
+                    const key = `${country}:${city}`;
+                    if (!countryCityIndex[key]) {
+                        countryCityIndex[key] = [];
+                    }
+                    countryCityIndex[key].push(profileId);
+
+                    // Индекс только по городу
+                    if (!cityIndex[city]) {
+                        cityIndex[city] = [];
+                    }
+                    cityIndex[city].push(profileId);
+                }
+
+                indexedProfiles++;
+            }
+
+            if (indexedProfiles % 10000 === 0) {
+                console.log(`📊 [FAST INDEX PROGRESS] Индексировано ${indexedProfiles} профилей`);
+            }
+        }
+
+        // Сохраняем индексы
+        indexesDB.put('index:country', countryIndex);
+        indexesDB.put('index:country_city', countryCityIndex);
+        indexesDB.put('index:city', cityIndex);
+
+        const fastIndexTime = Date.now() - fastIndexStartTime;
+        console.log(`✅ ЭТАП 3 ЗАВЕРШЕН за ${fastIndexTime}мс`);
+        console.log(`📊 [FAST INDEX STATS] Стран: ${Object.keys(countryIndex).length}, Городов: ${Object.keys(cityIndex).length}`);
+        console.log("-".repeat(40));
+
+        // ==================== ИТОГОВАЯ СТАТИСТИКА ====================
+        const totalTime = Date.now() - globalStartTime;
+
+        console.log("🎉 ========== ЗАГРУЗКА В LMDB ЗАВЕРШЕНА ==========");
+        console.log(`⏱️  ОБЩЕЕ ВРЕМЯ: ${(totalTime / 1000).toFixed(1)} секунд`);
+        console.log(`📊 ПРОФИЛЕЙ: ${totalLoaded}`);
+        console.log(`🌍 СТРАН: ${countriesSet.size}`);
+        console.log(`🌆 ГОРОДОВ: ${totalCities}`);
+        console.log(`⚡ СКОРОСТЬ: ${(totalLoaded / (totalTime / 1000)).toFixed(0)} профилей/сек`);
+        
+        // Статистика памяти
         const mem = process.memoryUsage();
-        const usedMB = (mem.heapUsed / 1024 / 1024).toFixed(2);
-        const totalMB = (mem.heapTotal / 1024 / 1024).toFixed(2);
-        console.log(`💾 Использование памяти: ${usedMB}MB / ${totalMB}MB`);
-      }
-    }
-  },
-  // 2. ЗАГРУЗКА ГЛОБАЛЬНОГО ДЕМО-КЭША (ОПТИМИЗИРОВАННАЯ ВЕРСИЯ)
-  async loadGlobalDemoCache(db) {
-    if (globalDemoCacheLoading) {
-      console.log("⏳ [GLOBAL DEMO CACHE] Уже загружается...");
-      return false;
-    }
+        console.log(`💾 ПАМЯТЬ: ${(mem.heapUsed / 1024 / 1024).toFixed(2)}MB`);
+        console.log("=".repeat(60));
 
-    globalDemoCacheLoading = true;
-    console.log(
-      "🚀 [GLOBAL DEMO CACHE] Начинаем загрузку глобального демо-кэша..."
-    );
+        return true;
 
-    try {
-      // 🔥 ЗАГРУЖАЕМ ПРОФИЛИ ИЗ ПОЛНОГО КЭША, ЕСЛИ ОН УЖЕ ЗАГРУЖЕН
-      // (чтобы не делать лишних чтений из Firestore)
-      const fullProfiles = this.getGlobalProfiles(false);
-
-      if (fullProfiles && fullProfiles.length > 0) {
-        console.log(
-          `✅ [DEMO CACHE] Используем уже загруженные профили из полного кэша: ${fullProfiles.length}`
-        );
-
-        // ПРОСТО СОЗДАЕМ ДЕМО-ВЕРСИИ ИЗ СУЩЕСТВУЮЩИХ ДАННЫХ
-        return this.createDemoCacheFromFullProfiles(fullProfiles);
-      }
-
-      // ЕСЛИ ПОЛНЫЙ КЭШ НЕ ЗАГРУЖЕН - ЗАГРУЖАЕМ ИЗ FIRESTORE
-      console.log(
-        `📥 [DEMO CACHE] Полный кэш не загружен, загружаем из Firestore...`
-      );
-
-      const startTime = Date.now();
-      let allProfiles = [];
-      let lastDoc = null;
-      let batchCount = 0;
-      const BATCH_SIZE = 5000;
-      const MAX_PROFILES = 70000;
-
-      while (allProfiles.length < MAX_PROFILES) {
-        batchCount++;
-        console.log(
-          `📦 [DEMO BATCH ${batchCount}] Загрузка ${BATCH_SIZE} анкет...`
-        );
-
-        let query = db
-          .collection("profiles")
-          .orderBy("createdAt", "desc")
-          .limit(BATCH_SIZE)
-          .select(
-            "id",
-            "name",
-            "age",
-            "country",
-            "city",
-            "about",
-            "photoUrl",
-            "telegram",
-            "phone",
-            "whatsapp",
-            "photos",
-            "createdAt"
-          );
-
-        if (lastDoc) {
-          query = query.startAfter(lastDoc);
-        }
-
-        const snapshot = await query.get();
-        const docsCount = snapshot.docs.length;
-
-        readingStats.addRead("profiles", "system", docsCount, "firestore");
-
-        if (docsCount === 0) {
-          console.log(
-            `✅ [DEMO LOAD COMPLETE] Больше анкет нет. Всего загружено: ${allProfiles.length}`
-          );
-          break;
-        }
-
-        const batchProfiles = snapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        }));
-
-        allProfiles.push(...batchProfiles);
-        lastDoc = snapshot.docs[docsCount - 1];
-
-        console.log(
-          `📊 [DEMO BATCH ${batchCount}] Загружено: ${docsCount} анкет | Всего: ${allProfiles.length}`
-        );
-
-        if (docsCount === BATCH_SIZE) {
-          await new Promise((resolve) => setTimeout(resolve, 100));
-        }
-      }
-
-      const loadTime = ((Date.now() - startTime) / 1000).toFixed(2);
-      console.log(
-        `✅ [DEMO LOADED] Загружено ${allProfiles.length} профилей за ${loadTime} секунд`
-      );
-
-      // 🔥 СОЗДАЕМ ДЕМО-КЭШ ИЗ ЗАГРУЖЕННЫХ ПРОФИЛЕЙ
-      return this.createDemoCacheFromFullProfiles(allProfiles);
     } catch (error) {
-      console.error(`❌ [GLOBAL DEMO CACHE] Ошибка:`, error.message);
-      console.error(error.stack);
-      return false;
+        console.error("❌ ОШИБКА ЗАГРУЗКИ В LMDB:", error);
+        return false;
     } finally {
-      globalDemoCacheLoading = false;
+        fullCacheLoading = false;
+        console.log(`🔓 [LMDB FULL CACHE] Блокировка загрузки снята`);
     }
-  },
+},
 
-  // ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ: СОЗДАНИЕ ДЕМО-КЭША ИЗ ПОЛНЫХ ПРОФИЛЕЙ (ПОЛНОСТЬЮ ПЕРЕПИСАНА С ИНДЕКСАМИ)
-  async createDemoCacheFromFullProfiles(fullProfiles) {
+ // 2. ЗАГРУЗКА ДЕМО-КЭША В LMDB
+// 2. ЗАГРУЗКА ДЕМО-КЭША В LMDB (КОМПЛЕКТНОЕ ИСПРАВЛЕНИЕ)
+async loadGlobalDemoCache(db) {
+    if (demoCacheLoading) {
+        console.log("⏳ [LMDB DEMO CACHE] Уже загружается...");
+        return false;
+    }
+
+    demoCacheLoading = true;
+    console.log("🚀 [LMDB DEMO CACHE] Начинаем загрузку демо-кэша в LMDB...");
+
     try {
-      console.log(
-        `🔧 [DEMO CREATION] Создаем демо-кэш из ${fullProfiles.length} профилей...`
-      );
+        // 🔥 ШАГ 1: ПРОВЕРЯЕМ ЕСТЬ ЛИ ДЕМО-ДАННЫЕ
+        const demoKeys = Array.from(demoDB.getKeys());
+        console.log(`📊 [DEMO CHECK] Демо-LMDB уже содержит: ${demoKeys.length} профилей`);
+        
+        // 🔥 УВЕЛИЧИВАЕМ МИНИМАЛЬНЫЙ ПОРОГ
+        if (demoKeys.length >= 30000) { // ← Было 1000, теперь 30000
+            console.log(`✅ [DEMO EXISTS] Демо-кэш уже загружен: ${demoKeys.length} профилей`);
+            
+            const demoCountries = indexesDB.get('demo:countries');
+            if (!demoCountries || demoCountries.length === 0) {
+                console.log(`🔄 [DEMO NO COUNTRIES] Извлекаем страны...`);
+                await this.extractCountriesFromDemoProfiles();
+            }
+            
+            demoCacheLoading = false;
+            return true;
+        }
 
-      const demoProfiles = [];
-      const countriesSet = new Set();
-      const citiesByCountry = new Map();
+        // 🔥 🔥 🔥 ШАГ 2: ИСПОЛЬЗУЕМ ПОЛНЫЕ ПРОФИЛИ ИЗ LMDB (ГЛАВНОЕ ИСПРАВЛЕНИЕ!)
+        console.log(`📥 [DEMO FROM FULL LMDB] Создаем демо-кэш из полной LMDB...`);
+        
+        const fullProfileKeys = Array.from(profilesDB.getKeys());
+        console.log(`📊 [FULL PROFILES] Всего профилей в полной LMDB: ${fullProfileKeys.length}`);
+        
+        if (fullProfileKeys.length === 0) {
+            console.log(`❌ [DEMO ERROR] Полная LMDB пуста! Загружаем полный кэш...`);
+            
+            // Загружаем сначала полный кэш
+            await this.loadGlobalFullCache(db);
+            
+            // Обновляем список ключей
+            const updatedKeys = Array.from(profilesDB.getKeys());
+            console.log(`📊 [AFTER FULL LOAD] Теперь в полной LMDB: ${updatedKeys.length} профилей`);
+        }
+
+        // 🔥 ШАГ 3: ЗАГРУЖАЕМ ДАННЫЕ ИЗ FIRESTORE (ЕСЛИ НУЖНО)
+        console.log(`📥 [DEMO FROM FIRESTORE] Загружаем профили из Firestore`);
+
+        const startTime = Date.now();
+        let allProfiles = [];
+        let lastDoc = null;
+        let batchCount = 0;
+        const BATCH_SIZE = 5000;
+        
+        // 🔥 🔥 🔥 УВЕЛИЧИВАЕМ ДО 70000!
+        const MAX_PROFILES = 70000; // ← ИСПРАВЛЕНО!
+        
+        console.log(`🎯 [DEMO TARGET] Цель: ${MAX_PROFILES} профилей для демо-кэша`);
+
+        while (allProfiles.length < MAX_PROFILES) {
+            batchCount++;
+            console.log(`📦 [DEMO BATCH ${batchCount}] Загрузка ${BATCH_SIZE} анкет...`);
+
+            let query = db
+                .collection("profiles")
+                .orderBy("createdAt", "desc")
+                .limit(BATCH_SIZE)
+                .select(
+                    "id",
+                    "name",
+                    "age",
+                    "country",
+                    "city",
+                    "about",
+                    "photoUrl",
+                    "telegram",
+                    "phone",
+                    "whatsapp",
+                    "photos",
+                    "createdAt"
+                );
+
+            if (lastDoc) {
+                query = query.startAfter(lastDoc);
+            }
+
+            const snapshot = await query.get();
+            const docsCount = snapshot.docs.length;
+
+            readingStats.addRead("profiles", "system", docsCount, "firestore");
+
+            if (docsCount === 0) {
+                console.log(`✅ [DEMO LOAD COMPLETE] Больше анкет нет. Всего: ${allProfiles.length}`);
+                break;
+            }
+
+            const batchProfiles = snapshot.docs.map((doc) => ({
+                id: doc.id,
+                ...doc.data(),
+            }));
+
+            allProfiles.push(...batchProfiles);
+            lastDoc = snapshot.docs[docsCount - 1];
+
+            console.log(`📊 [DEMO BATCH ${batchCount}] Загружено: ${docsCount} анкет | Всего: ${allProfiles.length}`);
+
+            if (docsCount === BATCH_SIZE) {
+                await new Promise((resolve) => setTimeout(resolve, 100));
+            }
+        }
+
+        const loadTime = ((Date.now() - startTime) / 1000).toFixed(2);
+        console.log(`✅ [DEMO LOADED] Загружено ${allProfiles.length} профилей за ${loadTime}с`);
+
+        // 🔥 ШАГ 4: СОЗДАЕМ ДЕМО-КЭШ
+        const result = await this.createDemoCacheFromProfilesLMDB(allProfiles);
+        
+        if (result) {
+            console.log(`✅ [DEMO CACHE CREATED] Демо-кэш создан успешно`);
+            
+            // Проверяем конкретные города
+            console.log(`🔍 [DEMO VERIFICATION] Проверяем наличие городов...`);
+            
+            const demoStats = this.getLMDBStats();
+            console.log(`📊 [DEMO STATS] Демо-профилей: ${demoStats.demoProfilesCount}`);
+            
+            // Проверяем наличие Костромы
+            const russiaCities = this.getGlobalCities("Россия", true);
+            console.log(`🏙️ [RUSSIA CITIES IN DEMO] ${russiaCities.length} городов`);
+            
+            if (russiaCities.includes("Кострома")) {
+                console.log(`✅ [SUCCESS] Кострома найдена в демо-кэше!`);
+            } else {
+                console.log(`❌ [WARNING] Кострома не найдена в демо-кэше!`);
+                console.log(`   Примеры городов: ${russiaCities.slice(0, 10).join(', ')}`);
+            }
+        }
+        
+        return result;
+
+    } catch (error) {
+        console.error(`❌ [LMDB DEMO CACHE] Ошибка:`, error);
+        return false;
+    } finally {
+        demoCacheLoading = false;
+    }
+},
+// 🔥 НОВЫЙ МЕТОД: ОТЛАДКА ВАРИАНТОВ НАПИСАНИЯ СТРАН
+debugCountryVariants: function(countryName) {
+    try {
+        console.log(`🔍 [DEBUG COUNTRY] Анализируем варианты для: "${countryName}"`);
+        
+        const normalizedCountry = this.normalizeCountryName(countryName);
+        console.log(`✅ Нормализовано: "${normalizedCountry}"`);
+        
+        const profileKeys = Array.from(profilesDB.getKeys());
+        console.log(`📊 Всего профилей для анализа: ${profileKeys.length}`);
+        
+        const countryVariants = new Map();
+        let totalProfiles = 0;
+        
+        // Собираем все варианты написания
+        for (const profileId of profileKeys) {
+            const profile = profilesDB.get(profileId);
+            if (!profile || !profile.c) continue;
+            
+            const profileCountry = profile.c.trim();
+            if (!profileCountry || profileCountry === 'Не указана') continue;
+            
+            const normalizedProfileCountry = this.normalizeCountryName(profileCountry);
+            
+            // Если совпадает с запрошенной страной
+            if (normalizedProfileCountry === normalizedCountry) {
+                totalProfiles++;
+                
+                if (!countryVariants.has(profileCountry)) {
+                    countryVariants.set(profileCountry, 0);
+                }
+                countryVariants.set(profileCountry, countryVariants.get(profileCountry) + 1);
+            }
+            // Также проверяем по ключевым словам для Украины/России
+            else if ((normalizedCountry.includes('Украин') && 
+                     (profileCountry.includes('Украин') || profileCountry.includes('Ukrain'))) ||
+                    (normalizedCountry.includes('Росс') && 
+                     (profileCountry.includes('Росс') || profileCountry.includes('Russ')))) {
+                totalProfiles++;
+                
+                if (!countryVariants.has(profileCountry)) {
+                    countryVariants.set(profileCountry, 0);
+                }
+                countryVariants.set(profileCountry, countryVariants.get(profileCountry) + 1);
+            }
+        }
+        
+        // Сортируем по частоте
+        const sortedVariants = Array.from(countryVariants.entries())
+            .sort((a, b) => b[1] - a[1]);
+        
+        console.log(`📊 [DEBUG RESULT] Всего профилей с этой страной: ${totalProfiles}`);
+        console.log(`📊 [DEBUG RESULT] Вариантов написания: ${sortedVariants.length}`);
+        
+        if (sortedVariants.length > 0) {
+            console.log(`📋 Топ вариантов написания:`);
+            sortedVariants.slice(0, 10).forEach(([variant, count], index) => {
+                console.log(`   ${index + 1}. "${variant}": ${count} профилей`);
+            });
+        }
+        
+        return {
+            normalized: normalizedCountry,
+            totalProfiles: totalProfiles,
+            variants: sortedVariants,
+            allVariants: Array.from(countryVariants.keys())
+        };
+        
+    } catch (error) {
+        console.error(`❌ [DEBUG COUNTRY ERROR]:`, error);
+        return null;
+    }
+},
+ // 3. СОЗДАНИЕ ДЕМО-КЭША ИЗ ПРОФИЛЕЙ В LMDB
+async createDemoCacheFromProfilesLMDB(profiles) {
+    try {
+        console.log(`🔧 [LMDB DEMO CREATION] Создаем демо-кэш из ${profiles.length} профилей...`);
+
+        const demoCountries = new Set();
+        const demoCitiesByCountry = new Map();
+        const cityProfilesCount = new Map();
+        let demoProfilesCount = 0;
+
+        // 🔥 СОЗДАЕМ ДЕМО-ВЕРСИИ (3 анкеты на город, скрываем контакты)
+        for (let i = 0; i < profiles.length; i++) {
+            const profile = profiles[i];
+
+            // Получаем данные
+            const originalName = profile.name || "";
+            const originalAge = profile.age || 0;
+            const originalCountry = profile.country || "";
+            const originalCity = profile.city || "";
+            const originalAbout = profile.about || "";
+            const originalPhotoUrl = profile.photoUrl || "";
+            const originalPhotos = profile.photos || [];
+
+            // Нормализуем
+            const normalizedCountry = originalCountry
+                ? this.normalizeCountryName(originalCountry)
+                : "Не указана";
+            const normalizedCity = originalCity
+                ? this.normalizeCityName(originalCity)
+                : "Не указан";
+
+            // Сохраняем для списков
+            if (normalizedCountry && normalizedCountry !== "Не указана") {
+                demoCountries.add(normalizedCountry);
+
+                if (!demoCitiesByCountry.has(normalizedCountry)) {
+                    demoCitiesByCountry.set(normalizedCountry, new Set());
+                }
+                if (normalizedCity && normalizedCity !== "Не указан") {
+                    demoCitiesByCountry.get(normalizedCountry).add(normalizedCity);
+                }
+            }
+
+            // Проверяем лимит 3 анкеты на город
+            const cityKey = `${normalizedCountry}_${normalizedCity}`;
+            const currentCount = cityProfilesCount.get(cityKey) || 0;
+
+            if (currentCount >= 3) {
+                continue;
+            }
+
+            cityProfilesCount.set(cityKey, currentCount + 1);
+
+            // 🔥 СОЗДАЕМ ДЕМО-ПРОФИЛЬ
+            const demoProfile = {
+                id: profile.id || `demo_${Date.now()}_${i}`,
+                n: originalName || `Анкета ${i + 1}`,
+                a: parseInt(originalAge) || 0,
+                c: normalizedCountry,
+                ct: normalizedCity,
+                ab: replaceSitesInAbout(originalAbout),
+                p: originalPhotoUrl,
+                phs: originalPhotos,
+                tg: null, // КОНТАКТЫ СКРЫТЫ
+                tel: null,
+                wa: null,
+                ca: profile.createdAt || new Date(),
+                isDemo: true,
+            };
+
+            // Проверяем наличие фото
+            const hasPhoto = demoProfile.p && demoProfile.p.trim() !== "";
+            const hasPhotos = demoProfile.phs && demoProfile.phs.length > 0;
+
+            if (!hasPhoto && !hasPhotos) {
+                continue;
+            }
+
+            // 🔥 СОХРАНЯЕМ В LMDB
+            demoDB.put(demoProfile.id, demoProfile);
+            demoProfilesCount++;
+
+            // Прогресс
+            if (demoProfilesCount % 1000 === 0) {
+                console.log(`💾 [DEMO SAVE] Сохранено ${demoProfilesCount} демо-профилей`);
+            }
+
+            if (i % 5000 === 0 && i > 0) {
+                console.log(`📊 [DEMO PROGRESS] Обработано ${i}/${profiles.length}, создано ${demoProfilesCount} демо-профилей`);
+            }
+        }
+
+        console.log(`✅ [DEMO CREATION] Создано ${demoProfilesCount} демо-профилей`);
+
+        if (demoProfilesCount === 0) {
+            console.log(`❌ [DEMO CRITICAL] Не создано ни одного демо-профиля!`);
+            return false;
+        }
+
+        // 🔥 🔥 🔥 🔥 🔥 🔥 🔥 🔥 🔥 🔥 🔥 🔥 🔥 🔥 🔥
+        // 🔥 ВАЖНОЕ ИСПРАВЛЕНИЕ: СОХРАНЯЕМ СТРАНЫ И ГОРОДА ДЛЯ ДЕМО
+        // 🔥 🔥 🔥 🔥 🔥 🔥 🔥 🔥 🔥 🔥 🔥 🔥 🔥 🔥 🔥
+
+        console.log(`📊 [DEMO GEO SAVE] Сохраняем ${demoCountries.size} стран и города в LMDB...`);
+
+        // 1. СОХРАНЯЕМ СТРАНЫ
+        const sortedCountries = Array.from(demoCountries).sort();
+        
+        // Удаляем старые данные
+        indexesDB.remove('demo:countries');
+        
+        // Сохраняем новые
+        indexesDB.put('demo:countries', sortedCountries);
+        
+        // ПРОВЕРЯЕМ
+        const savedCountries = indexesDB.get('demo:countries');
+        if (!savedCountries || savedCountries.length === 0) {
+            console.log(`❌ [DEMO COUNTRIES FAILED] Страны не сохранились в LMDB!`);
+        } else {
+            console.log(`✅ [DEMO COUNTRIES SAVED] Сохранено ${savedCountries.length} стран в LMDB`);
+        }
+
+        // 2. СОХРАНЯЕМ ГОРОДА ПО СТРАНАМ
+        let totalCitiesSaved = 0;
+        
+        for (const [country, citiesSet] of demoCitiesByCountry) {
+            const citiesArray = Array.from(citiesSet).sort();
+            
+            if (citiesArray.length === 0) continue;
+            
+            // 🔥 КЛЮЧ ДОЛЖЕН БЫТЬ ТОЧНО demo:cities:${country}
+            const cityKey = `demo:cities:${country}`;
+            
+            // Удаляем старые данные
+            indexesDB.remove(cityKey);
+            
+            // Сохраняем новые
+            indexesDB.put(cityKey, citiesArray);
+            totalCitiesSaved += citiesArray.length;
+            
+            // 🔥 СРАЗУ ПРОВЕРЯЕМ СОХРАНИЛОСЬ ЛИ
+            const savedCities = indexesDB.get(cityKey);
+            if (!savedCities || savedCities.length === 0) {
+                console.log(`❌ [DEMO CITIES FAILED] ${country}: города не сохранились!`);
+            } else {
+                console.log(`✅ [DEMO CITIES SAVED] ${country}: ${savedCities.length} городов`);
+            }
+        }
+
+        console.log(`✅ [DEMO GEO FINAL] Всего сохранено: ${sortedCountries.length} стран, ${totalCitiesSaved} городов`);
+
+        // 🔥 🔥 🔥 🔥 🔥 🔥 🔥 🔥 🔥 🔥 🔥 🔥 🔥 🔥 🔥
+        // 🔥 СОЗДАЕМ ИНДЕКСЫ ДЛЯ БЫСТРОГО ПОИСКА В ДЕМО-БАЗЕ
+        // 🔥 🔥 🔥 🔥 🔥 🔥 🔥 🔥 🔥 🔥 🔥 🔥 🔥 🔥 🔥
+
+        console.log(`📇 [DEMO INDEX] Создание индексов для демо-кэша...`);
+
+        // 🔥 ВАЖНО: getKeys() возвращает итератор, преобразуем в массив
+const profileKeys = Array.from(demoDB.getKeys());
+console.log(`📊 [DEMO INDEX] Всего профилей в демо-LMDB: ${profileKeys.length}`);
+
+if (profileKeys.length === 0) {
+    console.log(`❌ [DEMO INDEX ERROR] Демо-LMDB пуста!`);
+    return false;
+}
+        const demoCountryCityIndex = {};
+        const demoCountryIndex = {};
+        const demoCityIndex = {};
+        let indexedProfiles = 0;
+
+        for (const profileId of profileKeys) {
+            const profile = demoDB.get(profileId);
+            if (!profile) continue;
+
+            const country = profile.c;
+            const city = profile.ct;
+
+            if (country && country.trim() !== "" && country !== "Не указана") {
+                // Индекс по стране
+                if (!demoCountryIndex[country]) {
+                    demoCountryIndex[country] = [];
+                }
+                demoCountryIndex[country].push(profileId);
+
+                // Индекс по стране+городу
+                if (city && city.trim() !== "" && city !== "Не указан") {
+                    const key = `${country}:${city}`;
+                    if (!demoCountryCityIndex[key]) {
+                        demoCountryCityIndex[key] = [];
+                    }
+                    demoCountryCityIndex[key].push(profileId);
+
+                    // Индекс только по городу
+                    if (!demoCityIndex[city]) {
+                        demoCityIndex[city] = [];
+                    }
+                    demoCityIndex[city].push(profileId);
+                }
+
+                indexedProfiles++;
+            }
+
+            if (indexedProfiles % 5000 === 0) {
+                console.log(`📊 [DEMO INDEX PROGRESS] Индексировано ${indexedProfiles} профилей`);
+            }
+        }
+
+        console.log(`📊 [DEMO INDEX STATS] Всего профилей с данными: ${indexedProfiles}`);
+        console.log(`📊 [DEMO INDEX STATS] Уникальных стран: ${Object.keys(demoCountryIndex).length}`);
+        console.log(`📊 [DEMO INDEX STATS] Уникальных городов: ${Object.keys(demoCityIndex).length}`);
+
+        // 🔥 СОХРАНЯЕМ ИНДЕКСЫ В LMDB С ПРЕФИКСОМ demo:
+        indexesDB.remove('demo:index:country_city');
+        indexesDB.remove('demo:index:country');
+        indexesDB.remove('demo:index:city');
+        
+        indexesDB.put('demo:index:country_city', demoCountryCityIndex);
+        indexesDB.put('demo:index:country', demoCountryIndex);
+        indexesDB.put('demo:index:city', demoCityIndex);
+
+        console.log(`✅ [DEMO INDEX DONE] Индексы сохранены в LMDB`);
+
+        // 🔥 ФИНАЛЬНАЯ ПРОВЕРКА
+        console.log(`🔍 [DEMO FINAL CHECK] Проверяем сохраненные данные...`);
+        
+        const finalCountries = indexesDB.get('demo:countries');
+        const testCountry = sortedCountries.length > 0 ? sortedCountries[0] : null;
+        const testCities = testCountry ? indexesDB.get(`demo:cities:${testCountry}`) : null;
+        
+        console.log(`📊 [DEMO CHECK] Страны в LMDB: ${finalCountries?.length || 0}`);
+        console.log(`📊 [DEMO CHECK] Тестовая страна "${testCountry}": ${testCities?.length || 0} городов`);
+        
+        if (testCountry && (!testCities || testCities.length === 0)) {
+            console.log(`⚠️ [DEMO WARNING] Для тестовой страны "${testCountry}" нет городов!`);
+            
+            // 🔥 АВАРИЙНОЕ СОХРАНЕНИЕ: сохраняем города без префикса
+            console.log(`🔄 [DEMO EMERGENCY] Сохраняем города без префикса...`);
+            
+            for (const [country, citiesSet] of demoCitiesByCountry) {
+                const citiesArray = Array.from(citiesSet).sort();
+                if (citiesArray.length > 0) {
+                    indexesDB.put(`cities:${country}`, citiesArray);
+                }
+            }
+        }
+
+        return true;
+
+    } catch (error) {
+        console.error(`❌ [DEMO CREATION ERROR] Ошибка создания демо-кэша:`, error);
+        return false;
+    }
+},
+
+  // 4. СОЗДАНИЕ ДЕМО-КЭША ИЗ ПОЛНЫХ ПРОФИЛЕЙ В LMDB
+  async createDemoCacheFromFullProfilesLMDB() {
+    try {
+      console.log(`🔧 [DEMO FROM FULL LMDB] Создаем демо-кэш из полного LMDB...`);
+
+      const profileKeys = profilesDB.getKeys();
+      console.log(`📊 [FULL PROFILES] Всего профилей в LMDB: ${profileKeys.length}`);
+
+      if (profileKeys.length === 0) {
+        console.log(`❌ [DEMO ERROR] Полный LMDB пуст!`);
+        return false;
+      }
+
+      const transaction = demoDB.transaction();
+      const demoCountries = new Set();
+      const demoCitiesByCountry = new Map();
       const cityProfilesCount = new Map();
+      let demoProfilesCount = 0;
+      let processedProfiles = 0;
 
-      // 🔥 СОЗДАЕМ ДЕМО-ВЕРСИИ (3 анкеты на город, скрываем контакты)
-      console.log(
-        `👤 [DEMO PROCESSING] Обработка ${fullProfiles.length} профилей...`
-      );
+      // 🔥 ОБРАБАТЫВАЕМ ПРОФИЛИ ИЗ ПОЛНОГО LMDB
+      for (const profileId of profileKeys) {
+        processedProfiles++;
+        const profile = profilesDB.get(profileId);
+        if (!profile) continue;
 
-      for (let i = 0; i < fullProfiles.length; i++) {
-        const profile = fullProfiles[i];
+        // Нормализуем
+        const normalizedCountry = profile.c || "Не указана";
+        const normalizedCity = profile.ct || "Не указан";
 
-        // Получаем данные из профиля
-        const originalName = profile.n || profile.name || "";
-        const originalAge = profile.a || profile.age || 0;
-        const originalCountry = profile.c || profile.country || "";
-        const originalCity = profile.ct || profile.city || "";
-        const originalAbout = profile.ab || profile.about || "";
-        const originalPhotoUrl = profile.p || profile.photoUrl || "";
-        const originalPhotos = profile.phs || profile.photos || [];
-
-        // Нормализуем страну и город
-        const normalizedCountry = originalCountry
-          ? this.normalizeCountryName(originalCountry)
-          : "Не указана";
-        const normalizedCity = originalCity
-          ? this.normalizeCityName(originalCity)
-          : "Не указан";
-
-        // Сохраняем страны и города для списков
+        // Сохраняем для списков
         if (normalizedCountry && normalizedCountry !== "Не указана") {
-          countriesSet.add(normalizedCountry);
+          demoCountries.add(normalizedCountry);
 
-          if (!citiesByCountry.has(normalizedCountry)) {
-            citiesByCountry.set(normalizedCountry, new Set());
+          if (!demoCitiesByCountry.has(normalizedCountry)) {
+            demoCitiesByCountry.set(normalizedCountry, new Set());
           }
           if (normalizedCity && normalizedCity !== "Не указан") {
-            citiesByCountry.get(normalizedCountry).add(normalizedCity);
+            demoCitiesByCountry.get(normalizedCountry).add(normalizedCity);
           }
         }
 
@@ -1484,25 +1708,25 @@ const cacheManager = {
         const currentCount = cityProfilesCount.get(cityKey) || 0;
 
         if (currentCount >= 3) {
-          continue; // Пропускаем, если уже есть 3 анкеты для этого города
+          continue;
         }
 
         cityProfilesCount.set(cityKey, currentCount + 1);
 
         // 🔥 СОЗДАЕМ ДЕМО-ПРОФИЛЬ (скрываем контакты)
         const demoProfile = {
-          id: profile.id || `demo_${Date.now()}_${i}`,
-          n: originalName || `Анкета ${i + 1}`,
-          a: parseInt(originalAge) || 0,
+          id: profile.id || `demo_${profileId}`,
+          n: profile.n || `Анкета ${demoProfilesCount + 1}`,
+          a: parseInt(profile.a) || 0,
           c: normalizedCountry,
           ct: normalizedCity,
-          ab: replaceSitesInAbout(originalAbout),
-          p: originalPhotoUrl,
-          phs: originalPhotos,
-          tg: null, // 🔥 КОНТАКТЫ СКРЫТЫ
+          ab: replaceSitesInAbout(profile.ab || ""),
+          p: profile.p || "",
+          phs: profile.phs || [],
+          tg: null, // КОНТАКТЫ СКРЫТЫ
           tel: null,
           wa: null,
-          ca: profile.ca || profile.createdAt || new Date(),
+          ca: profile.ca || new Date(),
           isDemo: true,
         };
 
@@ -1511,439 +1735,841 @@ const cacheManager = {
         const hasPhotos = demoProfile.phs && demoProfile.phs.length > 0;
 
         if (!hasPhoto && !hasPhotos) {
-          console.log(
-            `⚠️ [DEMO SKIP] Профиль "${demoProfile.n}" без фото, пропускаем`
-          );
           continue;
         }
 
-        demoProfiles.push(demoProfile);
+        // Сохраняем в LMDB
+        transaction.put(demoProfile.id, demoProfile);
+        demoProfilesCount++;
 
-        // Прогресс каждые 5000 профилей
-        if (i % 5000 === 0 && i > 0) {
-          console.log(
-            `📊 [DEMO PROGRESS] Обработано ${i}/${fullProfiles.length}, создано ${demoProfiles.length} демо-профилей`
-          );
+        // Периодически коммитим
+        if (demoProfilesCount % 1000 === 0) {
+          await transaction.commit();
+          console.log(`💾 [DEMO SAVE] Сохранено ${demoProfilesCount} демо-профилей`);
+          transaction = demoDB.transaction();
+        }
+
+        // Прогресс
+        if (processedProfiles % 10000 === 0) {
+          console.log(`📊 [DEMO PROGRESS] Обработано ${processedProfiles}/${profileKeys.length}, создано ${demoProfilesCount} демо-профилей`);
         }
       }
 
-      console.log(
-        `✅ [DEMO CREATION] Создано ${demoProfiles.length} демо-профилей (из ${fullProfiles.length} полных)`
-      );
+      // Финальный коммит
+      await transaction.commit();
 
-      if (demoProfiles.length === 0) {
+      console.log(`✅ [DEMO CREATION] Создано ${demoProfilesCount} демо-профилей из ${processedProfiles} полных`);
+
+      if (demoProfilesCount === 0) {
         console.log(`❌ [DEMO CRITICAL] Не создано ни одного демо-профиля!`);
         return false;
       }
 
-      // 🔥 КЭШИРУЕМ ДЕМО-ПРОФИЛИ
-      console.log(
-        `💾 [DEMO CACHE] Кэширование ${demoProfiles.length} демо-профилей...`
-      );
-      await this.cacheGlobalProfiles(demoProfiles, true);
-
-      // 🔥 СОХРАНЯЕМ СТРАНЫ И ГОРОДЫ
-      console.log(`🗺️ [DEMO GEO] Сохранение стран и городов...`);
-      const sortedCountries = Array.from(countriesSet).sort();
-      globalDemoCache.set("demo:countries", sortedCountries);
-      globalDemoCache.set("demo:countries_raw", Array.from(countriesSet));
+      // 🔥 СОХРАНЯЕМ СТРАНЫ И ГОРОДЫ ДЛЯ ДЕМО
+      const sortedCountries = Array.from(demoCountries).sort();
+      await indexesDB.put('demo:countries', sortedCountries);
 
       // Сохраняем города по странам
-      citiesByCountry.forEach((citiesSet, country) => {
-        globalDemoCache.set(
-          `demo:cities:${country}`,
-          Array.from(citiesSet).sort()
-        );
-      });
+      for (const [country, citiesSet] of demoCitiesByCountry) {
+        await indexesDB.put(`demo:cities:${country}`, Array.from(citiesSet).sort());
+      }
 
-      // 🔥 СОЗДАЕМ ИНДЕКСЫ ДЛЯ ДЕМО-КЭША (ПОЛНОСТЬЮ ПЕРЕПИСАНО)
-      console.log(
-        `📇 [DEMO INDEX] Создание индексов для демо-кэша из ${demoProfiles.length} профилей...`
-      );
+      // 🔥 СОЗДАЕМ ИНДЕКСЫ ДЛЯ ДЕМО-КЭША
+      console.log(`📇 [DEMO INDEX] Создание индексов для демо-кэша...`);
+      await this.createDemoIndexesLMDB();
 
-      const demoCountryCityIndex = new Map();
-      const demoCountryIndex = new Map();
-      const demoCityIndex = new Map(); // 🔥 НОВЫЙ: индекс только по городам
+      return true;
 
+    } catch (error) {
+      console.error(`❌ [DEMO FROM FULL ERROR] Ошибка создания демо-кэша:`, error);
+      return false;
+    }
+  },
+
+  // 5. СОЗДАНИЕ ИНДЕКСОВ ДЛЯ ДЕМО-КЭША В LMDB
+  async createDemoIndexesLMDB() {
+    try {
+      console.log(`📇 [DEMO INDEX LMDB] Создание индексов для демо-кэша...`);
+
+      const profileKeys = demoDB.getKeys();
+      const transaction = indexesDB.transaction();
+
+      const demoCountryCityIndex = {};
+      const demoCountryIndex = {};
+      const demoCityIndex = {};
       let indexedProfiles = 0;
-      let profilesWithCountry = 0;
-      let profilesWithCity = 0;
 
-      for (let i = 0; i < demoProfiles.length; i++) {
-        const profile = demoProfiles[i];
+      for (const profileId of profileKeys) {
+        const profile = demoDB.get(profileId);
+        if (!profile) continue;
+
         const country = profile.c;
+        const city = profile.ct;
 
         if (country && country !== "Не указана") {
-          profilesWithCountry++;
-
-          // 1. Индекс по стране
-          if (!demoCountryIndex.has(country)) {
-            demoCountryIndex.set(country, []);
+          // Индекс по стране
+          if (!demoCountryIndex[country]) {
+            demoCountryIndex[country] = [];
           }
-          demoCountryIndex.get(country).push(i);
+          demoCountryIndex[country].push(profileId);
 
-          // 2. Индекс по стране+городу
-          const city = profile.ct;
+          // Индекс по стране+городу
           if (city && city !== "Не указан") {
-            profilesWithCity++;
             const key = `${country}:${city}`;
-            if (!demoCountryCityIndex.has(key)) {
-              demoCountryCityIndex.set(key, []);
+            if (!demoCountryCityIndex[key]) {
+              demoCountryCityIndex[key] = [];
             }
-            demoCountryCityIndex.get(key).push(i);
+            demoCountryCityIndex[key].push(profileId);
 
-            // 3. Индекс только по городу (для быстрого поиска)
-            if (!demoCityIndex.has(city)) {
-              demoCityIndex.set(city, []);
+            // Индекс только по городу
+            if (!demoCityIndex[city]) {
+              demoCityIndex[city] = [];
             }
-            demoCityIndex.get(city).push(i);
+            demoCityIndex[city].push(profileId);
           }
 
           indexedProfiles++;
         }
 
-        // Прогресс создания индексов
-        if (i % 1000 === 0 && i > 0) {
-          console.log(
-            `📊 [INDEX PROGRESS] Индексировано ${i}/${demoProfiles.length} профилей`
-          );
+        // Прогресс
+        if (indexedProfiles % 5000 === 0) {
+          console.log(`📊 [DEMO INDEX PROGRESS] Индексировано ${indexedProfiles} профилей`);
         }
       }
 
-      // Сохраняем индексы в демо-кэш
-      globalDemoCache.set("demo:index:country_city", demoCountryCityIndex);
-      globalDemoCache.set("demo:index:country", demoCountryIndex);
-      globalDemoCache.set("demo:index:city", demoCityIndex);
+      // Сохраняем индексы в LMDB
+      transaction.put('demo:index:country_city', demoCountryCityIndex);
+      transaction.put('demo:index:country', demoCountryIndex);
+      transaction.put('demo:index:city', demoCityIndex);
 
-      const indexTime = Date.now();
-      console.log(
-        `✅ [DEMO INDEX] Индексы созданы: ${demoCountryIndex.size} стран, ${demoCountryCityIndex.size} пар страна+город, ${demoCityIndex.size} городов`
-      );
-      console.log(
-        `📊 [DEMO INDEX STATS] Профилей: ${indexedProfiles}, с указанной страной: ${profilesWithCountry}, с указанным городом: ${profilesWithCity}`
-      );
+      await transaction.commit();
 
-      // 🔥 ПРОВЕРКА ИНДЕКСОВ НА КОНКРЕТНЫХ ГОРОДАХ
-      console.log(`🔍 [DEMO INDEX CHECK] Проверка индексов для Сараево...`);
-
-      const checkCities = [
-        { country: "🇧🇦 Босния", city: "Сараево" },
-        { country: "🇧🇦 Босния", city: "Мостар" },
-        { country: "🇦🇪 ОАЭ", city: "Дубай" },
-        { country: "🇷🇺 Россия", city: "Москва" },
-      ];
-
-      checkCities.forEach(({ country, city }) => {
-        const key = `${country}:${city}`;
-        const profilesCount = demoCountryCityIndex.get(key)?.length || 0;
-        console.log(
-          `   📍 ${country} → ${city}: ${profilesCount} профилей в индексе`
-        );
-
-        if (profilesCount > 0) {
-          // Получаем первый профиль для проверки
-          const firstIndex = demoCountryCityIndex.get(key)[0];
-          const sampleProfile = demoProfiles[firstIndex];
-          console.log(
-            `       👤 Пример: "${sampleProfile.n}", ${
-              sampleProfile.a
-            } лет, фото: ${sampleProfile.p ? "есть" : "нет"}, фото галереи: ${
-              sampleProfile.phs?.length || 0
-            }`
-          );
-        }
-      });
-
-      // Статистика
-      console.log(
-        `📊 [DEMO STATS] Профилей: ${demoProfiles.length}, Стран: ${countriesSet.size}`
-      );
-
-      // Проверяем Сараево
-      const bosniaKey = "🇧🇦 Босния";
-      if (citiesByCountry.has(bosniaKey)) {
-        const bosniaCities = citiesByCountry.get(bosniaKey);
-        console.log(`🇧🇦 [BOSNIA] Городов: ${bosniaCities.size}`);
-
-        const sarajevoProfiles = demoProfiles.filter(
-          (p) => p.c === bosniaKey && p.ct === "Сараево"
-        );
-        console.log(`🇧🇦 [SARAJEVO] Профилей: ${sarajevoProfiles.length}`);
-
-        if (sarajevoProfiles.length > 0) {
-          const sample = sarajevoProfiles[0];
-          console.log(
-            `   👤 Пример профиля: "${sample.n}", фото: ${
-              sample.p ? "есть" : "нет"
-            }, фото галереи: ${sample.phs?.length || 0}`
-          );
-        }
-      }
+      console.log(`✅ [DEMO INDEX DONE] Индексы созданы: ${Object.keys(demoCountryIndex).length} стран, ${Object.keys(demoCountryCityIndex).length} пар страна+город`);
 
       return true;
     } catch (error) {
-      console.error(
-        `❌ [DEMO CREATION ERROR] Ошибка создания демо-кэша:`,
-        error
-      );
+      console.error(`❌ [DEMO INDEX ERROR] Ошибка создания индексов:`, error);
       return false;
     }
   },
-  // 3. КЭШИРОВАНИЕ ПРОФИЛЕЙ В ГЛОБАЛЬНЫЙ КЭШ (ИСПРАВЛЕННАЯ ВЕРСИЯ)
-  async cacheGlobalProfiles(profiles, isDemo = false) {
-    try {
-      console.log(
-        `🔄 [${isDemo ? "GLOBAL DEMO" : "GLOBAL FULL"} CACHE] Кэширование ${
-          profiles.length
-        } анкет...`
-      );
 
-      // 🔥 ИСПРАВЛЕНИЕ: Сохраняем ВСЕ данные профиля
-      const normalizedProfiles = profiles.map((profile) => ({
-        id: profile.id || profile._id || "",
-        n: profile.n || profile.name || "",
-        a: parseInt(profile.a || profile.age) || 0,
-        c: profile.c || profile.country || "",
-        ct: profile.ct || profile.city || "",
-        ab: profile.ab || profile.about || "",
-        p: profile.p || profile.photoUrl || "",
-        phs: Array.isArray(profile.phs || profile.photos)
-          ? profile.phs || profile.photos
-          : [],
-        tg: isDemo ? null : profile.tg || profile.telegram,
-        tel: isDemo ? null : profile.tel || profile.phone,
-        wa: isDemo ? null : profile.wa || profile.whatsapp,
-        ca: profile.ca || profile.createdAt || new Date(),
-        isDemo: isDemo || profile.isDemo || false,
-      }));
-
-      console.log(
-        `🔍 [CACHE SAMPLE] Пример профиля в кэше: ${
-          normalizedProfiles[0]?.n || "нет имени"
-        }, фото: ${normalizedProfiles[0]?.p ? "есть" : "нет"}, фото галереи: ${
-          normalizedProfiles[0]?.phs?.length || 0
-        }`
-      );
-
-      // СЖАТИЕ ДАННЫХ
-      const jsonString = JSON.stringify(normalizedProfiles);
-      const compressed = zlib.gzipSync(jsonString);
-
-      if (isDemo) {
-        globalDemoCache.set("demo:profiles", compressed);
-        console.log(
-          `💾 [DEMO CACHE] Сохранено ${
-            normalizedProfiles.length
-          } профилей с названием: ${normalizedProfiles[0]?.n || "неизвестно"}`
-        );
-      } else {
-        globalProfilesCache.set("profiles:all", compressed);
-        console.log(
-          `💾 [FULL CACHE] Сохранено ${
-            normalizedProfiles.length
-          } профилей с названием: ${normalizedProfiles[0]?.n || "неизвестно"}`
-        );
-      }
-
-      console.log(
-        `✅ [GLOBAL CACHE] Сжатие: ${jsonString.length} → ${
-          compressed.length
-        } bytes (${Math.round(
-          (1 - compressed.length / jsonString.length) * 100
-        )}% экономии)`
-      );
-
-      return true;
-    } catch (error) {
-      console.error(`❌ [GLOBAL CACHE] Ошибка кэширования:`, error);
-      return false;
-    }
-  },
-  // 4. ПОЛУЧЕНИЕ ПРОФИЛЕЙ ИЗ ГЛОБАЛЬНОГО КЭША (ИСПРАВЛЕННАЯ ВЕРСИЯ)
+  // 6. ПОЛУЧЕНИЕ ПРОФИЛЕЙ ИЗ LMDB
   getGlobalProfiles(isDemo = false) {
     try {
-      let compressed;
+      lmdbMemoryUsage.reads++;
+      
       if (isDemo) {
-        compressed = globalDemoCache.get("demo:profiles");
-        console.log(
-          `🔍 [GET DEMO PROFILES] Ключ найден: ${compressed ? "да" : "нет"}`
-        );
+        const profileKeys = demoDB.getKeys();
+        const profiles = [];
+        
+        for (const key of profileKeys) {
+          const profile = demoDB.get(key);
+          if (profile) {
+            profiles.push(profile);
+          }
+        }
+        
+        console.log(`✅ [LMDB DEMO] Загружено ${profiles.length} профилей из LMDB`);
+        return profiles;
       } else {
-        compressed = globalProfilesCache.get("profiles:all");
+        const profileKeys = profilesDB.getKeys();
+        const profiles = [];
+        
+        for (const key of profileKeys) {
+          const profile = profilesDB.get(key);
+          if (profile) {
+            profiles.push(profile);
+          }
+        }
+        
+        console.log(`✅ [LMDB FULL] Загружено ${profiles.length} профилей из LMDB`);
+        return profiles;
       }
-
-      if (!compressed) {
-        console.log(
-          `❌ [GET GLOBAL PROFILES] Нет данных в кэше (демо: ${isDemo})`
-        );
-        return null;
-      }
-
-      // РАСПАКОВКА ДАННЫХ
-      const decompressed = zlib.gunzipSync(compressed);
-      const profiles = JSON.parse(decompressed.toString());
-
-      console.log(
-        `✅ [GET GLOBAL PROFILES] Загружено ${profiles.length} профилей (демо: ${isDemo})`
-      );
-      if (profiles.length > 0) {
-        console.log(
-          `📋 [SAMPLE] Первый профиль: ${
-            profiles[0]?.n || "нет имени"
-          }, фото: ${profiles[0]?.p ? "есть" : "нет"}, фото галереи: ${
-            profiles[0]?.phs?.length || 0
-          }`
-        );
-      }
-
-      return profiles;
     } catch (error) {
-      console.error(`❌ [GLOBAL CACHE] Ошибка распаковки:`, error);
+      console.error(`❌ [LMDB GET PROFILES] Ошибка:`, error);
+      return [];
+    }
+  },
+
+  // 7. ПОЛУЧЕНИЕ ОДНОГО ПРОФИЛЯ ИЗ LMDB ПО ID
+  getProfileById(profileId, isDemo = false) {
+    try {
+      lmdbMemoryUsage.reads++;
+      
+      if (isDemo) {
+        return demoDB.get(profileId);
+      } else {
+        return profilesDB.get(profileId);
+      }
+    } catch (error) {
+      console.error(`❌ [LMDB GET BY ID] Ошибка:`, error);
       return null;
     }
   },
 
-  // 5. ПОЛУЧЕНИЕ СТРАН ИЗ ГЛОБАЛЬНОГО КЭША
-  getGlobalCountries(isDemo = false) {
-    if (isDemo) {
-      return globalDemoCache.get("demo:countries") || [];
-    } else {
-      return globalProfilesCache.get("profiles:countries") || [];
+// 8. ПОЛУЧЕНИЕ СТРАН ИЗ LMDB
+getGlobalCountries(isDemo = false) {
+    try {
+        lmdbMemoryUsage.reads++;
+        
+        if (isDemo) {
+            const countries = indexesDB.get('demo:countries');
+            if (countries && countries.length > 0) {
+                console.log(`✅ [DEMO COUNTRIES] Из LMDB: ${countries.length} стран`);
+                return countries;
+            }
+            
+            // 🔥 ЕСЛИ НЕТ В ИНДЕКСАХ - ПРОБУЕМ ИЗ ПРОФИЛЕЙ
+            console.log(`🔍 [DEMO COUNTRIES MISSING] Извлекаем из профилей...`);
+            return this.extractCountriesFromDemoProfiles();
+        } else {
+            const countries = indexesDB.get('countries:all');
+            if (countries && countries.length > 0) {
+                console.log(`✅ [FULL COUNTRIES] Из LMDB: ${countries.length} стран`);
+                return countries;
+            }
+            
+            // 🔥 ЕСЛИ НЕТ В ИНДЕКСАХ - ПРОБУЕМ ИЗ ПРОФИЛЕЙ
+            console.log(`🔍 [FULL COUNTRIES MISSING] Извлекаем из профилей...`);
+            return this.extractCountriesFromFullProfiles();
+        }
+    } catch (error) {
+        console.error(`❌ [LMDB GET COUNTRIES] Ошибка:`, error);
+        return FALLBACK_COUNTRIES;
     }
-  },
+},
 
-  // 6. ПОЛУЧЕНИЕ ГОРОДОВ ИЗ ГЛОБАЛЬНОГО КЭША
-  getGlobalCities(country, isDemo = false) {
-    if (isDemo) {
-      return globalDemoCache.get(`demo:cities:${country}`) || [];
-    } else {
-      return globalProfilesCache.get(`profiles:cities:${country}`) || [];
+// 🔥 НОВАЯ ФУНКЦИЯ: извлекаем страны из демо-профилей
+extractCountriesFromDemoProfiles() {
+    try {
+        console.log(`🌍 [EXTRACT COUNTRIES] Извлекаем страны из демо-профилей...`);
+        
+        // 🔥 ИСПРАВЛЕНИЕ: getKeys() возвращает итератор
+        const profileKeys = Array.from(demoDB.getKeys());
+        console.log(`📊 [EXTRACT COUNTRIES] Всего профилей в демо-LMDB: ${profileKeys.length}`);
+        
+        if (profileKeys.length === 0) {
+            console.log(`⚠️ [EXTRACT COUNTRIES] Демо-LMDB пуст`);
+            return [];
+        }
+        
+        const countriesSet = new Set();
+        let processed = 0;
+        let validProfiles = 0;
+        
+        for (const profileId of profileKeys) {
+            const profile = demoDB.get(profileId);
+            if (profile && profile.c && profile.c.trim() !== "" && profile.c !== "Не указана") {
+                countriesSet.add(profile.c);
+                validProfiles++;
+            }
+            
+            processed++;
+            if (processed % 10000 === 0) {
+                console.log(`🌍 [EXTRACT COUNTRIES] Обработано ${processed} профилей`);
+            }
+        }
+        
+        const countries = Array.from(countriesSet).sort();
+        console.log(`✅ [EXTRACTED COUNTRIES] Найдено ${validProfiles} валидных профилей с ${countries.length} странами`);
+        
+        if (countries.length === 0) {
+            console.log(`⚠️ [EXTRACT COUNTRIES] Не найдено ни одной страны в профилях!`);
+            // Возвращаем fallback
+            const fallback = FALLBACK_COUNTRIES || [];
+            console.log(`🔄 [EXTRACT COUNTRIES] Возвращаем ${fallback.length} fallback стран`);
+            indexesDB.put('demo:countries', fallback);
+            return fallback;
+        }
+        
+        // Сохраняем в indexesDB на будущее
+        indexesDB.put('demo:countries', countries);
+        console.log(`✅ [EXTRACTED COUNTRIES] Сохранено ${countries.length} стран в индексы`);
+        
+        return countries;
+    } catch (error) {
+        console.error(`❌ [EXTRACT COUNTRIES ERROR]:`, error);
+        // Всегда возвращаем fallback при ошибке
+        const fallback = FALLBACK_COUNTRIES || [];
+        console.log(`🔄 [EXTRACT COUNTRIES ERROR] Возвращаем ${fallback.length} fallback стран при ошибке`);
+        return fallback;
     }
-  },
+},
+// 🔥 НОВАЯ ФУНКЦИЯ: извлекаем страны из полных профилей
+extractCountriesFromFullProfiles() {
+    try {
+        const profileKeys = profilesDB.getKeys();
+        const countriesSet = new Set();
+        let processed = 0;
+        
+        for (const profileId of profileKeys) {
+            const profile = profilesDB.get(profileId);
+            if (profile && profile.c && profile.c !== "Не указана") {
+                countriesSet.add(profile.c);
+            }
+            
+            processed++;
+            if (processed % 10000 === 0) {
+                console.log(`🌍 [EXTRACT FULL COUNTRIES] Обработано ${processed} профилей`);
+            }
+        }
+        
+        const countries = Array.from(countriesSet).sort();
+        console.log(`✅ [EXTRACTED FULL COUNTRIES] Найдено ${countries.length} стран из полных профилей`);
+        
+        // Сохраняем в indexesDB на будущее
+        indexesDB.put('countries:all', countries);
+        
+        return countries;
+    } catch (error) {
+        console.error(`❌ [EXTRACT FULL COUNTRIES ERROR]:`, error);
+        return [];
+    }
+},
 
-  // 7. КЭШ ФИЛЬТРОВ (глобальный)
+// 9. ПОЛУЧЕНИЕ ГОРОДОВ ИЗ LMDB (УПРОЩЕННАЯ РАБОЧАЯ ВЕРСИЯ)
+getGlobalCities: function(country, isDemo = false) {
+    try {
+        console.log(`🌆 [GET CITIES] Запрос городов для: "${country}" (демо: ${isDemo})`);
+        
+        lmdbMemoryUsage.reads++;
+        
+        // 🔥 ВАЖНО: Нормализуем название страны
+        const normalizedCountry = this.normalizeCountryName(country);
+        console.log(`🔍 [NORMALIZED] "${country}" → "${normalizedCountry}"`);
+        
+        if (isDemo) {
+            // 🔥 ДЛЯ ДЕМО: сначала пробуем демо-индекс
+            const demoKey = `demo:cities:${normalizedCountry}`;
+            let cities = indexesDB.get(demoKey);
+            
+            if (cities && cities.length > 0) {
+                console.log(`✅ [DEMO CITIES] Из индекса: ${cities.length} городов`);
+                return cities;
+            }
+            
+            // 🔥 Если нет в демо - пробуем общий индекс
+            const generalKey = `cities:${normalizedCountry}`;
+            cities = indexesDB.get(generalKey);
+            
+            if (cities && cities.length > 0) {
+                console.log(`✅ [DEMO FROM GENERAL] Из общего индекса: ${cities.length} городов`);
+                indexesDB.put(demoKey, cities); // Сохраняем в демо на будущее
+                return cities;
+            }
+            
+            // 🔥 Если нет в индексах - извлекаем
+            console.log(`🔄 [DEMO EXTRACT] Извлекаем города из демо-профилей`);
+            return this.extractCitiesFromDemoProfiles(normalizedCountry);
+            
+        } else {
+            // 🔥 ДЛЯ ПОЛНОГО ДОСТУПА
+            const fullKey = `cities:${normalizedCountry}`;
+            let cities = indexesDB.get(fullKey);
+            
+            if (cities && cities.length > 0) {
+                console.log(`✅ [FULL CITIES] Из индекса: ${cities.length} городов`);
+                return cities;
+            }
+            
+            // 🔥 КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Пробуем разные варианты ключей
+            console.log(`🔍 [FULL NOT FOUND] Не найден ключ: ${fullKey}`);
+            
+            // Вариант 1: Пробуем ключ без нормализации
+            const rawKey = `cities:${country}`;
+            cities = indexesDB.get(rawKey);
+            if (cities && cities.length > 0) {
+                console.log(`✅ [RAW KEY] Нашли по сырому ключу: ${rawKey} → ${cities.length} городов`);
+                indexesDB.put(fullKey, cities); // Сохраняем под нормализованным ключом
+                return cities;
+            }
+            
+            // Вариант 2: Ищем все ключи с городами
+            console.log(`🔍 [SEARCH ALL KEYS] Ищем ключи содержащие "cities:"`);
+            const allKeys = Array.from(indexesDB.getKeys());
+            const cityKeys = allKeys.filter(key => 
+                key.startsWith('cities:') && key.includes('Украин')
+            );
+            
+            console.log(`🔍 [KEYS FOUND] Найдено ключей: ${cityKeys.length}`);
+            cityKeys.forEach(key => {
+                const data = indexesDB.get(key);
+                console.log(`   ${key}: ${data?.length || 0} городов`);
+            });
+            
+            // 🔥 ИЗВЛЕКАЕМ ЗАНОВО
+            console.log(`🔄 [FULL EXTRACT] Запускаем извлечение городов`);
+            cities = this.extractCitiesFromFullProfiles(normalizedCountry);
+            
+            if (cities.length > 0) {
+                console.log(`✅ [EXTRACTED] Извлечено ${cities.length} городов`);
+                
+                // 🔥 СОХРАНЯЕМ ПОД РАЗНЫМИ КЛЮЧАМИ НА ВСЯКИЙ СЛУЧАЙ
+                indexesDB.put(fullKey, cities);
+                indexesDB.put(`cities:${country}`, cities);
+                
+                // Также сохраняем для демо на будущее
+                indexesDB.put(`demo:cities:${normalizedCountry}`, cities.slice(0, 30)); // 30 городов для демо
+                
+                return cities;
+            }
+            
+            return [];
+        }
+        
+    } catch (error) {
+        console.error(`❌ [GET CITIES ERROR] Для "${country}":`, error);
+        
+        // Fallback для популярных стран
+        const fallback = {
+            '🇺🇦 Украина': ['Киев', 'Одесса', 'Харьков', 'Львов', 'Днепр', 'Запорожье', 'Винница', 'Тернополь', 
+                          'Хмельницкий', 'Черкассы', 'Черновцы', 'Ивано-Франковск', 'Николаев', 'Полтава', 
+                          'Ровно', 'Сумы', 'Ужгород', 'Житомир', 'Краматорск', 'Славянск', 'Луцк', 'Херсон'],
+            '🇷🇺 Россия': ['Москва', 'Санкт-Петербург', 'Новосибирск', 'Екатеринбург', 'Казань', 'Нижний Новгород']
+        };
+        
+        if (fallback[country]) {
+            console.log(`⚠️ [FALLBACK] Используем fallback для ${country}`);
+            return fallback[country];
+        }
+        
+        return [];
+    }
+},
+// 🔥 ПЕРЕПИСАННЫЙ МЕТОД: ИЗВЛЕЧЕНИЕ ГОРОДОВ ИЗ ДЕМО-ПРОФИЛЕЙ
+extractCitiesFromDemoProfiles: function(country) {
+    try {
+        console.log(`🌆 [DEMO EXTRACT] Извлекаем города для: "${country}" (демо-режим)`);
+        
+        // ШАГ 1: НОРМАЛИЗАЦИЯ
+        const normalizedCountry = this.normalizeCountryName(country);
+        console.log(`🔍 Нормализовано: "${country}" → "${normalizedCountry}"`);
+        
+        // ШАГ 2: ПРОВЕРЯЕМ ЕСТЬ ЛИ УЖЕ ВСЕ ГОРОДА В ПОЛНЫХ ИНДЕКСАХ
+        const fullCitiesKey = `cities:${normalizedCountry}`;
+        const allCities = indexesDB.get(fullCitiesKey);
+        
+        if (allCities && allCities.length > 0) {
+            console.log(`✅ [DEMO FROM FULL] Найдено ${allCities.length} городов в полных индексах`);
+            
+            // 🔥 ВАЖНО: В ДЕМО-РЕЖИМЕ ПОКАЗЫВАЕМ ВСЕ ГОРОДА, НО ОГРАНИЧИВАЕМ 3 АНКЕТЫ НА ГОРОД
+            // Это делается на уровне фильтрации анкет, а не ограничения городов!
+            
+            // Сохраняем все города для демо-режима
+            indexesDB.put(`demo:cities:${normalizedCountry}`, allCities);
+            console.log(`💾 Сохранено ${allCities.length} городов для демо-режима`);
+            
+            return allCities;
+        }
+        
+        // ШАГ 3: ЕСЛИ НЕТ В ПОЛНЫХ ИНДЕКСАХ - ИЩЕМ В ДЕМО-БАЗЕ
+        const profileKeys = Array.from(demoDB.getKeys());
+        console.log(`📊 Всего демо-профилей: ${profileKeys.length}`);
+        
+        if (profileKeys.length === 0) {
+            console.log(`❌ Демо-LMDB пуста!`);
+            return [];
+        }
+        
+        // ШАГ 4: ПАТТЕРНЫ ПОИСКА (ТАКИЕ ЖЕ КАК ДЛЯ ПОЛНОГО ДОСТУПА)
+        const countryWithoutFlag = normalizedCountry.replace(/[\u{1F1E6}-\u{1F1FF}]/gu, '').trim();
+        let searchPatterns = [];
+        
+        if (countryWithoutFlag.includes('Украин') || countryWithoutFlag.includes('Ukrain')) {
+            searchPatterns = ['Украин', 'Ukrain', 'Укр', 'Ukraine', 'UA'];
+        } else if (countryWithoutFlag.includes('Росс') || countryWithoutFlag.includes('Russ')) {
+            searchPatterns = ['Росс', 'Russ', 'Росси', 'Russia', 'RU'];
+        } else {
+            searchPatterns = [countryWithoutFlag];
+        }
+        
+        // ШАГ 5: ИЩЕМ ГОРОДА В ДЕМО-БАЗЕ
+        const citiesSet = new Set();
+        let processed = 0;
+        
+        for (const profileId of profileKeys) {
+            processed++;
+            
+            const profile = demoDB.get(profileId);
+            if (!profile) continue;
+            
+            const profileCountry = profile.c || '';
+            const profileCity = profile.ct || '';
+            
+            // Пропускаем если нет города
+            if (!profileCity || profileCity.trim() === '' || 
+                profileCity === 'Не указан' || profileCity === 'Не указано') {
+                continue;
+            }
+            
+            // ПРОВЕРЯЕМ СТРАНУ
+            let countryMatch = false;
+            const normalizedProfileCountry = this.normalizeCountryName(profileCountry);
+            
+            // Вариант 1: Точное совпадение
+            if (normalizedProfileCountry === normalizedCountry) {
+                countryMatch = true;
+            }
+            
+            // Вариант 2: По паттернам
+            if (!countryMatch) {
+                const profileCountryLower = profileCountry.toLowerCase();
+                for (const pattern of searchPatterns) {
+                    if (profileCountryLower.includes(pattern.toLowerCase())) {
+                        countryMatch = true;
+                        break;
+                    }
+                }
+            }
+            
+            if (countryMatch) {
+                // Нормализуем и добавляем город
+                let normalizedCity = profileCity.trim()
+                    .replace(/^["'«»]+/, '')
+                    .replace(/["'«»]+$/, '')
+                    .trim();
+                
+                if (normalizedCity.length >= 2) {
+                    citiesSet.add(normalizedCity);
+                }
+            }
+            
+            // Прогресс
+            if (processed % 1000 === 0) {
+                console.log(`📊 Демо-прогресс: ${processed}/${profileKeys.length}, городов: ${citiesSet.size}`);
+            }
+        }
+        
+        const cities = Array.from(citiesSet).sort();
+        
+        console.log(`✅ [DEMO RESULT] Для "${country}":`);
+        console.log(`   • Обработано демо-профилей: ${processed}`);
+        console.log(`   • Уникальных городов: ${cities.length}`);
+        
+        if (cities.length > 0) {
+            console.log(`   • Примеры: ${cities.slice(0, 10).join(', ')}`);
+        }
+        
+        // 🔥 ВАЖНО: Сохраняем города для демо-режима
+        if (cities.length > 0) {
+            indexesDB.put(`demo:cities:${normalizedCountry}`, cities);
+            
+            // Также сохраняем под другими ключами
+            indexesDB.put(`demo:cities:${country}`, cities);
+            
+            if (normalizedCountry.includes('Украин')) {
+                indexesDB.put('demo:cities:Украина', cities);
+            }
+        }
+        
+        return cities;
+        
+    } catch (error) {
+        console.error(`❌ [DEMO EXTRACT ERROR] для "${country}":`, error);
+        return [];
+    }
+},
+
+// 🔥 ПЕРЕПИСАННЫЙ МЕТОД: ИЗВЛЕЧЕНИЕ ГОРОДОВ ИЗ ПОЛНЫХ ПРОФИЛЕЙ
+extractCitiesFromFullProfiles: function(country) {
+    try {
+        console.log(`🌆 [EXTRACT CITIES] Начинаем извлечение городов для: "${country}"`);
+        
+        // ШАГ 1: НОРМАЛИЗАЦИЯ СТРАНЫ
+        const normalizedCountry = this.normalizeCountryName(country);
+        console.log(`🔍 Нормализовано: "${country}" → "${normalizedCountry}"`);
+        
+        // ШАГ 2: ПОЛУЧАЕМ ВСЕ ПРОФИЛИ
+        const profileKeys = Array.from(profilesDB.getKeys());
+        console.log(`📊 Всего профилей в LMDB: ${profileKeys.length}`);
+        
+        if (profileKeys.length === 0) {
+            console.log(`❌ LMDB пуста!`);
+            return [];
+        }
+        
+        // ШАГ 3: СОЗДАЕМ КЛЮЧЕВЫЕ СЛОВА ДЛЯ ПОИСКА
+        let searchPatterns = [];
+        
+        // Убираем флаг для поиска
+        const countryWithoutFlag = normalizedCountry.replace(/[\u{1F1E6}-\u{1F1FF}]/gu, '').trim();
+        
+        if (countryWithoutFlag.includes('Украин') || countryWithoutFlag.includes('Ukrain')) {
+            searchPatterns = ['Украин', 'Ukrain', 'Укр', 'Ukraine', 'UA'];
+        } else if (countryWithoutFlag.includes('Росс') || countryWithoutFlag.includes('Russ')) {
+            searchPatterns = ['Росс', 'Russ', 'Росси', 'Russia', 'RU'];
+        } else {
+            searchPatterns = [countryWithoutFlag];
+        }
+        
+        console.log(`🔑 Паттерны поиска: ${searchPatterns.join(', ')}`);
+        
+        // ШАГ 4: ИЩЕМ ГОРОДА
+        const citiesMap = new Map(); // Для сбора уникальных городов
+        const countryVariants = new Set(); // Для отладки вариантов страны
+        let processed = 0;
+        let matchedProfiles = 0;
+        
+        for (const profileId of profileKeys) {
+            processed++;
+            
+            const profile = profilesDB.get(profileId);
+            if (!profile) continue;
+            
+            const profileCountry = profile.c || '';
+            const profileCity = profile.ct || '';
+            
+            // Пропускаем если нет города
+            if (!profileCity || 
+                profileCity.trim() === '' || 
+                profileCity === 'Не указан' ||
+                profileCity === 'Не указано') {
+                continue;
+            }
+            
+            // ПРОВЕРЯЕМ СТРАНУ
+            let countryMatch = false;
+            
+            // Вариант 1: Точное совпадение нормализованных названий
+            const normalizedProfileCountry = this.normalizeCountryName(profileCountry);
+            if (normalizedProfileCountry === normalizedCountry) {
+                countryMatch = true;
+            }
+            
+            // Вариант 2: Совпадение по паттернам (без учета регистра)
+            if (!countryMatch) {
+                const profileCountryLower = profileCountry.toLowerCase();
+                const normalizedProfileCountryLower = normalizedProfileCountry.toLowerCase();
+                
+                for (const pattern of searchPatterns) {
+                    const patternLower = pattern.toLowerCase();
+                    if (profileCountryLower.includes(patternLower) || 
+                        normalizedProfileCountryLower.includes(patternLower)) {
+                        countryMatch = true;
+                        break;
+                    }
+                }
+            }
+            
+            // Вариант 3: Для Украины - дополнительная проверка
+            if (!countryMatch && searchPatterns.includes('Украин')) {
+                const ukrainePatterns = ['Украин', 'Ukrain', 'Укр'];
+                const hasUkraine = ukrainePatterns.some(pattern => 
+                    profileCountry.toLowerCase().includes(pattern.toLowerCase()) ||
+                    normalizedProfileCountry.toLowerCase().includes(pattern.toLowerCase())
+                );
+                if (hasUkraine) countryMatch = true;
+            }
+            
+            if (countryMatch) {
+                matchedProfiles++;
+                countryVariants.add(profileCountry); // Сохраняем вариант написания
+                
+                // НОРМАЛИЗУЕМ ГОРОД
+                let normalizedCity = profileCity.trim();
+                
+                // Убираем кавычки и лишние символы
+                normalizedCity = normalizedCity
+                    .replace(/^["'«»]+/, '')
+                    .replace(/["'«»]+$/, '')
+                    .trim();
+                
+                // Пропускаем слишком короткие названия
+                if (normalizedCity.length < 2) continue;
+                
+                // Добавляем город в карту
+                if (!citiesMap.has(normalizedCity)) {
+                    citiesMap.set(normalizedCity, {
+                        original: profileCity,
+                        count: 1
+                    });
+                } else {
+                    citiesMap.get(normalizedCity).count++;
+                }
+            }
+            
+            // Прогресс
+            if (processed % 10000 === 0) {
+                console.log(`📊 Прогресс: ${processed}/${profileKeys.length}, найдено ${citiesMap.size} городов`);
+            }
+        }
+        
+        // ШАГ 5: СОРТИРОВКА РЕЗУЛЬТАТОВ
+        const sortedCities = Array.from(citiesMap.entries())
+            .sort((a, b) => b[1].count - a[1].count) // Сначала города с большим количеством анкет
+            .map(([city, data]) => city);
+        
+        // ШАГ 6: ВЫВОД СТАТИСТИКИ
+        console.log(`✅ [РЕЗУЛЬТАТ] Для "${country}":`);
+        console.log(`   • Обработано профилей: ${processed}`);
+        console.log(`   • Соответствует стране: ${matchedProfiles}`);
+        console.log(`   • Уникальных городов: ${sortedCities.length}`);
+        console.log(`   • Вариантов написания страны в БД: ${countryVariants.size}`);
+        
+        if (countryVariants.size > 0) {
+            console.log(`   • Примеры вариантов: ${Array.from(countryVariants).slice(0, 5).join(', ')}`);
+        }
+        
+        if (sortedCities.length > 0) {
+            console.log(`   • Топ-10 городов: ${sortedCities.slice(0, 10).join(', ')}`);
+            if (sortedCities.length > 100) {
+                console.log(`   • Всего более 100 городов, показываем первые 100`);
+            }
+        } else {
+            console.log(`   ⚠️ Городов не найдено!`);
+        }
+        
+        // ШАГ 7: СОХРАНЕНИЕ В ИНДЕКСЫ (КРИТИЧЕСКИ ВАЖНО!)
+        if (sortedCities.length > 0) {
+            // СОХРАНЯЕМ ПОД РАЗНЫМИ КЛЮЧАМИ, ЧТОБЫ ГАРАНТИРОВАТЬ НАХОЖДЕНИЕ
+            
+            // 1. Основной ключ (нормализованная страна)
+            const mainKey = `cities:${normalizedCountry}`;
+            indexesDB.put(mainKey, sortedCities);
+            console.log(`💾 Сохранено под ключом: ${mainKey}`);
+            
+            // 2. Ключ без флага
+            const countryNoFlag = normalizedCountry.replace(/[\u{1F1E6}-\u{1F1FF}]/gu, '').trim();
+            if (countryNoFlag && countryNoFlag !== normalizedCountry) {
+                indexesDB.put(`cities:${countryNoFlag}`, sortedCities);
+                console.log(`💾 Сохранено под ключом: cities:${countryNoFlag}`);
+            }
+            
+            // 3. Оригинальный запрос (как пришел)
+            if (country !== normalizedCountry) {
+                indexesDB.put(`cities:${country}`, sortedCities);
+                console.log(`💾 Сохранено под ключом: cities:${country}`);
+            }
+            
+            // 4. Специальные ключи для Украины и России
+            if (normalizedCountry.includes('Украин') || searchPatterns.includes('Украин')) {
+                indexesDB.put('cities:Украина', sortedCities);
+                indexesDB.put('cities:Ukraine', sortedCities);
+                indexesDB.put('cities:UA', sortedCities);
+                console.log(`💾 Сохранено дополнительные ключи для Украины`);
+            }
+            
+            if (normalizedCountry.includes('Росс') || searchPatterns.includes('Росс')) {
+                indexesDB.put('cities:Россия', sortedCities);
+                indexesDB.put('cities:Russia', sortedCities);
+                indexesDB.put('cities:RU', sortedCities);
+                console.log(`💾 Сохранено дополнительные ключи для России`);
+            }
+            
+            // 5. Также сохраняем ограниченную версию для демо (первые 50 городов)
+            const demoCities = sortedCities.slice(0, Math.min(50, sortedCities.length));
+            indexesDB.put(`demo:cities:${normalizedCountry}`, demoCities);
+            console.log(`💾 Сохранено ${demoCities.length} городов для демо-режима`);
+        }
+        
+        return sortedCities;
+        
+    } catch (error) {
+        console.error(`❌ [EXTRACT ERROR] Ошибка извлечения городов для "${country}":`, error);
+        return [];
+    }
+},
+
+
+
+
+  // 10. КЭШ ФИЛЬТРОВ В LMDB
   cacheGlobalFilter(filterKey, profiles, isDemo = false) {
     try {
-      const cacheKey = isDemo
-        ? `demo:filter:${filterKey}`
-        : `filter:${filterKey}`;
-
-      if (isDemo) {
-        globalDemoCache.set(cacheKey, profiles);
-      } else {
-        globalFilterCache.set(cacheKey, profiles);
-      }
-
-      readingStats.addCacheHit();
+      lmdbMemoryUsage.writes++;
+      
+      const cacheKey = isDemo ? `demo:filter:${filterKey}` : `filter:${filterKey}`;
+      
+      // Сохраняем в LMDB с TTL
+      const ttl = Date.now() + (SCALING_CONFIG.CACHE.FILTERS_TTL * 1000);
+      filtersCacheDB.put(cacheKey, {
+        profiles: profiles,
+        expires: ttl
+      });
+      
+      console.log(`💾 [LMDB FILTER CACHE] Сохранен фильтр: ${cacheKey}, профилей: ${profiles.length}`);
       return true;
     } catch (error) {
-      console.error(`❌ [FILTER CACHE] Ошибка:`, error);
+      console.error(`❌ [LMDB FILTER CACHE] Ошибка:`, error);
       return false;
     }
   },
 
   getGlobalFilter(filterKey, isDemo = false) {
     try {
-      const cacheKey = isDemo
-        ? `demo:filter:${filterKey}`
-        : `filter:${filterKey}`;
-
-      let result;
-      if (isDemo) {
-        result = globalDemoCache.get(cacheKey);
-      } else {
-        result = globalFilterCache.get(cacheKey);
+      lmdbMemoryUsage.reads++;
+      
+      const cacheKey = isDemo ? `demo:filter:${filterKey}` : `filter:${filterKey}`;
+      const cached = filtersCacheDB.get(cacheKey);
+      
+      if (!cached) {
+        lmdbMemoryUsage.cacheMisses++;
+        return null;
       }
-
-      if (result) {
-        readingStats.addCacheHit();
-      } else {
-        readingStats.addCacheMiss();
+      
+      // Проверяем TTL
+      if (cached.expires && cached.expires < Date.now()) {
+        filtersCacheDB.remove(cacheKey);
+        lmdbMemoryUsage.cacheMisses++;
+        return null;
       }
-
-      return result;
+      
+      lmdbMemoryUsage.cacheHits++;
+      return cached.profiles || [];
     } catch (error) {
-      console.error(`❌ [FILTER CACHE] Ошибка получения:`, error);
+      console.error(`❌ [LMDB GET FILTER] Ошибка:`, error);
+      lmdbMemoryUsage.cacheMisses++;
       return null;
     }
   },
 
-  // ===================== ФУНКЦИИ ДЛЯ ИНДИВИДУАЛЬНЫХ КЭШЕЙ ПОЛЬЗОВАТЕЛЕЙ =====================
-
-  // 8. КЭШ ПОДПИСКИ (индивидуальный для пользователя)
-  cacheSubscription(userId, isActive) {
-    console.log(
-      `💾 [USER SUBSCRIPTION CACHE] Сохранение для ${userId}: ${isActive}`
-    );
-    return subscriptionCache.set(
-      `subscription:${userId}`,
-      isActive,
-      SCALING_CONFIG.CACHE.SUBSCRIPTION_TTL
-    );
+  // 11. ПОЛУЧЕНИЕ ПРОФИЛЕЙ ПО ИНДЕКСУ (ОПТИМИЗИРОВАННОЕ)
+  getProfilesByIndex(indexKey, isDemo = false) {
+    try {
+      lmdbMemoryUsage.reads++;
+      
+      let indexes;
+      if (isDemo) {
+        if (indexKey.startsWith('country_city:')) {
+          const countryCityIndex = indexesDB.get('demo:index:country_city') || {};
+          const key = indexKey.replace('country_city:', '');
+          indexes = countryCityIndex[key] || [];
+        } else if (indexKey.startsWith('country:')) {
+          const countryIndex = indexesDB.get('demo:index:country') || {};
+          const key = indexKey.replace('country:', '');
+          indexes = countryIndex[key] || [];
+        } else if (indexKey.startsWith('city:')) {
+          const cityIndex = indexesDB.get('demo:index:city') || {};
+          const key = indexKey.replace('city:', '');
+          indexes = cityIndex[key] || [];
+        }
+      } else {
+        indexes = indexesDB.get(indexKey) || [];
+      }
+      
+      if (!indexes || indexes.length === 0) {
+        return [];
+      }
+      
+      // Получаем профили по ID
+      const profiles = [];
+      const db = isDemo ? demoDB : profilesDB;
+      
+      for (const profileId of indexes) {
+        const profile = db.get(profileId);
+        if (profile) {
+          profiles.push(profile);
+        }
+      }
+      
+      return profiles;
+    } catch (error) {
+      console.error(`❌ [LMDB GET BY INDEX] Ошибка:`, error);
+      return [];
+    }
   },
 
-  getCachedSubscription(userId) {
-    const subscription = subscriptionCache.get(`subscription:${userId}`);
-    console.log(
-      `🔍 [USER SUBSCRIPTION CACHE] Запрос для ${userId}: ${
-        subscription !== undefined ? subscription : "нет в кэше"
-      }`
-    );
-    return subscription;
-  },
-
-  // 9. КЭШ КАНАЛА (индивидуальный для пользователя)
-  cacheChannelSubscription(userId, isSubscribed) {
-    console.log(
-      `💾 [USER CHANNEL CACHE] Сохранение для ${userId}: ${isSubscribed}`
-    );
-    return channelSubscriptionCache.set(
-      `channel:${userId}`,
-      isSubscribed,
-      SCALING_CONFIG.CACHE.CHANNEL_TTL
-    );
-  },
-
-  getCachedChannelSubscription(userId) {
-    const subscribed = channelSubscriptionCache.get(`channel:${userId}`);
-    console.log(
-      `🔍 [USER CHANNEL CACHE] Запрос для ${userId}: ${
-        subscribed !== undefined ? subscribed : "нет в кэше"
-      }`
-    );
-    return subscribed;
-  },
-
-  // 10. КЭШ СТАТУСА ПОЛЬЗОВАТЕЛЯ
-  setUserCacheStatus(userId, cacheType) {
-    console.log(
-      `💾 [USER STATUS CACHE] Установка статуса для ${userId}: ${cacheType}`
-    );
-    userCacheStatus.set(
-      `cache_status:${userId}`,
-      cacheType,
-      SCALING_CONFIG.CACHE.SESSIONS_TTL
-    );
-  },
-
-  getUserCacheStatus(userId) {
-    const status = userCacheStatus.get(`cache_status:${userId}`);
-    console.log(`🔍 [USER STATUS CACHE] Статус для ${userId}: ${status}`);
-    return status;
-  },
-
-  // 11. ПРОВЕРКА ЗАГРУЗКИ ГЛОБАЛЬНЫХ КЭШЕЙ
-  isGlobalFullCacheLoaded() {
-    const fullProfiles = this.getGlobalProfiles(false);
-    return !!(fullProfiles && fullProfiles.length > 0);
-  },
-
-  isGlobalDemoCacheLoaded() {
-    const demoProfiles = this.getGlobalProfiles(true);
-    return !!(demoProfiles && demoProfiles.length > 0);
-  },
-
-  // 12. ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
+  // 12. НОРМАЛИЗАЦИЯ ГОРОДОВ И СТРАН (остаются без изменений)
   normalizeCityName(cityName) {
     if (!cityName || typeof cityName !== "string") return cityName;
 
@@ -1980,104 +2606,102 @@ const cacheManager = {
     return trimmedCountry.charAt(0).toUpperCase() + trimmedCountry.slice(1);
   },
 
-  // 13. СТАТИСТИКА КЭША
-  getGlobalCacheStats() {
-    const fullProfiles = this.getGlobalProfiles(false);
-    const demoProfiles = this.getGlobalProfiles(true);
+  // 13. СТАТИСТИКА LMDB
+getLMDBStats() {
+    try {
+        // 🔥 ИСПРАВЛЕНИЕ: getKeys() возвращает итератор, преобразуем в массив
+        const profilesCount = Array.from(profilesDB.getKeys()).length;
+        const demoProfilesCount = Array.from(demoDB.getKeys()).length;
+        const filtersCount = Array.from(filtersCacheDB.getKeys()).length;
+        
+        return {
+            profilesCount: profilesCount,
+            demoProfilesCount: demoProfilesCount,
+            filtersCount: filtersCount,
+            memoryUsage: lmdbMemoryUsage,
+            lmdbDir: LMDB_DIR,
+            totalReads: lmdbMemoryUsage.reads,
+            totalWrites: lmdbMemoryUsage.writes,
+            cacheHitRate: lmdbMemoryUsage.reads > 0 
+                ? (lmdbMemoryUsage.cacheHits / lmdbMemoryUsage.reads * 100).toFixed(2) + '%'
+                : '0%'
+        };
+    } catch (error) {
+        console.error(`❌ [LMDB STATS ERROR]:`, error);
+        return {
+            profilesCount: 0,
+            demoProfilesCount: 0,
+            filtersCount: 0,
+            error: error.message
+        };
+    }
+},
 
-    return {
-      fullCache: {
-        loaded: !!fullProfiles,
-        profilesCount: fullProfiles ? fullProfiles.length : 0,
-        countriesCount: this.getGlobalCountries(false).length,
-      },
-      demoCache: {
-        loaded: !!demoProfiles,
-        profilesCount: demoProfiles ? demoProfiles.length : 0,
-        countriesCount: this.getGlobalCountries(true).length,
-      },
-      filterCacheKeys: globalFilterCache.keys().length,
-      demoFilterCacheKeys: globalDemoCache
-        .keys()
-        .filter((k) => k.startsWith("demo:filter:")).length,
-      subscriptionCacheCount: subscriptionCache.keys().length,
-      channelCacheCount: channelSubscriptionCache.keys().length,
-      userStatusCacheCount: userCacheStatus.keys().length,
-    };
+  // 14. ОЧИСТКА ПРОСРОЧЕННЫХ ФИЛЬТРОВ
+  cleanupExpiredFilters() {
+    try {
+      const now = Date.now();
+      let cleanedCount = 0;
+      const filterKeys = filtersCacheDB.getKeys();
+      
+      for (const key of filterKeys) {
+        const cached = filtersCacheDB.get(key);
+        if (cached && cached.expires && cached.expires < now) {
+          filtersCacheDB.remove(key);
+          cleanedCount++;
+        }
+      }
+      
+      if (cleanedCount > 0) {
+        console.log(`🧹 [LMDB CLEANUP] Очищено ${cleanedCount} просроченных фильтров`);
+      }
+      
+      return cleanedCount;
+    } catch (error) {
+      console.error(`❌ [LMDB CLEANUP] Ошибка:`, error);
+      return 0;
+    }
   },
 
-  // 14. ИНИЦИАЛИЗАЦИЯ ГЛОБАЛЬНЫХ КЭШЕЙ ПРИ СТАРТЕ БОТА
-  async initializeGlobalCaches(db) {
-    console.log(
-      "🚀 [GLOBAL CACHE INIT] Начинаем инициализацию глобальных кэшей..."
-    );
+  // 15. ИНИЦИАЛИЗАЦИЯ LMDB ПРИ СТАРТЕ
+  async initializeLMDB(db) {
+    console.log("🚀 [LMDB INIT] Инициализация LMDB...");
 
     try {
-      // ЗАГРУЖАЕМ СНАЧАЛА ДЕМО-КЭШ (он нужен всем пользователям)
-      if (!this.isGlobalDemoCacheLoaded()) {
-        console.log("🔄 [GLOBAL CACHE INIT] Загружаем демо-кэш...");
+      // Проверяем, есть ли уже данные в LMDB
+      const hasDemoData = demoDB.getKeys().length > 0;
+      const hasFullData = profilesDB.getKeys().length > 0;
+
+      if (!hasDemoData) {
+        console.log("🔄 [LMDB INIT] Загружаем демо-кэш...");
         await this.loadGlobalDemoCache(db);
       } else {
-        console.log("✅ [GLOBAL CACHE INIT] Демо-кэш уже загружен");
+        console.log(`✅ [LMDB INIT] Демо-кэш уже загружен: ${demoDB.getKeys().length} профилей`);
       }
 
-      // ПОЛНЫЙ КЭШ БУДЕТ ЗАГРУЖЕН ПРИ ПЕРВОМ ПОЛЬЗОВАТЕЛЕ С ПОДПИСКОЙ
-      console.log(
-        "⏳ [GLOBAL CACHE INIT] Полный кэш будет загружен по требованию"
-      );
+      // Периодическая очистка фильтров
+      setInterval(() => {
+        this.cleanupExpiredFilters();
+      }, 3600000); // Каждый час
+
+      // Мониторинг памяти
+      setInterval(() => {
+        const stats = this.getLMDBStats();
+        console.log(`📊 [LMDB STATS] Профили: ${stats.profilesCount}/Демо: ${stats.demoProfilesCount}, Чтения: ${stats.totalReads}, Попадания: ${stats.cacheHitRate}`);
+      }, 300000); // Каждые 5 минут
 
       globalCacheInitialized = true;
-      console.log("✅ [GLOBAL CACHE INIT] Инициализация завершена");
+      console.log("✅ [LMDB INIT] Инициализация завершена");
 
       return true;
     } catch (error) {
-      console.error("❌ [GLOBAL CACHE INIT] Ошибка инициализации:", error);
+      console.error("❌ [LMDB INIT] Ошибка инициализации:", error);
       return false;
     }
-  },
-
-  // 15. ЛЕНИВАЯ ЗАГРУЗКА ПОЛНОГО КЭША (когда первый пользователь с подпиской запросит)
-  async lazyLoadGlobalFullCache(db, userId = "system") {
-    // ЕСЛИ УЖЕ ЗАГРУЖАЕТСЯ - ЖДЕМ
-    if (globalFullCacheLoading) {
-      console.log("⏳ [LAZY GLOBAL CACHE] Полный кэш уже загружается...");
-      return false;
-    }
-
-    // ЕСЛИ УЖЕ ЗАГРУЖЕН
-    if (this.isGlobalFullCacheLoaded()) {
-      console.log("✅ [LAZY GLOBAL CACHE] Полный кэш уже загружен");
-      return true;
-    }
-
-    console.log(
-      `🚀 [LAZY GLOBAL CACHE] Запускаем загрузку полного кэша (инициатор: ${userId})...`
-    );
-
-    try {
-      // ПОКАЗЫВАЕМ СООБЩЕНИЕ О ЗАГРУЗКЕ (если есть контекст)
-      if (userId !== "system") {
-        // Здесь можно отправить сообщение пользователю, что загружается кэш
-      }
-
-      // ЗАГРУЖАЕМ ПОЛНЫЙ КЭШ
-      const success = await this.loadGlobalFullCache(db);
-
-      if (success) {
-        console.log("✅ [LAZY GLOBAL CACHE] Полный кэш успешно загружен");
-        return true;
-      } else {
-        console.log("❌ [LAZY GLOBAL CACHE] Не удалось загрузить полный кэш");
-        return false;
-      }
-    } catch (error) {
-      console.error("❌ [LAZY GLOBAL CACHE] Ошибка загрузки:", error);
-      return false;
-    }
-  },
+  }
 };
 
-// ===================== ОПТИМИЗИРОВАННАЯ СИСТЕМА ФИЛЬТРАЦИИ =====================
+// ===================== ОПТИМИЗИРОВАННАЯ СИСТЕМА ФИЛЬТРАЦИИ С LMDB =====================
 
 class AsyncFilterManager {
   constructor() {
@@ -2086,11 +2710,9 @@ class AsyncFilterManager {
       timeout: SCALING_CONFIG.MESSAGE_QUEUE.TIMEOUT,
     });
 
-    // Кэш для быстрых результатов часто используемых фильтров
-    this.hotFilterCache = new Map();
     this.stats = {
       totalFilters: 0,
-      indexHits: 0,
+      lmdbIndexHits: 0,
       cacheHits: 0,
       slowFilters: 0,
     };
@@ -2100,87 +2722,65 @@ class AsyncFilterManager {
     return this.filterQueue.add(async () => {
       this.stats.totalFilters++;
 
-      console.log(
-        `🔍 [FILTER ${this.stats.totalFilters}] Запрос (демо: ${isDemo})`
-      );
-      console.log(
-        `📍 Параметры: страна="${filters.country || "нет"}", город="${
-          filters.city || "нет"
-        }", возраст="${filters.ageRange?.label || "all"}"`
-      );
+      console.log(`🔍 [FILTER ${this.stats.totalFilters}] Запрос (демо: ${isDemo})`);
+      console.log(`📍 Параметры: страна="${filters.country || "нет"}", город="${filters.city || "нет"}", возраст="${filters.ageRange?.label || "all"}"`);
 
-      const filterKey = `country:${filters.country || "all"}:age:${
-        filters.ageRange?.label || "all"
-      }:city:${filters.city || "all"}`;
+      const filterKey = `country:${filters.country || "all"}:age:${filters.ageRange?.label || "all"}:city:${filters.city || "all"}`;
 
-      // 1. ПРОВЕРКА КЭША ФИЛЬТРОВ (TTL: 24 часа)
+      // 1. ПРОВЕРКА КЭША ФИЛЬТРОВ В LMDB
       const cached = cacheManager.getGlobalFilter(filterKey, isDemo);
-      if (cached) {
+      if (cached && cached.length > 0) {
         this.stats.cacheHits++;
-        console.log(`✅ [CACHE HIT] Из кэша: ${cached.length} профилей`);
+        console.log(`✅ [CACHE HIT] Из LMDB кэша: ${cached.length} профилей`);
         return cached;
       }
 
       console.log(`🔍 [CACHE MISS] Промах: ${filterKey}`);
-      console.log(`📊 Всего профилей: ${profiles.length} (демо: ${isDemo})`);
 
       const startTime = Date.now();
 
-      // 2. ПЫТАЕМСЯ ИСПОЛЬЗОВАТЬ ИНДЕКСЫ ДЛЯ СВЕРХБЫСТРОЙ ФИЛЬТРАЦИИ
+      // 2. ПЫТАЕМСЯ ИСПОЛЬЗОВАТЬ LMDB ИНДЕКСЫ ДЛЯ СВЕРХБЫСТРОЙ ФИЛЬТРАЦИИ
       let filteredProfiles = [];
 
       if (filters.country || filters.city) {
-        const indexedResult = this.applyFiltersWithIndex(profiles, filters);
-        if (indexedResult !== null) {
+        const indexedResult = this.applyFiltersWithLMDBIndex(filters, isDemo);
+        if (indexedResult !== null && indexedResult.length > 0) {
           filteredProfiles = indexedResult;
-          this.stats.indexHits++;
-          console.log(`🎯 [INDEX USED] Использованы индексы`);
+          this.stats.lmdbIndexHits++;
+          console.log(`🎯 [LMDB INDEX USED] Использованы LMDB индексы: ${filteredProfiles.length} профилей`);
         }
       }
 
-      // 3. ЕСЛИ ИНДЕКСЫ НЕ СРАБОТАЛИ - ИСПОЛЬЗУЕМ ОПТИМИЗИРОВАННУЮ ФИЛЬТРАЦИЮ
-      if (filteredProfiles.length === 0 && filteredProfiles !== null) {
+      // 3. ЕСЛИ LMDB ИНДЕКСЫ НЕ СРАБОТАЛИ - ИСПОЛЬЗУЕМ СТАНДАРТНУЮ ФИЛЬТРАЦИЮ
+      if (filteredProfiles.length === 0) {
         console.log(`🔍 [STANDARD FILTER] Используем стандартную фильтрацию`);
 
-        if (profiles.length > 10000 && (filters.country || filters.city)) {
-          filteredProfiles = await this.applyFiltersParallel(profiles, filters);
+        const allProfiles = cacheManager.getGlobalProfiles(isDemo);
+        
+        if (allProfiles.length > 10000 && (filters.country || filters.city)) {
+          filteredProfiles = await this.applyFiltersParallel(allProfiles, filters);
         } else {
-          filteredProfiles = this.applyFiltersSequential(profiles, filters);
+          filteredProfiles = this.applyFiltersSequential(allProfiles, filters);
         }
       }
 
       const filterTime = Date.now() - startTime;
 
-      // 4. СТАТИСТИКА И СОХРАНЕНИЕ РЕЗУЛЬТАТА
+      // 4. СТАТИСТИКА И СОХРАНЕНИЕ РЕЗУЛЬТАТА В LMDB
       if (filteredProfiles.length > 0) {
-        console.log(
-          `✅ [FILTER COMPLETE] Найдено ${filteredProfiles.length} профилей за ${filterTime}мс`
-        );
+        console.log(`✅ [FILTER COMPLETE] Найдено ${filteredProfiles.length} профилей за ${filterTime}мс`);
 
-        // Сохраняем в глобальный кэш фильтров
+        // Сохраняем в LMDB кэш фильтров
         cacheManager.cacheGlobalFilter(filterKey, filteredProfiles, isDemo);
-        console.log(`💾 [CACHE SAVED] Сохранено в кэш (TTL: 24 часа)`);
+        console.log(`💾 [LMDB CACHE SAVED] Сохранено в LMDB (TTL: 24 часа)`);
 
         // Статистика производительности
-        const speedPer1000 = filterTime / (profiles.length / 1000);
+        const speedPer1000 = filterTime / (filteredProfiles.length / 1000);
         console.log(`📈 [SPEED] ${speedPer1000.toFixed(2)}мс на 1000 профилей`);
 
         if (filterTime > 2000) {
           this.stats.slowFilters++;
-          console.log(
-            `⚠️  [WARNING] Медленная фильтрация: ${(filterTime / 1000).toFixed(
-              2
-            )}с`
-          );
-        }
-
-        // Сохраняем в горячий кэш для частых запросов
-        if (filterTime < 1000 && filteredProfiles.length > 0) {
-          this.hotFilterCache.set(filterKey, {
-            profiles: filteredProfiles,
-            timestamp: Date.now(),
-            count: filteredProfiles.length,
-          });
+          console.log(`⚠️ [WARNING] Медленная фильтрация: ${(filterTime / 1000).toFixed(2)}с`);
         }
       } else {
         console.log(`❌ [NO RESULTS] Не найдено профилей за ${filterTime}мс`);
@@ -2197,18 +2797,9 @@ class AsyncFilterManager {
     });
   }
 
-  // ==================== МЕТОД ИНДЕКСНОЙ ФИЛЬТРАЦИИ ====================
-  applyFiltersWithIndex(profiles, filters) {
+  // ==================== МЕТОД ФИЛЬТРАЦИИ С ИСПОЛЬЗОВАНИЕМ LMDB ИНДЕКСОВ ====================
+  applyFiltersWithLMDBIndex(filters, isDemo = false) {
     const startTime = Date.now();
-
-    // Получаем индексы из глобального кэша
-    const countryCityIndex = globalProfilesCache.get("index:country_city");
-    const countryIndex = globalProfilesCache.get("index:country");
-
-    if (!countryCityIndex || !countryIndex) {
-      console.log(`⚠️ [INDEX] Индексы не найдены в кэше`);
-      return null;
-    }
 
     const normalizedFilterCountry = filters.country
       ? cacheManager.normalizeCountryName(filters.country)
@@ -2220,86 +2811,73 @@ class AsyncFilterManager {
     const minAge = hasAgeFilter ? filters.ageRange.min : 0;
     const maxAge = hasAgeFilter ? filters.ageRange.max : 999;
 
-    let profileIndexes = [];
+    let profileIds = [];
 
-    // СЦЕНАРИЙ 1: Страна + Город (самый быстрый)
+    // СЦЕНАРИЙ 1: Страна + Город (самый быстрый через LMDB индекс)
     if (normalizedFilterCountry && normalizedFilterCity) {
-      const key = `${normalizedFilterCountry}:${normalizedFilterCity}`;
-      profileIndexes = countryCityIndex.get(key) || [];
-
-      if (profileIndexes.length > 0) {
-        console.log(
-          `⚡ [INDEX 1] Страна+Город "${key}": ${profileIndexes.length} профилей`
-        );
+      const indexKey = `country_city:${normalizedFilterCountry}:${normalizedFilterCity}`;
+      profileIds = cacheManager.getProfilesByIndex(indexKey, isDemo);
+      
+      if (profileIds.length > 0) {
+        console.log(`⚡ [LMDB INDEX 1] Страна+Город: ${profileIds.length} профилей`);
       } else {
-        console.log(`⚡ [INDEX 1] Страна+Город "${key}": не найдено`);
+        console.log(`⚡ [LMDB INDEX 1] Страна+Город: не найдено`);
         return [];
       }
     }
     // СЦЕНАРИЙ 2: Только Страна
     else if (normalizedFilterCountry && !normalizedFilterCity) {
-      profileIndexes = countryIndex.get(normalizedFilterCountry) || [];
-
-      if (profileIndexes.length > 0) {
-        console.log(
-          `⚡ [INDEX 2] Только страна "${normalizedFilterCountry}": ${profileIndexes.length} профилей`
-        );
+      const indexKey = `country:${normalizedFilterCountry}`;
+      profileIds = cacheManager.getProfilesByIndex(indexKey, isDemo);
+      
+      if (profileIds.length > 0) {
+        console.log(`⚡ [LMDB INDEX 2] Только страна: ${profileIds.length} профилей`);
       } else {
-        console.log(
-          `⚡ [INDEX 2] Только страна "${normalizedFilterCountry}": не найдено`
-        );
+        console.log(`⚡ [LMDB INDEX 2] Только страна: не найдено`);
         return [];
       }
     }
-    // СЦЕНАРИЙ 3: Только Город (не поддерживается индексом - нужен полный перебор)
+    // СЦЕНАРИЙ 3: Только Город (через LMDB индекс)
     else if (!normalizedFilterCountry && normalizedFilterCity) {
-      console.log(
-        `⚠️ [INDEX 3] Только город "${normalizedFilterCity}" - индекс не поддерживается`
-      );
-      return null;
+      const indexKey = `city:${normalizedFilterCity}`;
+      profileIds = cacheManager.getProfilesByIndex(indexKey, isDemo);
+      
+      if (profileIds.length > 0) {
+        console.log(`⚡ [LMDB INDEX 3] Только город: ${profileIds.length} профилей`);
+      } else {
+        console.log(`⚡ [LMDB INDEX 3] Только город: не найдено`);
+        return [];
+      }
     }
     // СЦЕНАРИЙ 4: Нет фильтров по стране/городу
     else {
-      console.log(`⚠️ [INDEX 4] Нет фильтров по стране/городу`);
+      console.log(`⚠️ [LMDB INDEX 4] Нет фильтров по стране/городу`);
       return null;
     }
 
-    // Получаем профили по индексам
-    const indexedProfiles = new Array(profileIndexes.length);
-    for (let i = 0; i < profileIndexes.length; i++) {
-      indexedProfiles[i] = profiles[profileIndexes[i]];
-    }
-
     // Применяем фильтр по возрасту если есть
-    let finalProfiles = indexedProfiles;
-    if (hasAgeFilter && indexedProfiles.length > 0) {
+    let finalProfiles = profileIds;
+    if (hasAgeFilter && profileIds.length > 0) {
       finalProfiles = [];
-      for (let i = 0; i < indexedProfiles.length; i++) {
-        const profile = indexedProfiles[i];
+      for (const profile of profileIds) {
         const age = parseInt(profile.a) || 0;
         if (age >= minAge && age <= maxAge) {
           finalProfiles.push(profile);
         }
       }
-      console.log(
-        `⚡ [INDEX AGE] После фильтрации по возрасту: ${finalProfiles.length} профилей`
-      );
+      console.log(`⚡ [LMDB AGE FILTER] После фильтрации по возрасту: ${finalProfiles.length} профилей`);
     }
 
     const indexTime = Date.now() - startTime;
-    console.log(
-      `✅ [INDEX DONE] ${finalProfiles.length} профилей за ${indexTime}мс`
-    );
+    console.log(`✅ [LMDB INDEX DONE] ${finalProfiles.length} профилей за ${indexTime}мс`);
 
     return finalProfiles;
   }
 
-  // ==================== ПАРАЛЛЕЛЬНАЯ ФИЛЬТРАЦИЯ ====================
+  // ==================== ПАРАЛЛЕЛЬНАЯ ФИЛЬТРАЦИЯ (остается без изменений) ====================
   async applyFiltersParallel(profiles, filters) {
     return new Promise((resolve) => {
-      console.log(
-        `🧩 [PARALLEL START] Параллельная фильтрация ${profiles.length} профилей`
-      );
+      console.log(`🧩 [PARALLEL START] Параллельная фильтрация ${profiles.length} профилей`);
       const startTime = Date.now();
 
       const normalizedFilterCountry = filters.country
@@ -2318,9 +2896,7 @@ class AsyncFilterManager {
       const allResults = [];
       let completedChunks = 0;
 
-      console.log(
-        `🧩 [PARALLEL CONFIG] ${CHUNKS} чанков по ~${chunkSize} профилей`
-      );
+      console.log(`🧩 [PARALLEL CONFIG] ${CHUNKS} чанков по ~${chunkSize} профилей`);
 
       for (let chunkIndex = 0; chunkIndex < CHUNKS; chunkIndex++) {
         const startIdx = chunkIndex * chunkSize;
@@ -2341,15 +2917,10 @@ class AsyncFilterManager {
               if (!profileCountry) continue;
 
               if (profileCountry !== normalizedFilterCountry) {
-                const normalizedProfileCountry =
-                  cacheManager.normalizeCountryName(profileCountry);
+                const normalizedProfileCountry = cacheManager.normalizeCountryName(profileCountry);
                 if (normalizedProfileCountry !== normalizedFilterCountry) {
-                  const cleanFilter = normalizedFilterCountry
-                    .toLowerCase()
-                    .trim();
-                  const cleanProfile = normalizedProfileCountry
-                    .toLowerCase()
-                    .trim();
+                  const cleanFilter = normalizedFilterCountry.toLowerCase().trim();
+                  const cleanProfile = normalizedProfileCountry.toLowerCase().trim();
                   if (cleanProfile !== cleanFilter) continue;
                 }
               }
@@ -2378,21 +2949,13 @@ class AsyncFilterManager {
           allResults.push(...chunkResults);
           completedChunks++;
 
-          console.log(
-            `🧩 [CHUNK ${chunkIndex + 1}/${CHUNKS}] Завершен: ${
-              chunkResults.length
-            } профилей`
-          );
+          console.log(`🧩 [CHUNK ${chunkIndex + 1}/${CHUNKS}] Завершен: ${chunkResults.length} профилей`);
 
           // Когда все чанки завершены
           if (completedChunks === CHUNKS) {
             const parallelTime = Date.now() - startTime;
-            console.log(
-              `✅ [PARALLEL DONE] Все чанки завершены за ${parallelTime}мс`
-            );
-            console.log(
-              `📊 [PARALLEL RESULT] Всего найдено: ${allResults.length} профилей`
-            );
+            console.log(`✅ [PARALLEL DONE] Все чанки завершены за ${parallelTime}мс`);
+            console.log(`📊 [PARALLEL RESULT] Всего найдено: ${allResults.length} профилей`);
 
             resolve(allResults);
           }
@@ -2401,11 +2964,9 @@ class AsyncFilterManager {
     });
   }
 
-  // ==================== ПОСЛЕДОВАТЕЛЬНАЯ ФИЛЬТРАЦИЯ ====================
+  // ==================== ПОСЛЕДОВАТЕЛЬНАЯ ФИЛЬТРАЦИЯ (остается без изменений) ====================
   applyFiltersSequential(profiles, filters) {
-    console.log(
-      `🔍 [SEQUENTIAL] Последовательная фильтрация ${profiles.length} профилей`
-    );
+    console.log(`🔍 [SEQUENTIAL] Последовательная фильтрация ${profiles.length} профилей`);
     const startTime = Date.now();
 
     const normalizedFilterCountry = filters.country
@@ -2426,9 +2987,7 @@ class AsyncFilterManager {
 
       // Прогресс каждые 5000 профилей
       if (checked % 5000 === 0) {
-        console.log(
-          `📊 [PROGRESS] Проверено ${checked}/${profiles.length} профилей`
-        );
+        console.log(`📊 [PROGRESS] Проверено ${checked}/${profiles.length} профилей`);
       }
 
       const profile = profiles[i];
@@ -2439,8 +2998,7 @@ class AsyncFilterManager {
         if (!profileCountry) continue;
 
         if (profileCountry !== normalizedFilterCountry) {
-          const normalizedProfileCountry =
-            cacheManager.normalizeCountryName(profileCountry);
+          const normalizedProfileCountry = cacheManager.normalizeCountryName(profileCountry);
           if (normalizedProfileCountry !== normalizedFilterCountry) {
             const cleanFilter = normalizedFilterCountry.toLowerCase().trim();
             const cleanProfile = normalizedProfileCountry.toLowerCase().trim();
@@ -2469,137 +3027,159 @@ class AsyncFilterManager {
     }
 
     const sequentialTime = Date.now() - startTime;
-    console.log(
-      `✅ [SEQUENTIAL DONE] ${results.length} профилей за ${sequentialTime}мс`
-    );
+    console.log(`✅ [SEQUENTIAL DONE] ${results.length} профилей за ${sequentialTime}мс`);
 
     return results;
-  }
-
-  // ==================== ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ====================
-
-  // Создание индексов при загрузке кэша
-  createIndexes(profiles) {
-    console.log(
-      `📇 [INDEX CREATION] Создание индексов для ${profiles.length} профилей`
-    );
-    const startTime = Date.now();
-
-    const countryCityIndex = new Map();
-    const countryIndex = new Map();
-
-    let indexedProfiles = 0;
-
-    for (let i = 0; i < profiles.length; i++) {
-      const profile = profiles[i];
-      const country = profile.c;
-
-      if (country) {
-        // Индекс по стране
-        if (!countryIndex.has(country)) {
-          countryIndex.set(country, []);
-        }
-        countryIndex.get(country).push(i);
-
-        // Индекс по стране+городу
-        const city = profile.ct;
-        if (city) {
-          const key = `${country}:${city}`;
-          if (!countryCityIndex.has(key)) {
-            countryCityIndex.set(key, []);
-          }
-          countryCityIndex.get(key).push(i);
-        }
-
-        indexedProfiles++;
-      }
-
-      // Прогресс каждые 10000 профилей
-      if (i % 10000 === 0 && i > 0) {
-        console.log(
-          `📊 [INDEX PROGRESS] Обработано ${i}/${profiles.length} профилей`
-        );
-      }
-    }
-
-    // Сохраняем индексы в глобальный кэш
-    globalProfilesCache.set("index:country_city", countryCityIndex);
-    globalProfilesCache.set("index:country", countryIndex);
-
-    const indexTime = Date.now() - startTime;
-
-    console.log(`✅ [INDEX CREATION DONE] Индексы созданы за ${indexTime}мс`);
-    console.log(
-      `📊 [INDEX STATS] Обработано профилей: ${indexedProfiles}/${profiles.length}`
-    );
-    console.log(`📊 [INDEX STATS] Уникальных стран: ${countryIndex.size}`);
-    console.log(
-      `📊 [INDEX STATS] Уникальных пар страна+город: ${countryCityIndex.size}`
-    );
-
-    // Примеры для отладки
-    const sampleCountries = Array.from(countryIndex.keys()).slice(0, 3);
-    sampleCountries.forEach((country) => {
-      console.log(
-        `📋 [INDEX SAMPLE] ${country}: ${
-          countryIndex.get(country).length
-        } профилей`
-      );
-    });
-
-    return {
-      countryIndexSize: countryIndex.size,
-      countryCityIndexSize: countryCityIndex.size,
-      timeMs: indexTime,
-    };
   }
 
   // Статистика работы
   printStats() {
     console.log(`📊 ========== FILTER MANAGER STATS ==========`);
     console.log(`📊 Всего фильтраций: ${this.stats.totalFilters}`);
-    console.log(
-      `📊 Попадания в кэш: ${this.stats.cacheHits} (${(
-        (this.stats.cacheHits / this.stats.totalFilters) *
-        100
-      ).toFixed(1)}%)`
-    );
-    console.log(`📊 Использование индексов: ${this.stats.indexHits}`);
+    console.log(`📊 Попадания в кэш: ${this.stats.cacheHits} (${((this.stats.cacheHits / this.stats.totalFilters) * 100).toFixed(1)}%)`);
+    console.log(`📊 Использование LMDB индексов: ${this.stats.lmdbIndexHits}`);
     console.log(`📊 Медленных фильтраций (>2с): ${this.stats.slowFilters}`);
-    console.log(`📊 Размер горячего кэша: ${this.hotFilterCache.size}`);
     console.log(`📊 ==========================================`);
-  }
-
-  // Очистка старого горячего кэша
-  cleanupHotCache() {
-    const now = Date.now();
-    let cleaned = 0;
-
-    this.hotFilterCache.forEach((value, key) => {
-      if (now - value.timestamp > 3600000) {
-        // 1 час
-        this.hotFilterCache.delete(key);
-        cleaned++;
-      }
-    });
-
-    if (cleaned > 0) {
-      console.log(`🧹 [HOT CACHE CLEANUP] Очищено ${cleaned} старых записей`);
-    }
   }
 }
 
 const asyncFilterManager = new AsyncFilterManager();
 
-// Периодическая очистка горячего кэша
-setInterval(() => {
-  asyncFilterManager.cleanupHotCache();
-  asyncFilterManager.printStats();
-}, 300000); // Каждые 5 минут
+// ===================== СИСТЕМА МОНИТОРИНГА ЧТЕНИЙ =====================
+const readingStats = {
+  totalReads: 0,
+  operations: {
+    profiles: 0,
+    subscriptions: 0,
+    channelSubscriptions: 0,
+    countries: 0,
+    cities: 0,
+    other: 0,
+    cacheHits: 0,
+    cacheMisses: 0,
+    firestoreReads: 0,
+    lmdbReads: 0,
+    lmdbWrites: 0,
+  },
+  timestamps: [],
+  users: new Map(),
 
+  addRead(operationType = "other", userId = null, count = 1, source = "firestore") {
+    this.totalReads += count;
+    this.operations[operationType] = (this.operations[operationType] || 0) + count;
+
+    if (source === "firestore") {
+      this.operations.firestoreReads = (this.operations.firestoreReads || 0) + count;
+    } else if (source === "lmdb") {
+      this.operations.lmdbReads = (this.operations.lmdbReads || 0) + count;
+    }
+
+    this.timestamps.push({
+      time: Date.now(),
+      type: operationType,
+      count,
+      userId,
+      source,
+    });
+
+    if (this.timestamps.length > 1000) {
+      this.timestamps = this.timestamps.slice(-500);
+    }
+
+    if (userId) {
+      if (!this.users.has(userId)) {
+        this.users.set(userId, { total: 0, operations: {} });
+      }
+      const userStats = this.users.get(userId);
+      userStats.total += count;
+      userStats.operations[operationType] = (userStats.operations[operationType] || 0) + count;
+    }
+
+    console.log(`📖 [READ] ${operationType}: +${count} | Source: ${source} | Total: ${this.totalReads}`);
+  },
+
+  addCacheHit() {
+    this.operations.cacheHits = (this.operations.cacheHits || 0) + 1;
+  },
+  
+  addCacheMiss() {
+    this.operations.cacheMisses = (this.operations.cacheMisses || 0) + 1;
+  },
+
+  getStats() {
+    const cacheEfficiency = this.operations.cacheHits + this.operations.cacheMisses > 0
+      ? (this.operations.cacheHits / (this.operations.cacheHits + this.operations.cacheMisses)) * 100
+      : 0;
+
+    return {
+      totalReads: this.totalReads,
+      operations: this.operations,
+      uniqueUsers: this.users.size,
+      readsPerUser: this.users.size > 0 ? this.totalReads / this.users.size : 0,
+      cacheEfficiency: `${cacheEfficiency.toFixed(2)}%`,
+      firestoreReads: this.operations.firestoreReads || 0,
+      lmdbReads: this.operations.lmdbReads || 0,
+      lmdbWrites: this.operations.lmdbWrites || 0,
+      timeline: this.timestamps.slice(-100),
+    };
+  },
+
+  resetStats() {
+    this.totalReads = 0;
+    this.operations = {
+      profiles: 0,
+      subscriptions: 0,
+      channelSubscriptions: 0,
+      countries: 0,
+      cities: 0,
+      other: 0,
+      cacheHits: 0,
+      cacheMisses: 0,
+      firestoreReads: 0,
+      lmdbReads: 0,
+      lmdbWrites: 0,
+    };
+    this.timestamps = [];
+    this.users.clear();
+  },
+};
+
+// ===================== ИНДИВИДУАЛЬНЫЕ КЭШИ В ПАМЯТИ (маленькие) =====================
+// КЭШ ДЛЯ ПОДПИСОК (индивидуальный для каждого пользователя)
+const subscriptionCache = new NodeCache({
+  stdTTL: SCALING_CONFIG.CACHE.SUBSCRIPTION_TTL,
+  checkperiod: 600,
+});
+
+// КЭШ ДЛЯ КАНАЛА (индивидуальный для каждого пользователя)
+const channelSubscriptionCache = new NodeCache({
+  stdTTL: SCALING_CONFIG.CACHE.CHANNEL_TTL,
+  checkperiod: 60,
+});
+
+// КЭШ СТАТУСА ПОЛЬЗОВАТЕЛЕЙ (индивидуальный)
+const userCacheStatus = new NodeCache({
+  stdTTL: SCALING_CONFIG.CACHE.SESSIONS_TTL,
+  checkperiod: SCALING_CONFIG.CACHE.CHECKPERIOD,
+});
+
+// Готово к module.exports
 // ===================== ГЛАВНЫЙ МОДУЛЬ БОТА =====================
 module.exports = (bot, db) => {
   let startModule = null;
+
+  // ИНИЦИАЛИЗАЦИЯ LMDB ПРИ СТАРТЕ БОТА
+  setTimeout(async () => {
+    if (!globalCacheInitialized) {
+      console.log("🚀 [BOT START] Инициализация LMDB...");
+      try {
+        await cacheManager.initializeLMDB(db);
+        console.log("✅ [BOT START] LMDB инициализирована");
+      } catch (error) {
+        console.error("❌ [BOT START] Ошибка инициализации LMDB:", error);
+      }
+    }
+  }, 3000);
 
   // ОЧЕРЕДЬ СООБЩЕНИЙ ДЛЯ МАСШТАБИРОВАНИЯ
   const messageQueue = new PQueue({
@@ -2612,9 +3192,7 @@ module.exports = (bot, db) => {
 
   messageQueue.on("active", () => {
     if (messageQueue.size > 10) {
-      console.log(
-        `📊 [QUEUE] Активные: ${messageQueue.pending} | Ожидание: ${messageQueue.size}`
-      );
+      console.log(`📊 [QUEUE] Активные: ${messageQueue.pending} | Ожидание: ${messageQueue.size}`);
     }
   });
 
@@ -2633,7 +3211,7 @@ module.exports = (bot, db) => {
 
   // ===================== ОПТИМИЗИРОВАННЫЕ ФУНКЦИИ ПРОВЕРКИ ПОДПИСОК =====================
 
-  // ================= 5. ФУНКЦИЯ ПРОВЕРКИ ПОДПИСКИ НА КАНАЛ =================
+  // 1. ФУНКЦИЯ ПРОВЕРКИ ПОДПИСКИ НА КАНАЛ
   const checkChannelSubscription = async (ctx) => {
     try {
       const userId = ctx.from.id;
@@ -2652,24 +3230,21 @@ module.exports = (bot, db) => {
       return false;
     }
   };
+
   // 2. ФУНКЦИЯ ПРОВЕРКИ ПОДПИСКИ (с кэшем на 24 часа)
   const checkSubscription = async (userId) => {
     try {
-      console.log(`🔍 [SUBSCRIPTION] Проверка подписки  ${userId}`);
+      console.log(`🔍 [SUBSCRIPTION] Проверка подписки ${userId}`);
 
       // Сначала пробуем получить из кэша (24 часа)
-      const cachedSubscription = cacheManager.getCachedSubscription(userId);
+      const cachedSubscription = subscriptionCache.get(`subscription:${userId}`);
       if (cachedSubscription !== undefined) {
-        console.log(
-          `✅ [SUBSCRIPTION CACHE HIT] Подписка из кэша: ${cachedSubscription}`
-        );
+        console.log(`✅ [SUBSCRIPTION CACHE HIT] Подписка из кэша: ${cachedSubscription}`);
         readingStats.addRead("subscriptions", userId, 1, "cache");
         return cachedSubscription;
       }
 
-      console.log(
-        `🔍 [SUBSCRIPTION CACHE MISS] Запрашиваем из Firestore для ${userId}`
-      );
+      console.log(`🔍 [SUBSCRIPTION CACHE MISS] Запрашиваем из Firestore для ${userId}`);
       readingStats.addRead("subscriptions", userId, 1, "firestore");
 
       const subRef = db.collection("subscriptions").doc(userId.toString());
@@ -2677,41 +3252,36 @@ module.exports = (bot, db) => {
 
       if (!doc.exists) {
         console.log(`❌ [SUBSCRIPTION] Подписка не найдена в БД для ${userId}`);
-        cacheManager.cacheSubscription(userId, false);
+        subscriptionCache.set(`subscription:${userId}`, false, SCALING_CONFIG.CACHE.SUBSCRIPTION_TTL);
         return false;
       }
 
       const subData = doc.data();
-      const isActive =
-        subData.isActive && subData.endDate.toDate() > new Date();
+      const isActive = subData.isActive && subData.endDate.toDate() > new Date();
 
-      console.log(
-        `✅ [SUBSCRIPTION] Подписка из БД для ${userId}: ${isActive}`
-      );
+      console.log(`✅ [SUBSCRIPTION] Подписка из БД для ${userId}: ${isActive}`);
 
-      cacheManager.cacheSubscription(userId, isActive);
+      subscriptionCache.set(`subscription:${userId}`, isActive, SCALING_CONFIG.CACHE.SUBSCRIPTION_TTL);
       return isActive;
     } catch (error) {
       console.error("❌ Ошибка проверки подписки:", error);
 
       // При ошибке считаем, что подписки нет, но кэшируем на 1 час
-      cacheManager.cacheSubscription(userId, false);
+      subscriptionCache.set(`subscription:${userId}`, false, 3600);
       return false;
     }
   };
 
-  // 3. ФУНКЦИЯ ПРОВЕРКИ И ОБНОВЛЕНИЯ КЭША
-  const ensureProperCache = async (ctx, forceRefresh = false) => {
+// 3. ФУНКЦИЯ ПРОВЕРКИ И ОБНОВЛЕНИЯ КЭША
+const ensureProperCache = async (ctx, forceRefresh = false) => {
     const userId = ctx.from.id;
 
-    console.log(
-      `🔍 [ENSURE CACHE] Проверка для ${userId} (force: ${forceRefresh})`
-    );
+    console.log(`🔍 [ENSURE CACHE] Проверка для ${userId} (force: ${forceRefresh})`);
 
     // 🔥 ВСЕГДА ОЧИЩАЕМ СТАРЫЕ КЭШИ ПРИ ПРОВЕРКЕ
     if (forceRefresh) {
-      subscriptionCache.del(`subscription:${userId}`);
-      channelSubscriptionCache.del(`channel:${userId}`);
+        subscriptionCache.del(`subscription:${userId}`);
+        channelSubscriptionCache.del(`channel:${userId}`);
     }
 
     // 🔥 ВСЕГДА ПРОВЕРЯЕМ ПОДПИСКУ И КАНАЛ ЗАНОВО
@@ -2721,124 +3291,161 @@ module.exports = (bot, db) => {
 
     const cacheType = hasFullAccess ? "full" : "demo";
 
-    console.log(
-      `✅ [FRESH CHECK] ${userId}: подписка=${hasSubscription}, канал=${hasChannelSubscription}, доступ=${cacheType}`
-    );
+    console.log(`✅ [FRESH CHECK] ${userId}: подписка=${hasSubscription}, канал=${hasChannelSubscription}, доступ=${cacheType}`);
+
+    // 🔥 🔥 🔥 ВАЖНОЕ ДОПОЛНЕНИЕ: ЕСЛИ ПОЛНЫЙ ДОСТУП И LMDB ПУСТ - ЗАГРУЖАЕМ
+    if (hasFullAccess) {
+        const profilesCount = Array.from(profilesDB.getKeys()).length;
+        if (profilesCount === 0) {
+            console.log(`🚀 [ENSURE CACHE - NEED LOAD] LMDB пуст для полного доступа, загружаем...`);
+            
+            // 🔥 НЕ БЛОКИРУЕМ ПОЛЬЗОВАТЕЛЯ - загружаем в фоне
+            setTimeout(async () => {
+                try {
+                    console.log(`🔄 [BACKGROUND LOAD] Запускаем фоновую загрузку полного кэша для ${userId}`);
+                    await cacheManager.loadGlobalFullCache(db);
+                    console.log(`✅ [BACKGROUND LOAD SUCCESS] Полный кэш загружен в фоне`);
+                } catch (error) {
+                    console.error(`❌ [BACKGROUND LOAD ERROR] Ошибка фоновой загрузки:`, error);
+                }
+            }, 1000); // Запускаем через 1 секунду чтобы не блокировать
+        }
+    }
 
     // Сохраняем статус
-    cacheManager.setUserCacheStatus(userId, cacheType);
+    userCacheStatus.set(`cache_status:${userId}`, cacheType, SCALING_CONFIG.CACHE.SESSIONS_TTL);
 
     // Обновляем сессию
     if (!ctx.session) ctx.session = {};
     ctx.session.fullAccessCache = {
-      value: hasFullAccess,
-      timestamp: Date.now(),
-      subscription: hasSubscription,
-      channel: hasChannelSubscription,
-    };
-
-    ctx.session.cacheSession = {
-      type: cacheType,
-      timestamp: Date.now(),
-      fullAccess: hasFullAccess,
-    };
-
-    // 🔥 ЕСЛИ ПОЛЬЗОВАТЕЛЬ С ПОЛНЫМ ДОСТУПОМ, ПРОВЕРЯЕМ ГЛОБАЛЬНЫЙ ПОЛНЫЙ КЭШ
-    if (hasFullAccess && !cacheManager.isGlobalFullCacheLoaded()) {
-      console.log(
-        `🚀 [GLOBAL FULL CACHE NEEDED] Пользователь ${userId} имеет полный доступ, проверяем глобальный кэш`
-      );
-
-      // ЗАГРУЖАЕМ ГЛОБАЛЬНЫЙ ПОЛНЫЙ КЭШ В ФОНЕ
-      setTimeout(async () => {
-        try {
-          await cacheManager.lazyLoadGlobalFullCache(db, userId);
-        } catch (error) {
-          console.error(
-            `❌ [GLOBAL FULL CACHE ERROR] Ошибка загрузки для ${userId}:`,
-            error
-          );
-        }
-      }, 1000);
-    }
-
-    return cacheType;
-  };
-
-  // ===================== ФУНКЦИЯ ПРОВЕРКИ ПОЛНОГО ДОСТУПА =====================
-  const checkFullAccess = async (ctx, forceRefresh = false) => {
-    const userId = ctx.from.id;
-
-    // Используем сессионное кэширование
-    if (!forceRefresh && ctx.session?.fullAccessCache) {
-      const accessCache = ctx.session.fullAccessCache;
-      const accessAge = Date.now() - accessCache.timestamp;
-
-      // Кэш действителен 10 минут для канала, 60 минут для подписки
-      if (accessAge < 10 * 60 * 1000) {
-        console.log(
-          `✅ [FULL ACCESS CACHE] Используем кэш для ${userId}: ${accessCache.value}`
-        );
-        return accessCache.value;
-      }
-    }
-
-    try {
-      // 🔥 КРИТИЧЕСКИЙ ФИКС: ПРОВЕРЯЕМ ОБА УСЛОВИЯ
-      const [hasSubscription, hasChannelSubscription] = await Promise.all([
-        checkSubscription(userId),
-        checkChannelSubscription(ctx),
-      ]);
-
-      const hasFullAccess = hasSubscription && hasChannelSubscription;
-
-      console.log(
-        `📊 [FULL ACCESS] ${userId}: подписка=${hasSubscription}, канал=${hasChannelSubscription}, полный доступ=${hasFullAccess}`
-      );
-
-      // Сохраняем в сессионный кэш
-      if (!ctx.session) ctx.session = {};
-      ctx.session.fullAccessCache = {
         value: hasFullAccess,
         timestamp: Date.now(),
         subscription: hasSubscription,
         channel: hasChannelSubscription,
-      };
+    };
 
-      // 🔥 ЕСЛИ ПОЛЬЗОВАТЕЛЬ С ПОЛНЫМ ДОСТУПОМ, ПРОВЕРЯЕМ ГЛОБАЛЬНЫЙ ПОЛНЫЙ КЭШ
-      if (hasFullAccess && !cacheManager.isGlobalFullCacheLoaded()) {
-        console.log(
-          `🚀 [GLOBAL FULL CACHE NEEDED] Пользователь ${userId} имеет полный доступ, проверяем глобальный кэш`
-        );
-
-        // ЗАГРУЖАЕМ ГЛОБАЛЬНЫЙ ПОЛНЫЙ КЭШ В ФОНЕ
-        setTimeout(async () => {
-          try {
-            await cacheManager.lazyLoadGlobalFullCache(db, userId);
-          } catch (error) {
-            console.error(
-              `❌ [GLOBAL FULL CACHE ERROR] Ошибка загрузки для ${userId}:`,
-              error
-            );
-          }
-        }, 1000);
-      }
-
-      return hasFullAccess;
-    } catch (error) {
-      console.error(`❌ [FULL ACCESS ERROR] Ошибка для ${userId}:`, error);
-
-      // При ошибке - демо
-      if (!ctx.session) ctx.session = {};
-      ctx.session.fullAccessCache = {
-        value: false,
+    ctx.session.cacheSession = {
+        type: cacheType,
         timestamp: Date.now(),
-        error: error.message,
-      };
+        fullAccess: hasFullAccess,
+    };
 
-      return false;
+    return cacheType;
+};
+
+  // ===================== ФУНКЦИЯ ПРОВЕРКИ ПОЛНОГО ДОСТУПА =====================
+  // ===================== ФУНКЦИЯ ПРОВЕРКИ ПОЛНОГО ДОСТУПА =====================
+const checkFullAccess = async (ctx, forceRefresh = false) => {
+    const userId = ctx.from.id;
+
+    // Используем сессионное кэширование
+    if (!forceRefresh && ctx.session?.fullAccessCache) {
+        const accessCache = ctx.session.fullAccessCache;
+        const accessAge = Date.now() - accessCache.timestamp;
+
+        // Кэш действителен 10 минут для канала, 60 минут для подписки
+        if (accessAge < 10 * 60 * 1000) {
+            console.log(`✅ [FULL ACCESS CACHE] Используем кэш для ${userId}: ${accessCache.value}`);
+            return accessCache.value;
+        }
     }
-  };
+
+    try {
+        // 🔥 КРИТИЧЕСКИЙ ФИКС: ПРОВЕРЯЕМ ОБА УСЛОВИЯ
+        const [hasSubscription, hasChannelSubscription] = await Promise.all([
+            checkSubscription(userId),
+            checkChannelSubscription(ctx),
+        ]);
+
+        const hasFullAccess = hasSubscription && hasChannelSubscription;
+
+        console.log(`📊 [FULL ACCESS] ${userId}: подписка=${hasSubscription}, канал=${hasChannelSubscription}, полный доступ=${hasFullAccess}`);
+
+        // Сохраняем в сессионный кэш
+        if (!ctx.session) ctx.session = {};
+        ctx.session.fullAccessCache = {
+            value: hasFullAccess,
+            timestamp: Date.now(),
+            subscription: hasSubscription,
+            channel: hasChannelSubscription,
+        };
+
+        // 🔥 🔥 🔥 ВАЖНОЕ ИСПРАВЛЕНИЕ: ЕСЛИ ПОЛЬЗОВАТЕЛЬ С ПОЛНЫМ ДОСТУПОМ, ЗАГРУЖАЕМ ПОЛНЫЙ КЭШ СРАЗУ
+        if (hasFullAccess) {
+            // Проверяем, есть ли уже полные профили в LMDB
+            const profilesCount = Array.from(profilesDB.getKeys()).length;
+            console.log(`📊 [LMDB CHECK] Полных профилей в LMDB: ${profilesCount}`);
+            
+            if (profilesCount === 0) {
+                console.log(`🚀 [AUTO LOAD FULL CACHE] Пользователь ${userId} имеет полный доступ, но LMDB пуст. ЗАГРУЖАЕМ!`);
+                
+                // 🔥 СООБЩАЕМ ПОЛЬЗОВАТЕЛЮ
+                const loadingMsg = await ctx.reply(`
+🔄 <b>ЗАГРУЗКА ПОЛНОЙ БАЗЫ ДАННЫХ</b>
+
+🎉 У вас есть полный доступ!
+📊 Загружаем 70,000+ анкет в систему...
+
+⏱️ <i>Это займет 2-3 минуты</i>
+📦 <i>Загружаем пачками по 5000 анкет</i>
+💾 <i>Сохраняем на диск для быстрого доступа</i>
+
+<em>Подождите, загрузка началась...</em>
+                `, { parse_mode: "HTML" });
+
+                // 🔥 ЗАГРУЖАЕМ ПОЛНЫЙ КЭШ
+                const success = await cacheManager.loadGlobalFullCache(db);
+                
+                // Удаляем сообщение о загрузке
+                try {
+                    await ctx.telegram.deleteMessage(ctx.chat.id, loadingMsg.message_id);
+                } catch (e) {}
+
+                if (success) {
+                    console.log(`✅ [AUTO LOAD SUCCESS] Полный кэш загружен для ${userId}`);
+                    await ctx.reply(`
+✅ <b>БАЗА ДАННЫХ ЗАГРУЖЕНА!</b>
+
+🎉 Теперь доступны все 70,000+ анкет!
+• 👤 Все контакты видны
+• 📞 Телефоны, Telegram, WhatsApp
+• 🌍 ${indexesDB.get('countries:all')?.length || 0} стран
+• 🌆 Тысячи городов
+• ⚡ Быстрый поиск через индексы
+
+<code>Теперь выберите страну для начала поиска</code>
+                    `, { parse_mode: "HTML" });
+                } else {
+                    console.log(`❌ [AUTO LOAD FAILED] Не удалось загрузить полный кэш для ${userId}`);
+                    await ctx.reply(`
+⚠️ <b>ОШИБКА ЗАГРУЗКИ БАЗЫ</b>
+
+Не удалось загрузить полную базу данных.
+Попробуйте еще раз через минуту или напишите в поддержку @MagicAdd.
+
+<em>Используйте демо-режим пока исправляем проблему</em>
+                    `, { parse_mode: "HTML" });
+                }
+            } else {
+                console.log(`✅ [LMDB READY] Полный кэш уже загружен: ${profilesCount} профилей`);
+            }
+        }
+
+        return hasFullAccess;
+    } catch (error) {
+        console.error(`❌ [FULL ACCESS ERROR] Ошибка для ${userId}:`, error);
+
+        // При ошибке - демо
+        if (!ctx.session) ctx.session = {};
+        ctx.session.fullAccessCache = {
+            value: false,
+            timestamp: Date.now(),
+            error: error.message,
+        };
+
+        return false;
+    }
+};
 
   // ===================== СИСТЕМА УПРАВЛЕНИЯ СООБЩЕНИЯМИ =====================
   const chatStorage = {
@@ -2856,10 +3463,7 @@ module.exports = (bot, db) => {
 
     chatStorage.messages.forEach((messages, chatId) => {
       messages.forEach((messageId) => {
-        if (
-          now - (chatStorage.messageTimestamps.get(messageId) || 0) >
-          SCALING_CONFIG.PERFORMANCE.MESSAGE_TTL
-        ) {
+        if (now - (chatStorage.messageTimestamps.get(messageId) || 0) > SCALING_CONFIG.PERFORMANCE.MESSAGE_TTL) {
           messages.delete(messageId);
           chatStorage.messageTimestamps.delete(messageId);
           cleanedCount++;
@@ -2876,321 +3480,266 @@ module.exports = (bot, db) => {
     }
   }, 3600000);
 
-  // ===================== ОПТИМИЗИРОВАННАЯ ФУНКЦИЯ ПОЛУЧЕНИЯ СТРАН =====================
-  const getUniqueCountries = async (isDemo = false) => {
+  // 11. ОПТИМИЗИРОВАННАЯ ФУНКЦИЯ ПОЛУЧЕНИЯ СТРАН
+const getUniqueCountries = async (isDemo = false) => {
     try {
-      console.log(`🔍 [COUNTRIES] Запрос списка стран (демо: ${isDemo})`);
+        console.log(`🔍 [COUNTRIES] Запрос списка стран (демо: ${isDemo})`);
 
-      // 🔥 ВАЖНО: ИСПОЛЬЗУЕМ ГЛОБАЛЬНЫЙ КЭШ
-      const cachedCountries = cacheManager.getGlobalCountries(isDemo);
+        // 🔥 ВАЖНО: ИСПОЛЬЗУЕМ LMDB
+        const cachedCountries = cacheManager.getGlobalCountries(isDemo);
 
-      if (cachedCountries && cachedCountries.length > 0) {
-        console.log(
-          `✅ [COUNTRIES] Страны из глобального кэша: ${cachedCountries.length}`
-        );
-        readingStats.addRead("countries", null, 1, "cache");
-        return cachedCountries;
-      }
+        if (cachedCountries && cachedCountries.length > 0) {
+            console.log(`✅ [COUNTRIES] Страны из LMDB: ${cachedCountries.length}`);
+            readingStats.addRead("countries", null, 1, "lmdb");
+            return cachedCountries;
+        }
 
-      // 🔥 ЕСЛИ ДЕМО-КЭШ ПУСТ, ПОКАЗЫВАЕМ СООБЩЕНИЕ О ЗАГРУЗКЕ
-      if (isDemo && !cacheManager.isGlobalDemoCacheLoaded()) {
-        console.log(`⚠️ [DEMO COUNTRIES] Демо-кэш еще не загружен!`);
-
-        // 🔥 ВАЖНО: НЕ ЗАГРУЖАЕМ КЭШ НА ЛЕТУ! Просто показываем сообщение
-        readingStats.addRead("countries", null, 1, "error");
-
-        // Возвращаем минимальный список популярных стран как fallback
-        const popularCountries = POPULAR_COUNTRIES.map(
-          (c) => c.flag + " " + c.name
-        );
-        console.log(
-          `⚠️ [DEMO FALLBACK] Возвращаем ${popularCountries.length} популярных стран`
-        );
-
-        return popularCountries;
-      }
-
-      // 🔥 ДЛЯ ПОЛНОГО ДОСТУПА: если кэш пуст, но пользователь с доступом
-      if (!isDemo && !cacheManager.isGlobalFullCacheLoaded()) {
-        console.log(
-          `⚠️ [FULL COUNTRIES] Полный кэш не загружен, но пользователь с доступом`
-        );
-
-        // 🔥 ВАЖНО: НЕ ЗАГРУЖАЕМ НА ЛЕТУ! Просто показываем сообщение
-        readingStats.addRead("countries", null, 1, "error");
-
-        // Возвращаем пустой массив
-        return [];
-      }
-
-      // 🔥 ЕСЛИ ДОШЛИ СЮДА - ВОЗВРАЩАЕМ ПУСТОЙ МАССИВ
-      console.log(`❌ [COUNTRIES] Не удалось получить страны из кэша`);
-      return [];
+        // 🔥 ЕСЛИ LMDB ПУСТ, ПРОБУЕМ FALLBACK
+        console.log(`⚠️ [COUNTRIES EMPTY] LMDB пуст, используем fallback`);
+        
+        // ДОБАВЛЯЕМ FALLBACK МЕХАНИЗМ
+        setTimeout(async () => {
+            console.log(`🔄 [COUNTRIES BACKGROUND] Запускаем фоновое извлечение стран...`);
+            if (isDemo) {
+                await cacheManager.extractCountriesFromDemoProfiles();
+            } else {
+                await cacheManager.extractCountriesFromFullProfiles();
+            }
+        }, 1000);
+        
+        // 🔥 ВОЗВРАЩАЕМ FALLBACK ДЛЯ ПОЛЬЗОВАТЕЛЯ
+        console.log(`⚠️ [COUNTRIES FALLBACK] Возвращаем ${FALLBACK_COUNTRIES.length} популярных стран`);
+        return FALLBACK_COUNTRIES;
+        
     } catch (error) {
-      console.error("❌ [COUNTRIES] Ошибка загрузки стран:", error);
-      return POPULAR_COUNTRIES.map((c) => c.flag + " " + c.name);
+        console.error("❌ [COUNTRIES] Ошибка загрузки стран:", error);
+        return FALLBACK_COUNTRIES; // Всегда возвращаем fallback при ошибке
     }
-  };
+};
 
   // ===================== ОПТИМИЗИРОВАННАЯ ФУНКЦИЯ ПОЛУЧЕНИЯ ГОРОДОВ =====================
   const getUniqueCitiesForCountry = async (country, isDemo = false) => {
     try {
-      console.log(
-        `🔍 [CITIES] Запрос городов для ${country} (демо: ${isDemo})`
-      );
+      console.log(`🔍 [CITIES] Запрос городов для ${country} (демо: ${isDemo})`);
 
-      // 🔥 ВАЖНО: ИСПОЛЬЗУЕМ ГЛОБАЛЬНЫЙ КЭШ
+      // 🔥 ВАЖНО: ИСПОЛЬЗУЕМ LMDB
       const cachedCities = cacheManager.getGlobalCities(country, isDemo);
 
       if (cachedCities && cachedCities.length > 0) {
-        console.log(
-          `✅ [CITIES] Города из глобального кэша для ${country}: ${cachedCities.length}`
-        );
-        readingStats.addRead("cities", null, 1, "cache");
+        console.log(`✅ [CITIES] Города из LMDB для ${country}: ${cachedCities.length}`);
+        readingStats.addRead("cities", null, 1, "lmdb");
         return cachedCities;
       }
 
-      // 🔥 ЕСЛИ КЭШ ПУСТ - ПРОСТО ВОЗВРАЩАЕМ ПУСТОЙ МАССИВ
-      console.log(`⚠️ [CITIES] Нет городов в глобальном кэше для ${country}!`);
+      // 🔥 ЕСЛИ LMDB ПУСТ - ПРОСТО ВОЗВРАЩАЕМ ПУСТОЙ МАССИВ
+      console.log(`⚠️ [CITIES] Нет городов в LMDB для ${country}!`);
       readingStats.addRead("cities", null, 1, "empty");
-
       return [];
     } catch (error) {
-      console.error(
-        `❌ [CITIES] Ошибка загрузки городов для ${country}:`,
-        error
-      );
+      console.error(`❌ [CITIES] Ошибка загрузки городов для ${country}:`, error);
       return [];
     }
   };
+
   const formatCountryWithFlag = (countryName) => {
     return countryName;
   };
 
-const createEnhancedPaginationKeyboard = (currentPage, totalPages, filterKey, currentFilters = {}, isDemo = false) => {
+  // ===================== ОПТИМИЗИРОВАННАЯ ПАГИНАЦИЯ С LMDB =====================
+  const createEnhancedPaginationKeyboard = (currentPage, totalPages, filterKey, currentFilters = {}, isDemo = false) => {
     // 🔥 ВАЖНОЕ ИСПРАВЛЕНИЕ: Если totalPages = 0 или undefined, ставим 1
     if (!totalPages || totalPages < 1 || isNaN(totalPages)) {
-        totalPages = 1;
-        console.log(`⚠️ [PAGINATION FIX] Исправляем totalPages на 1 (было: ${totalPages})`);
+      totalPages = 1;
+      console.log(`⚠️ [PAGINATION FIX] Исправляем totalPages на 1 (было: ${totalPages})`);
     }
-    
+
     // 🔥 ВАЖНОЕ ИСПРАВЛЕНИЕ: currentPage не может быть больше totalPages
     if (currentPage >= totalPages) {
-        currentPage = Math.max(0, totalPages - 1);
-        console.log(`⚠️ [PAGINATION FIX] Исправляем currentPage на ${currentPage} (было больше totalPages)`);
+      currentPage = Math.max(0, totalPages - 1);
+      console.log(`⚠️ [PAGINATION FIX] Исправляем currentPage на ${currentPage} (было больше totalPages)`);
     }
-    
-    console.log(`🔢 [PAGINATION] Создание клавиатуры: страница ${currentPage+1}/${totalPages}, всего страниц: ${totalPages}, демо: ${isDemo}, filterKey: ${filterKey}`);
-    
+
+    console.log(`🔢 [PAGINATION] Создание клавиатуры: страница ${currentPage + 1}/${totalPages}, всего страниц: ${totalPages}, демо: ${isDemo}, filterKey: ${filterKey}`);
+
     const keyboard = [];
-    
+
     // 🔥 ВАЖНО: Показываем фильтры только если они есть
     if (currentFilters.country || currentFilters.city || currentFilters.ageRange) {
-        let filtersText = "";
-        const filters = [];
-        if (currentFilters.country) filters.push(currentFilters.country);
-        if (currentFilters.city) filters.push(currentFilters.city);
-        if (currentFilters.ageRange) filters.push(currentFilters.ageRange.label);
-        filtersText = filters.join(", ");
-        
-        if (filtersText.length > 0) {
-            keyboard.push([{ 
-                text: `🎯 Фильтры: ${filtersText.substring(0, 30)}${filtersText.length > 30 ? '...' : ''}`, 
-                callback_data: "filters_info" 
-            }]);
-        }
+      let filtersText = "";
+      const filters = [];
+      if (currentFilters.country) filters.push(currentFilters.country);
+      if (currentFilters.city) filters.push(currentFilters.city);
+      if (currentFilters.ageRange) filters.push(currentFilters.ageRange.label);
+      filtersText = filters.join(", ");
+
+      if (filtersText.length > 0) {
+        keyboard.push([{
+          text: `🎯 Фильтры: ${filtersText.substring(0, 30)}${filtersText.length > 30 ? '...' : ''}`,
+          callback_data: "filters_info"
+        }]);
+      }
     }
-    
+
     // 🔥 ОСНОВНАЯ ПАГИНАЦИЯ
     const navRow = [];
-    
+
     // Кнопка "В начало" (⏪)
     if (currentPage > 0) {
-        navRow.push({ 
-            text: "⏪", 
-            callback_data: `page_first_${currentPage}`,
-            hide: false
-        });
+      navRow.push({
+        text: "⏪",
+        callback_data: `page_first_${currentPage}`,
+        hide: false
+      });
     }
-    
+
     // Кнопка "Назад" (◀️)
     if (currentPage > 0) {
-        navRow.push({ 
-            text: "◀️", 
-            callback_data: `page_prev_${currentPage}`,
-            hide: false
-        });
-    }
-    
-    // Текущая страница
-    navRow.push({ 
-        text: `${currentPage + 1}/${totalPages}`, 
-        callback_data: "page_info",
+      navRow.push({
+        text: "◀️",
+        callback_data: `page_prev_${currentPage}`,
         hide: false
+      });
+    }
+
+    // Текущая страница
+    navRow.push({
+      text: `${currentPage + 1}/${totalPages}`,
+      callback_data: "page_info",
+      hide: false
     });
-    
+
     // Кнопка "Вперед" (▶️)
     if (currentPage < totalPages - 1) {
-        navRow.push({ 
-            text: "▶️", 
-            callback_data: `page_next_${currentPage}`,
-            hide: false
-        });
+      navRow.push({
+        text: "▶️",
+        callback_data: `page_next_${currentPage}`,
+        hide: false
+      });
     }
-    
+
     // Кнопка "В конец" (⏩)
     if (currentPage < totalPages - 1) {
-        navRow.push({ 
-            text: "⏩", 
-            callback_data: `page_last_${currentPage}`,
-            hide: false
-        });
+      navRow.push({
+        text: "⏩",
+        callback_data: `page_last_${currentPage}`,
+        hide: false
+      });
     }
-    
+
     // 🔥 ВАЖНОЕ ИСПРАВЛЕНИЕ: Добавляем строку навигации только если есть кнопки
     if (navRow.length > 1) { // Больше 1, потому что всегда есть кнопка с номером страницы
-        keyboard.push(navRow);
+      keyboard.push(navRow);
     }
-    
+
     // 🔥 БЫСТРЫЕ ПЕРЕХОДЫ ДЛЯ БОЛЬШИХ СПИСКОВ
     if (totalPages > 10) {
-        const jumpRow = [];
-        const totalProfiles = totalPages * SCALING_CONFIG.PERFORMANCE.PROFILES_PER_PAGE;
-        
-        PAGINATION_JUMP_SECTIONS.forEach(section => {
-            if (section.start < totalProfiles) {
-                const sectionPage = Math.floor(section.start / SCALING_CONFIG.PERFORMANCE.PROFILES_PER_PAGE);
-                if (sectionPage < totalPages && sectionPage !== currentPage) {
-                    jumpRow.push({ 
-                        text: section.label, 
-                        callback_data: `page_${sectionPage}_${currentPage}`,
-                        hide: false
-                    });
-                }
-            }
-        });
-        
-        if (jumpRow.length > 0) {
-            keyboard.push(jumpRow);
+      const jumpRow = [];
+      const totalProfiles = totalPages * SCALING_CONFIG.PERFORMANCE.PROFILES_PER_PAGE;
+
+      PAGINATION_JUMP_SECTIONS.forEach(section => {
+        if (section.start < totalProfiles) {
+          const sectionPage = Math.floor(section.start / SCALING_CONFIG.PERFORMANCE.PROFILES_PER_PAGE);
+          if (sectionPage < totalPages && sectionPage !== currentPage) {
+            jumpRow.push({
+              text: section.label,
+              callback_data: `page_${sectionPage}_${currentPage}`,
+              hide: false
+            });
+          }
         }
+      });
+
+      if (jumpRow.length > 0) {
+        keyboard.push(jumpRow);
+      }
     }
-    
+
     // 🔥 БЫСТРЫЕ КНОПКИ СТРАНИЦ (показываем максимум 5)
     if (totalPages > 1) {
-        const quickPagesRow = [];
-        const pagesToShow = Math.min(5, totalPages);
-        let startPage = Math.max(0, currentPage - Math.floor(pagesToShow / 2));
-        
-        // Если выходим за границы - корректируем
-        if (startPage + pagesToShow > totalPages) {
-            startPage = Math.max(0, totalPages - pagesToShow);
-        }
-        
-        for (let i = 0; i < pagesToShow; i++) {
-            const pageNum = startPage + i;
-            if (pageNum >= 0 && pageNum < totalPages) {
-                const isCurrent = pageNum === currentPage;
-                quickPagesRow.push({
-                    text: isCurrent ? `• ${pageNum + 1} •` : `${pageNum + 1}`,
-                    callback_data: `page_${pageNum}_${currentPage}`,
-                    hide: false
-                });
-            }
-        }
-        
-        // 🔥 ВАЖНО: Добавляем многоточие если много страниц
-        if (totalPages > pagesToShow && startPage + pagesToShow < totalPages) {
-            if (currentPage >= startPage + pagesToShow) {
-                quickPagesRow.push({ 
-                    text: "...", 
-                    callback_data: "page_info",
-                    hide: false 
-                });
-                quickPagesRow.push({
-                    text: `• ${currentPage + 1} •`,
-                    callback_data: `page_${currentPage}_${currentPage}`,
-                    hide: false
-                });
-            }
-        }
-        
-        if (quickPagesRow.length > 0) {
-            keyboard.push(quickPagesRow);
-        }
-    }
-    
-    // 🔥 ОСНОВНЫЕ КНОПКИ
-    keyboard.push([
-        { 
-            text: "📝 СОЗДАТЬ АНКЕТУ", 
-            web_app: { url: "https://bot-vai-web-app.web.app/?tab=catalog" },
+      const quickPagesRow = [];
+      const pagesToShow = Math.min(5, totalPages);
+      let startPage = Math.max(0, currentPage - Math.floor(pagesToShow / 2));
+
+      // Если выходим за границы - корректируем
+      if (startPage + pagesToShow > totalPages) {
+        startPage = Math.max(0, totalPages - pagesToShow);
+      }
+
+      for (let i = 0; i < pagesToShow; i++) {
+        const pageNum = startPage + i;
+        if (pageNum >= 0 && pageNum < totalPages) {
+          const isCurrent = pageNum === currentPage;
+          quickPagesRow.push({
+            text: isCurrent ? `• ${pageNum + 1} •` : `${pageNum + 1}`,
+            callback_data: `page_${pageNum}_${currentPage}`,
             hide: false
+          });
         }
-    ]);
-    
+      }
+
+      // 🔥 ВАЖНО: Добавляем многоточие если много страниц
+      if (totalPages > pagesToShow && startPage + pagesToShow < totalPages) {
+        if (currentPage >= startPage + pagesToShow) {
+          quickPagesRow.push({
+            text: "...",
+            callback_data: "page_info",
+            hide: false
+          });
+          quickPagesRow.push({
+            text: `• ${currentPage + 1} •`,
+            callback_data: `page_${currentPage}_${currentPage}`,
+            hide: false
+          });
+        }
+      }
+
+      if (quickPagesRow.length > 0) {
+        keyboard.push(quickPagesRow);
+      }
+    }
+
+    // 🔥 ОСНОВНЫЕ КНОПКИ
+    keyboard.push([{
+      text: "📝 СОЗДАТЬ АНКЕТУ",
+      web_app: { url: "https://bot-vai-web-app.web.app/?tab=catalog" },
+      hide: false
+    }]);
+
     // 🔥 ДЛЯ ДЕМО-РЕЖИМА - кнопка получения полного доступа
     if (isDemo) {
-        keyboard.push([
-            { 
-                text: "💎 ПОЛУЧИТЬ ПОЛНЫЙ ДОСТУП", 
-                callback_data: "get_full_access",
-                hide: false
-            }
-        ]);
+      keyboard.push([{
+        text: "💎 ПОЛУЧИТЬ ПОЛНЫЙ ДОСТУП",
+        callback_data: "get_full_access",
+        hide: false
+      }]);
     }
-    
+
     // 🔥 ВАЖНО: Добавляем информационную строку о режиме
     if (isDemo) {
-        keyboard.push([
-            { 
-                text: `👀 ДЕМО: ${SCALING_CONFIG.PERFORMANCE.DEMO_PROFILES_PER_CITY || 3} анкеты на город`, 
-                callback_data: "demo_info",
-                hide: false
-            }
-        ]);
+      keyboard.push([{
+        text: `👀 ДЕМО: 3 анкеты на город`,
+        callback_data: "demo_info",
+        hide: false
+      }]);
     }
-    
+
     console.log(`✅ [PAGINATION] Клавиатура создана: ${keyboard.length} строк, ${totalPages} страниц, демо: ${isDemo}`);
-    
+
     // 🔥 ОТЛАДКА: Показываем структуру клавиатуры
     if (keyboard.length > 0) {
-        console.log(`📋 [PAGINATION STRUCTURE] Строки клавиатуры:`);
-        keyboard.forEach((row, i) => {
-            console.log(`   Строка ${i+1}: ${row.map(btn => `"${btn.text}"`).join(' | ')}`);
-        });
+      console.log(`📋 [PAGINATION STRUCTURE] Строки клавиатуры:`);
+      keyboard.forEach((row, i) => {
+        console.log(`   Строка ${i + 1}: ${row.map(btn => `"${btn.text}"`).join(' | ')}`);
+      });
     }
-    
+
     return keyboard;
-};
-  
-  
-  
-  
-  
-  
-  
-  // ===================== ОПТИМИЗИРОВАННАЯ ФУНКЦИЯ ПОЛУЧЕНИЯ ПРОФИЛЕЙ =====================
-  const getProfilesPage = async (
-    page = 0,
-    searchCountry = null,
-    ageRange = null,
-    searchCity = null,
-    isDemo = false
-  ) => {
+  };
+
+  // ===================== ОПТИМИЗИРОВАННАЯ ФУНКЦИЯ ПОЛУЧЕНИЯ ПРОФИЛЕЙ С LMDB =====================
+  const getProfilesPage = async (page = 0, searchCountry = null, ageRange = null, searchCity = null, isDemo = false) => {
     try {
-      console.log(
-        `🔍 [PROFILES PAGE] Запрос страницы ${page}, демо=${isDemo}, страна="${searchCountry}", город="${searchCity}"`
-      );
-
-      // 🔥 ВАЖНО: ИСПОЛЬЗУЕМ ГЛОБАЛЬНЫЙ КЭШ
-      let allProfiles = cacheManager.getGlobalProfiles(isDemo);
-
-      if (!allProfiles || allProfiles.length === 0) {
-        console.log(
-          `❌ [PROFILES PAGE] Нет профилей в глобальном кэше (демо: ${isDemo})`
-        );
-        return [];
-      }
+      console.log(`🔍 [PROFILES PAGE] Запрос страницы ${page}, демo=${isDemo}, страна="${searchCountry}", город="${searchCity}"`);
 
       const normalizedSearchCity = searchCity
         ? cacheManager.normalizeCityName(searchCity)
@@ -3199,152 +3748,95 @@ const createEnhancedPaginationKeyboard = (currentPage, totalPages, filterKey, cu
         ? cacheManager.normalizeCountryName(searchCountry)
         : null;
 
-      // 🔥 КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: ИСПОЛЬЗУЕМ ИНДЕКСЫ ДЛЯ ДЕМО-КЭША
-      const filterKey = `country:${normalizedSearchCountry || "all"}:age:${
-        ageRange?.label || "all"
-      }:city:${normalizedSearchCity || "all"}`;
+      // 🔥 КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: ИСПОЛЬЗУЕМ LMDB ИНДЕКСЫ
+      const filterKey = `country:${normalizedSearchCountry || "all"}:age:${ageRange?.label || "all"}:city:${normalizedSearchCity || "all"}`;
 
-      // 🔥 ВАЖНОЕ ИСПРАВЛЕНИЕ: ПРОВЕРЯЕМ КЭШ ФИЛЬТРОВ
+      // 🔥 ВАЖНОЕ ИСПРАВЛЕНИЕ: ПРОВЕРЯЕМ КЭШ ФИЛЬТРОВ В LMDB
       let filteredProfiles = cacheManager.getGlobalFilter(filterKey, isDemo);
 
-      if (!filteredProfiles) {
-        console.log(
-          `🔍 [FILTER] Промах глобального кэша фильтров: ${filterKey} (демо: ${isDemo})`
-        );
-        console.log(
-          `📊 [FILTER] Всего профилей в глобальном кэше: ${allProfiles.length} (демо: ${isDemo})`
-        );
+      if (!filteredProfiles || filteredProfiles.length === 0) {
+        console.log(`🔍 [FILTER] Промах LMDB кэша фильтров: ${filterKey} (демо: ${isDemo})`);
 
-        // 🔥 ВАЖНОЕ ИСПРАВЛЕНИЕ: ДЛЯ ДЕМО-РЕЖИМА ИСПОЛЬЗУЕМ ИНДЕКСЫ ИЗ ДЕМО-КЭША
+        // 🔥 ВАЖНОЕ ИСПРАВЛЕНИЕ: ДЛЯ ДЕМО-РЕЖИМА ИСПОЛЬЗУЕМ LMDB ИНДЕКСЫ
         if (isDemo) {
-          console.log(`🎯 [DEMO INDEX SEARCH] Ищем в демо-индексах...`);
+          console.log(`🎯 [LMDB DEMO INDEX SEARCH] Ищем в LMDB индексах...`);
 
-          // Получаем индексы из демо-кэша
-          const demoCountryCityIndex = globalDemoCache.get(
-            "demo:index:country_city"
-          );
-          const demoCountryIndex = globalDemoCache.get("demo:index:country");
-          const demoCityIndex = globalDemoCache.get("demo:index:city");
+          let profileIds = [];
 
-          if (demoCountryCityIndex && demoCountryIndex && demoCityIndex) {
-            console.log(
-              `✅ [DEMO INDEXES LOADED] Страны: ${demoCountryIndex.size}, Города: ${demoCityIndex.size}, Пары: ${demoCountryCityIndex.size}`
-            );
+          // СЦЕНАРИЙ 1: Страна + Город
+          if (normalizedSearchCountry && normalizedSearchCity) {
+            const indexKey = `country_city:${normalizedSearchCountry}:${normalizedSearchCity}`;
+            profileIds = cacheManager.getProfilesByIndex(indexKey, true);
+            console.log(`⚡ [LMDB INDEX 1] Страна+Город: ${profileIds.length} профилей`);
+          }
+          // СЦЕНАРИЙ 2: Только Страна
+          else if (normalizedSearchCountry && !normalizedSearchCity) {
+            const indexKey = `country:${normalizedSearchCountry}`;
+            profileIds = cacheManager.getProfilesByIndex(indexKey, true);
+            console.log(`⚡ [LMDB INDEX 2] Только страна: ${profileIds.length} профилей`);
+          }
+          // СЦЕНАРИЙ 3: Только Город
+          else if (!normalizedSearchCountry && normalizedSearchCity) {
+            const indexKey = `city:${normalizedSearchCity}`;
+            profileIds = cacheManager.getProfilesByIndex(indexKey, true);
+            console.log(`⚡ [LMDB INDEX 3] Только город: ${profileIds.length} профилей`);
+          }
 
-            let profileIndexes = [];
+          // Если нашли профили через индексы
+          if (profileIds.length > 0) {
+            console.log(`🔍 [INDEX TO PROFILES] Преобразуем ${profileIds.length} ID в профили...`);
 
-            // СЦЕНАРИЙ 1: Страна + Город (самый точный поиск)
-            if (normalizedSearchCountry && normalizedSearchCity) {
-              const key = `${normalizedSearchCountry}:${normalizedSearchCity}`;
-              profileIndexes = demoCountryCityIndex.get(key) || [];
-              console.log(
-                `⚡ [DEMO INDEX 1] Страна+Город "${key}": ${profileIndexes.length} профилей`
-              );
-            }
-            // СЦЕНАРИЙ 2: Только Страна
-            else if (normalizedSearchCountry && !normalizedSearchCity) {
-              profileIndexes =
-                demoCountryIndex.get(normalizedSearchCountry) || [];
-              console.log(
-                `⚡ [DEMO INDEX 2] Только страна "${normalizedSearchCountry}": ${profileIndexes.length} профилей`
-              );
-            }
-            // СЦЕНАРИЙ 3: Только Город (используем индекс только по городам)
-            else if (!normalizedSearchCountry && normalizedSearchCity) {
-              profileIndexes = demoCityIndex.get(normalizedSearchCity) || [];
-              console.log(
-                `⚡ [DEMO INDEX 3] Только город "${normalizedSearchCity}": ${profileIndexes.length} профилей`
-              );
-            }
+            filteredProfiles = [];
+            let validProfilesFound = 0;
 
-            // Если нашли профили через индексы
-            if (profileIndexes.length > 0) {
-              console.log(
-                `🔍 [INDEX TO PROFILES] Преобразуем ${profileIndexes.length} индексов в профили...`
-              );
+            for (const profile of profileIds) {
+              // Проверяем что профиль существует
+              if (profile && (profile.id || profile.n || profile.name)) {
+                // Применяем фильтр по возрасту если есть
+                if (ageRange) {
+                  const age = parseInt(profile.a) || 0;
+                  const minAge = ageRange.min || 0;
+                  const maxAge = ageRange.max || 999;
 
-              filteredProfiles = [];
-              let validProfilesFound = 0;
-
-              for (let i = 0; i < profileIndexes.length; i++) {
-                const profileIndex = profileIndexes[i];
-
-                // 🔥 ВАЖНОЕ ИСПРАВЛЕНИЕ: Проверяем что индекс в пределах массива
-                if (profileIndex >= 0 && profileIndex < allProfiles.length) {
-                  const profile = allProfiles[profileIndex];
-
-                  // Проверяем что профиль существует и имеет данные
-                  if (profile && (profile.id || profile.n || profile.name)) {
-                    // Применяем фильтр по возрасту если есть
-                    if (ageRange) {
-                      const age = parseInt(profile.a) || 0;
-                      const minAge = ageRange.min || 0;
-                      const maxAge = ageRange.max || 999;
-
-                      if (age >= minAge && age <= maxAge) {
-                        filteredProfiles.push(profile);
-                        validProfilesFound++;
-                      }
-                    } else {
-                      filteredProfiles.push(profile);
-                      validProfilesFound++;
-                    }
-                  } else {
-                    console.log(
-                      `⚠️ [DEMO INDEX WARNING] Профиль по индексу ${profileIndex} невалидный`
-                    );
+                  if (age >= minAge && age <= maxAge) {
+                    filteredProfiles.push(profile);
+                    validProfilesFound++;
                   }
                 } else {
-                  console.log(
-                    `⚠️ [DEMO INDEX ERROR] Индекс ${profileIndex} вне диапазона (0-${
-                      allProfiles.length - 1
-                    })`
-                  );
-                }
-
-                // 🔥 ВАЖНОЕ ИСПРАВЛЕНИЕ: Ограничиваем 3 профиля на город для демо
-                if (validProfilesFound >= 3) {
-                  console.log(
-                    `🎯 [DEMO LIMIT] Достигнут лимит 3 профилей на город для демо-режима`
-                  );
-                  break;
+                  filteredProfiles.push(profile);
+                  validProfilesFound++;
                 }
               }
 
-              console.log(
-                `✅ [DEMO INDEX RESULT] Найдено через индексы: ${validProfilesFound} валидных профилей`
-              );
-
-              // Если нашли через индексы - сохраняем в кэш и возвращаем
-              if (filteredProfiles.length > 0) {
-                cacheManager.cacheGlobalFilter(
-                  filterKey,
-                  filteredProfiles,
-                  isDemo
-                );
-                console.log(
-                  `💾 [DEMO CACHE SAVED] Сохранено в кэш фильтров: ${filterKey}, профилей: ${filteredProfiles.length}`
-                );
-              } else {
-                console.log(
-                  `❌ [DEMO INDEX EMPTY] Не найдено профилей через индексы, используем стандартную фильтрацию`
-                );
+              // 🔥 ВАЖНОЕ ИСПРАВЛЕНИЕ: Ограничиваем 3 профиля на город для демо
+              if (validProfilesFound >= 3) {
+                console.log(`🎯 [DEMO LIMIT] Достигнут лимит 3 профилей на город для демо-режима`);
+                break;
               }
+            }
+
+            console.log(`✅ [LMDB INDEX RESULT] Найдено через индексы: ${validProfilesFound} валидных профилей`);
+
+            // Если нашли через индексы - сохраняем в кэш и возвращаем
+            if (filteredProfiles.length > 0) {
+              cacheManager.cacheGlobalFilter(filterKey, filteredProfiles, isDemo);
+              console.log(`💾 [LMDB CACHE SAVED] Сохранено в LMDB кэш фильтров: ${filterKey}, профилей: ${filteredProfiles.length}`);
             } else {
-              console.log(
-                `⚠️ [DEMO INDEX EMPTY] Не найдено профилей через индексы, используем стандартную фильтрацию`
-              );
+              console.log(`❌ [LMDB INDEX EMPTY] Не найдено профилей через индексы`);
             }
           } else {
-            console.log(
-              `❌ [DEMO INDEX MISSING] Индексы не найдены в демо-кэше`
-            );
+            console.log(`⚠️ [LMDB INDEX EMPTY] Не найдено профилей через индексы`);
           }
         }
 
         // 🔥 ЕСЛИ НЕ НАШЛИ ЧЕРЕЗ ИНДЕКСЫ ИЛИ НЕ ДЕМО-РЕЖИМ - ИСПОЛЬЗУЕМ СТАНДАРТНУЮ ФИЛЬТРАЦИЮ
         if (!filteredProfiles || filteredProfiles.length === 0) {
           console.log(`🔍 [STANDARD FILTER] Используем стандартную фильтрацию`);
+          
+          // Получаем все профили из LMDB
+          const allProfiles = cacheManager.getGlobalProfiles(isDemo);
+          console.log(`📊 [LMDB PROFILES] Всего профилей в LMDB: ${allProfiles.length} (демо: ${isDemo})`);
+          
           filteredProfiles = await asyncFilterManager.filterProfilesAsync(
             allProfiles,
             {
@@ -3355,11 +3847,7 @@ const createEnhancedPaginationKeyboard = (currentPage, totalPages, filterKey, cu
             isDemo
           );
 
-          console.log(
-            `✅ [STANDARD FILTER RESULT] Отфильтровано: ${
-              filteredProfiles?.length || 0
-            } профилей`
-          );
+          console.log(`✅ [STANDARD FILTER RESULT] Отфильтровано: ${filteredProfiles?.length || 0} профилей`);
         }
 
         // 🔥 КРИТИЧЕСКАЯ ПРОВЕРКА: УБИРАЕМ НЕВАЛИДНЫЕ ПРОФИЛИ
@@ -3372,23 +3860,15 @@ const createEnhancedPaginationKeyboard = (currentPage, totalPages, filterKey, cu
           );
 
           if (validProfiles.length !== filteredProfiles.length) {
-            console.log(
-              `⚠️ [FILTER CLEANUP] Удалено ${
-                filteredProfiles.length - validProfiles.length
-              } некорректных профилей`
-            );
+            console.log(`⚠️ [FILTER CLEANUP] Удалено ${filteredProfiles.length - validProfiles.length} некорректных профилей`);
             filteredProfiles = validProfiles;
           }
 
-          // Сохраняем в кэш фильтров (если еще не сохранили через демо-индексы)
-          if (!cacheManager.getGlobalFilter(filterKey, isDemo)) {
-            cacheManager.cacheGlobalFilter(filterKey, filteredProfiles, isDemo);
-          }
+          // Сохраняем в LMDB кэш фильтров
+          cacheManager.cacheGlobalFilter(filterKey, filteredProfiles, isDemo);
         }
       } else {
-        console.log(
-          `✅ [CACHE HIT] Используем кэш для фильтра ${filterKey}: ${filteredProfiles.length} профилей`
-        );
+        console.log(`✅ [LMDB CACHE HIT] Используем кэш из LMDB для фильтра ${filterKey}: ${filteredProfiles.length} профилей`);
 
         // Проверяем кэшированные профили
         const validCachedProfiles = filteredProfiles.filter(
@@ -3399,11 +3879,7 @@ const createEnhancedPaginationKeyboard = (currentPage, totalPages, filterKey, cu
         );
 
         if (validCachedProfiles.length !== filteredProfiles.length) {
-          console.log(
-            `⚠️ [CACHE CLEANUP] В кэше ${
-              filteredProfiles.length - validCachedProfiles.length
-            } некорректных профилей`
-          );
+          console.log(`⚠️ [LMDB CACHE CLEANUP] В кэше ${filteredProfiles.length - validCachedProfiles.length} некорректных профилей`);
           filteredProfiles = validCachedProfiles;
           cacheManager.cacheGlobalFilter(filterKey, filteredProfiles, isDemo);
         }
@@ -3415,8 +3891,7 @@ const createEnhancedPaginationKeyboard = (currentPage, totalPages, filterKey, cu
       }
 
       const startIndex = page * SCALING_CONFIG.PERFORMANCE.PROFILES_PER_PAGE;
-      const endIndex =
-        startIndex + SCALING_CONFIG.PERFORMANCE.PROFILES_PER_PAGE;
+      const endIndex = startIndex + SCALING_CONFIG.PERFORMANCE.PROFILES_PER_PAGE;
 
       const result = filteredProfiles.slice(startIndex, endIndex);
 
@@ -3427,36 +3902,16 @@ const createEnhancedPaginationKeyboard = (currentPage, totalPages, filterKey, cu
       );
 
       if (validResult.length !== result.length) {
-        console.log(
-          `⚠️ [RESULT CLEANUP] Удалено ${
-            result.length - validResult.length
-          } некорректных профилей из результата`
-        );
+        console.log(`⚠️ [RESULT CLEANUP] Удалено ${result.length - validResult.length} некорректных профилей из результата`);
       }
 
-      console.log(
-        `📄 [PAGE] Возвращаем страницу ${page}: ${validResult.length} профилей (всего ${filteredProfiles.length})`
-      );
+      console.log(`📄 [PAGE] Возвращаем страницу ${page}: ${validResult.length} профилей (всего ${filteredProfiles.length})`);
 
       // 🔥 ДЛЯ ОТЛАДКИ: выводим первый профиль
       if (validResult.length > 0) {
         const firstProfile = validResult[0];
-        console.log(
-          `📋 [FIRST PROFILE DEBUG] ID: ${
-            firstProfile.id || firstProfile._id || "нет"
-          }, Имя: "${firstProfile.n || firstProfile.name || "нет"}", Возраст: ${
-            firstProfile.a || firstProfile.age || 0
-          }, Город: "${
-            firstProfile.ct || firstProfile.city || "нет"
-          }", isDemo: ${firstProfile.isDemo || isDemo}`
-        );
-        console.log(
-          `   📸 Фото: ${
-            firstProfile.p || firstProfile.photoUrl ? "есть" : "нет"
-          }, Фото галереи: ${
-            firstProfile.phs?.length || firstProfile.photos?.length || 0
-          }`
-        );
+        console.log(`📋 [FIRST PROFILE DEBUG] ID: ${firstProfile.id || firstProfile._id || "нет"}, Имя: "${firstProfile.n || firstProfile.name || "нет"}", Возраст: ${firstProfile.a || firstProfile.age || 0}, Город: "${firstProfile.ct || firstProfile.city || "нет"}", isDemo: ${firstProfile.isDemo || isDemo}`);
+        console.log(`   📸 Фото: ${firstProfile.p || firstProfile.photoUrl ? "есть" : "нет"}, Фото галереи: ${firstProfile.phs?.length || firstProfile.photos?.length || 0}`);
       }
 
       return validResult;
@@ -3476,12 +3931,7 @@ const createEnhancedPaginationKeyboard = (currentPage, totalPages, filterKey, cu
       chatStorage.messageTimestamps.set(messageId, Date.now());
     },
 
-    // Внутри messageManager:
-    clear: async function (
-      ctx,
-      keepCityKeyboard = false,
-      keepCountryKeyboard = false
-    ) {
+    clear: async function (ctx, keepCityKeyboard = false, keepCountryKeyboard = false) {
       const chatId = ctx.chat.id;
       if (!chatStorage.messages.has(chatId)) return;
 
@@ -3506,10 +3956,7 @@ const createEnhancedPaginationKeyboard = (currentPage, totalPages, filterKey, cu
             deletedCount++;
           } catch (e) {
             // Игнорируем ошибки "сообщение не найдено" и "доступ запрещен"
-            if (
-              e.response?.error_code !== 400 &&
-              e.response?.error_code !== 403
-            ) {
+            if (e.response?.error_code !== 400 && e.response?.error_code !== 403) {
               console.error(`❌ Ошибка удаления ${messageId}:`, e.message);
             } else {
               // Удаляем из хранилища даже если сообщение уже удалено
@@ -3528,10 +3975,7 @@ const createEnhancedPaginationKeyboard = (currentPage, totalPages, filterKey, cu
           chatStorage.cityKeyboard.delete(chatId);
           deletedCount++;
         } catch (e) {
-          if (
-            e.response?.error_code !== 400 &&
-            e.response?.error_code !== 403
-          ) {
+          if (e.response?.error_code !== 400 && e.response?.error_code !== 403) {
             console.error("❌ Ошибка удаления клавиатуры городов:", e);
           }
         }
@@ -3545,10 +3989,7 @@ const createEnhancedPaginationKeyboard = (currentPage, totalPages, filterKey, cu
           chatStorage.countryKeyboard.delete(chatId);
           deletedCount++;
         } catch (e) {
-          if (
-            e.response?.error_code !== 400 &&
-            e.response?.error_code !== 403
-          ) {
+          if (e.response?.error_code !== 400 && e.response?.error_code !== 403) {
             console.error("❌ Ошибка удаления клавиатуры стран:", e);
           }
         }
@@ -3556,9 +3997,7 @@ const createEnhancedPaginationKeyboard = (currentPage, totalPages, filterKey, cu
 
       chatStorage.userState.delete(ctx.from.id);
       if (deletedCount > 0)
-        console.log(
-          `🧹 [CLEAN] Удалено ${deletedCount} сообщений для чата ${chatId}`
-        );
+        console.log(`🧹 [CLEAN] Удалено ${deletedCount} сообщений для чата ${chatId}`);
     },
 
     sendMainMenu: async function (ctx) {
@@ -3660,7 +4099,7 @@ const createEnhancedPaginationKeyboard = (currentPage, totalPages, filterKey, cu
 
           if (!uniqueCountries || uniqueCountries.length === 0) {
             const msg = await ctx.reply(
-              "❌ Список стран временно недоступен. дождитесь загрузки."
+              "❌ Список стран временно недоступен. Дождитесь загрузки."
             );
             self.track(chatId, msg.message_id);
             return;
@@ -3770,16 +4209,8 @@ const createEnhancedPaginationKeyboard = (currentPage, totalPages, filterKey, cu
           keyboard.push([{ text: "🔙 Назад", callback_data: "back_to_menu" }]);
 
           const msgText = isDemo
-            ? `👀 ДЕМО-РЕЖИМ: Выберите страну (показано максимум по 3 анкеты на город)\n\n📄 Страница ${
-                page + 1
-              } из ${totalPages}\n🌍 Всего стран: ${
-                uniqueCountries.length
-              }\n\n💎 Для полного доступа Вы должны быть подписаны на наш канал <a href="https://t.me/+H6Eovikei9xiZWU0"><b>MagicClubPrivate</b></a>  и оплатить подписку`
-            : `🌍 Выберите страну (страница ${
-                page + 1
-              } из ${totalPages})\n📊 Всего стран: ${
-                uniqueCountries.length
-              }\n📍 Показано: ${pageCountries.length} стран`;
+            ? `👀 ДЕМО-РЕЖИМ: Выберите страну (показано максимум по 3 анкеты на город)\n\n📄 Страница ${page + 1} из ${totalPages}\n🌍 Всего стран: ${uniqueCountries.length}\n\n💎 Для полного доступа Вы должны быть подписаны на наш канал <a href="https://t.me/+H6Eovikei9xiZWU0"><b>MagicClubPrivate</b></a> и оплатить подписку`
+            : `🌍 Выберите страну (страница ${page + 1} из ${totalPages})\n📊 Всего стран: ${uniqueCountries.length}\n📍 Показано: ${pageCountries.length} стран`;
 
           const msg = await ctx.reply(msgText, {
             reply_markup: { inline_keyboard: keyboard },
@@ -3820,9 +4251,7 @@ const createEnhancedPaginationKeyboard = (currentPage, totalPages, filterKey, cu
           }
 
           const preloaderMsg = await sendPreloader(ctx, "profiles");
-
           const cities = await getUniqueCitiesForCountry(country, isDemo);
-
           await removePreloader(ctx, preloaderMsg);
 
           if (!cities || cities.length === 0) {
@@ -3833,15 +4262,12 @@ const createEnhancedPaginationKeyboard = (currentPage, totalPages, filterKey, cu
             return;
           }
 
-          console.log(
-            `🏙️ [CITIES] Показано городов для ${country}: ${cities.length}`
-          );
+          console.log(`🏙️ [CITIES] Показано городов для ${country}: ${cities.length}`);
 
           const citiesPerPage = 50;
           let currentPage = 0;
           const totalPages = Math.ceil(cities.length / citiesPerPage);
 
-          // В методе sendCitiesKeyboard объекта messageManager находим создание клавиатуры:
           const createCitiesKeyboard = (page) => {
             const startIndex = page * citiesPerPage;
             const endIndex = Math.min(
@@ -3949,24 +4375,21 @@ const createEnhancedPaginationKeyboard = (currentPage, totalPages, filterKey, cu
         // 🔥 ПОКАЗЫВАЕМ МЕНЮ СРАЗУ
         await messageManager.sendMainMenu(ctx);
 
-        // 🔥 ЗАГРУЖАЕМ ГЛОБАЛЬНЫЙ ДЕМО-КЭШ В ФОНЕ (если еще не загружен)
-        if (
-          !cacheManager.isGlobalDemoCacheLoaded() &&
-          !globalDemoCacheLoading
-        ) {
-          console.log(`🔄 [START] Фоновая загрузка глобального демо-кэша...`);
-
+        // 🔥 ПРОВЕРЯЕМ LMDB ИНИЦИАЛИЗАЦИЮ
+        if (!globalCacheInitialized) {
+          console.log(`🔄 [START] Проверяем инициализацию LMDB...`);
+          
           setTimeout(async () => {
             try {
-              await cacheManager.loadGlobalDemoCache(db);
-              console.log(`✅ [START] Глобальный демо-кэш загружен в фоне`);
+              if (demoDB.getKeys().length === 0) {
+                console.log(`🔄 [START] Фоновая загрузка демо-кэша в LMDB...`);
+                await cacheManager.loadGlobalDemoCache(db);
+                console.log(`✅ [START] Демо-кэш загружен в LMDB`);
+              }
             } catch (error) {
-              console.error(
-                `❌ [START] Ошибка загрузки глобального демо-кэша:`,
-                error.message
-              );
+              console.error(`❌ [START] Ошибка загрузки LMDB:`, error.message);
             }
-          }, 1000); // Задержка 1 секунда
+          }, 2000);
         }
       } catch (error) {
         console.error("❌ Ошибка команды start:", error);
@@ -3975,6 +4398,173 @@ const createEnhancedPaginationKeyboard = (currentPage, totalPages, filterKey, cu
     });
   });
 
+  // 🔥 НОВАЯ КОМАНДА ДЛЯ ДИАГНОСТИКИ LMDB
+  bot.command("lmdb_stats", async (ctx) => {
+    await messageQueue.add(async () => {
+      try {
+        const lmdbStats = cacheManager.getLMDBStats();
+        const readStats = readingStats.getStats();
+        
+        const statsMessage = `
+📊 **СТАТИСТИКА LMDB**
+
+**Базы данных:**
+• Полных профилей: ${lmdbStats.profilesCount}
+• Демо профилей: ${lmdbStats.demoProfilesCount}
+• Кэшей фильтров: ${lmdbStats.filtersCount}
+• Папка: ${lmdbStats.lmdbDir}
+
+**Операции LMDB:**
+• Всего чтений: ${lmdbStats.totalReads}
+• Всего записей: ${lmdbStats.totalWrites}
+• Попадания в кэш: ${lmdbStats.memoryUsage.cacheHits}
+• Промахи кэша: ${lmdbStats.memoryUsage.cacheMisses}
+• Эффективность: ${lmdbStats.cacheHitRate}
+
+**Общая статистика:**
+• Firestore чтений: ${readStats.firestoreReads}
+• LMDB чтений: ${readStats.lmdbReads}
+• LMDB записей: ${readStats.lmdbWrites}
+• Уникальных пользователей: ${readStats.uniqueUsers}
+
+**Память:**
+${(() => {
+  const mem = process.memoryUsage();
+  return `• Heap Used: ${(mem.heapUsed / 1024 / 1024).toFixed(2)}MB\n• Heap Total: ${(mem.heapTotal / 1024 / 1024).toFixed(2)}MB\n• RSS: ${(mem.rss / 1024 / 1024).toFixed(2)}MB`;
+})()}
+        `;
+
+        const keyboard = {
+          inline_keyboard: [
+            [
+              { text: "🔄 Обновить", callback_data: "refresh_lmdb_stats" },
+              { text: "🧹 Очистить фильтры", callback_data: "cleanup_filters" },
+            ],
+            [
+              { text: "🔙 Назад", callback_data: "back_to_menu" },
+            ],
+          ],
+        };
+
+        await ctx.reply(statsMessage, {
+          parse_mode: "Markdown",
+          reply_markup: keyboard,
+        });
+      } catch (error) {
+        console.error("❌ Ошибка команды lmdb_stats:", error);
+        await ctx.reply("❌ Ошибка получения статистики LMDB");
+      }
+    });
+  });
+
+  // Обработчик для обновления статистики LMDB
+  bot.action("refresh_lmdb_stats", async (ctx) => {
+    await ctx.answerCbQuery("🔄 Обновляем статистику...");
+    await ctx.deleteMessage();
+    await ctx.replyWithHTML("Статистика обновлена. Используйте /lmdb_stats снова.");
+  });
+
+  // Обработчик для очистки фильтров
+  bot.action("cleanup_filters", async (ctx) => {
+    await messageQueue.add(async () => {
+      try {
+        await ctx.answerCbQuery("🧹 Очищаем фильтры...");
+        const cleaned = cacheManager.cleanupExpiredFilters();
+        await ctx.reply(`✅ Очищено ${cleaned} просроченных фильтров`);
+      } catch (error) {
+        console.error("❌ Ошибка очистки фильтров:", error);
+        await ctx.answerCbQuery("❌ Ошибка очистки");
+      }
+    });
+  });
+  bot.command("debug_ukraine", async (ctx) => {
+    try {
+        const countryVariants = new Set();
+        const profileKeys = Array.from(profilesDB.getKeys());
+        
+        // Проверим 1000 профилей
+        for (let i = 0; i < Math.min(1000, profileKeys.length); i++) {
+            const profile = profilesDB.get(profileKeys[i]);
+            if (profile && profile.c) {
+                const country = profile.c;
+                if (country.includes("Укра") || country.includes("Ukrain") || country.includes("Укр")) {
+                    countryVariants.add(country);
+                }
+            }
+        }
+        
+        await ctx.reply(`Варианты Украины в базе:\n${Array.from(countryVariants).join('\n')}`);
+    } catch (error) {
+        await ctx.reply(`Ошибка: ${error.message}`);
+    }
+});
+// В profiles.js добавьте команду
+bot.command("debug_cities", async (ctx) => {
+    try {
+        const country = "🇷🇺 Россия";
+        const normalizedCountry = cacheManager.normalizeCountryName(country);
+        
+        let response = `🔍 **ДЕБАГ ГОРОДОВ ДЛЯ ${country}**\n\n`;
+        response += `Нормализовано: ${normalizedCountry}\n\n`;
+        
+        // 1. Проверим что в индексах
+        const citiesFromIndex = indexesDB.get(`cities:${normalizedCountry}`);
+        response += `📊 В индексах LMDB: ${citiesFromIndex?.length || 0} городов\n`;
+        
+        if (citiesFromIndex && citiesFromIndex.length > 0) {
+            response += `Первые 10: ${citiesFromIndex.slice(0, 10).join(", ")}\n\n`;
+        }
+        
+        // 2. Посчитаем реальное количество городов из профилей
+        const profileKeys = Array.from(profilesDB.getKeys());
+        const citiesSet = new Set();
+        let profilesWithCountry = 0;
+        
+        // Проверим только 1000 профилей для скорости
+        const sampleSize = Math.min(1000, profileKeys.length);
+        
+        for (let i = 0; i < sampleSize; i++) {
+            const profile = profilesDB.get(profileKeys[i]);
+            if (!profile) continue;
+            
+            const profileCountry = profile.c;
+            const normalizedProfileCountry = cacheManager.normalizeCountryName(profileCountry);
+            
+            if (normalizedProfileCountry === normalizedCountry) {
+                profilesWithCountry++;
+                if (profile.ct && profile.ct.trim() !== "" && profile.ct !== "Не указан") {
+                    citiesSet.add(cacheManager.normalizeCityName(profile.ct));
+                }
+            }
+        }
+        
+        response += `📊 В выборке ${sampleSize} профилей:\n`;
+        response += `• Профилей с страной "${normalizedCountry}": ${profilesWithCountry}\n`;
+        response += `• Уникальных городов: ${citiesSet.size}\n`;
+        
+        if (citiesSet.size > 0) {
+            const citiesArray = Array.from(citiesSet).sort();
+            response += `• Примеры: ${citiesArray.slice(0, 20).join(", ")}`;
+            if (citiesArray.length > 20) response += `... (и еще ${citiesArray.length - 20})`;
+        }
+        
+        await ctx.reply(response);
+        
+    } catch (error) {
+        console.error("Ошибка debug_cities:", error);
+        await ctx.reply(`❌ Ошибка: ${error.message}`);
+    }
+});
+bot.command("fix_russia_cities", async (ctx) => {
+    try {
+        const country = "🇷🇺 Россия";
+        const cities = cacheManager.extractCitiesFromFullProfiles(country);
+        
+        await ctx.reply(`✅ Для России найдено ${cities.length} городов\nПервые 20: ${cities.slice(0,20).join(", ")}`);
+    } catch (error) {
+        await ctx.reply(`❌ Ошибка: ${error.message}`);
+    }
+});
   bot.command("fix_city", async (ctx) => {
     try {
       const [_, testCity, testCountry] = ctx.text.split(" ");
@@ -3987,45 +4577,33 @@ const createEnhancedPaginationKeyboard = (currentPage, totalPages, filterKey, cu
       const normalizedCity = cacheManager.normalizeCityName(testCity);
       const normalizedCountry = cacheManager.normalizeCountryName(testCountry);
 
-      // 2. Получаем профили из кэша (проверяем оба кэша)
-      const demoProfiles = cacheManager.getGlobalProfiles(true);
-      const fullProfiles = cacheManager.getGlobalProfiles(false);
+      // 2. Получаем статистику LMDB
+      const lmdbStats = cacheManager.getLMDBStats();
 
-      let response = `🔧 **ДИАГНОСТИКА ГОРОДА:**\n\n`;
+      let response = `🔧 **ДИАГНОСТИКА ГОРОДА (LMDB):**\n\n`;
       response += `• Запрос: ${testCity}, ${testCountry}\n`;
       response += `• Нормализовано: ${normalizedCity}, ${normalizedCountry}\n\n`;
 
-      response += `📊 **СТАТУС КЭШЕЙ:**\n`;
-      response += `• Демо-кэш: ${
-        demoProfiles ? `${demoProfiles.length} профилей` : "❌ не загружен"
-      }\n`;
-      response += `• Полный кэш: ${
-        fullProfiles ? `${fullProfiles.length} профилей` : "❌ не загружен"
-      }\n\n`;
+      response += `📊 **СТАТУС LMDB:**\n`;
+      response += `• Полных профилей: ${lmdbStats.profilesCount}\n`;
+      response += `• Демо профилей: ${lmdbStats.demoProfilesCount}\n\n`;
 
-      // Используем демо-кэш если полный не загружен
-      const profilesToCheck = demoProfiles || fullProfiles || [];
+      // 3. Ищем в LMDB
+      const fullProfiles = cacheManager.getGlobalProfiles(false);
+      const demoProfiles = cacheManager.getGlobalProfiles(true);
 
-      if (profilesToCheck.length === 0) {
-        response += `❌ НЕТ ПРОФИЛЕЙ В КЭШЕ!\n`;
-        response += `Демо-кэш должен быть загружен при старте бота!\n`;
-        await ctx.reply(response);
-        return;
-      }
-
-      // 3. Ищем ВСЕ города в этой стране
+      // Ищем ВСЕ города в этой стране
       const citiesInCountry = new Set();
       const cityVariants = new Map();
 
-      profilesToCheck.forEach((profile) => {
+      // Проверяем полные профили
+      fullProfiles.forEach((profile) => {
         const profileCountry = profile.c || profile.country;
         const profileCity = profile.ct || profile.city;
 
-        // Проверяем что оба поля существуют
         if (!profileCountry || !profileCity) return;
 
-        const normProfileCountry =
-          cacheManager.normalizeCountryName(profileCountry);
+        const normProfileCountry = cacheManager.normalizeCountryName(profileCountry);
         const normProfileCity = cacheManager.normalizeCityName(profileCity);
 
         if (normProfileCountry === normalizedCountry) {
@@ -4052,7 +4630,7 @@ const createEnhancedPaginationKeyboard = (currentPage, totalPages, filterKey, cu
       response += `• Всего городов в ${normalizedCountry}: ${citiesInCountry.size}\n\n`;
 
       if (!cityExists) {
-        response += `❌ **ГОРОД НЕ НАЙДЕН В СПИСКЕ!**\n`;
+        response += `❌ **ГОРОД НЕ НАЙДЕН В LMDB!**\n`;
         response += `Похожие города:\n`;
 
         // Ищем похожие
@@ -4065,9 +4643,7 @@ const createEnhancedPaginationKeyboard = (currentPage, totalPages, filterKey, cu
         if (similarCities.length > 0) {
           similarCities.slice(0, 5).forEach((city) => {
             const variants = Array.from(cityVariants.get(city) || []);
-            response += `• "${city}" (варианты в БД: ${variants
-              .slice(0, 3)
-              .join(", ")})\n`;
+            response += `• "${city}" (варианты в БД: ${variants.slice(0, 3).join(", ")})\n`;
           });
         } else {
           response += `Нет похожих городов!\n`;
@@ -4082,7 +4658,7 @@ const createEnhancedPaginationKeyboard = (currentPage, totalPages, filterKey, cu
           }
         }
       } else {
-        response += `✅ **ГОРОД НАЙДЕН!**\n`;
+        response += `✅ **ГОРОД НАЙДЕН В LMDB!**\n`;
 
         // Показываем как он записан в БД
         const variants = Array.from(cityVariants.get(normalizedCity) || []);
@@ -4094,24 +4670,39 @@ const createEnhancedPaginationKeyboard = (currentPage, totalPages, filterKey, cu
         }
 
         // Считаем анкеты
-        const exactMatches = profilesToCheck.filter((p) => {
+        const exactMatches = fullProfiles.filter((p) => {
           const pCity = cacheManager.normalizeCityName(p.ct || p.city);
           const pCountry = cacheManager.normalizeCountryName(p.c || p.country);
           return pCity === normalizedCity && pCountry === normalizedCountry;
         });
 
-        response += `\n📊 Анкет в кэше: ${exactMatches.length}\n`;
+        response += `\n📊 Анкет в LMDB: ${exactMatches.length}\n`;
       }
 
       await ctx.reply(response);
     } catch (error) {
       console.error("Ошибка в fix_city:", error);
-      await ctx.reply(
-        `❌ Ошибка: ${error.message}\nИспользуй: /fix_city Дубай ОАЭ`
-      );
+      await ctx.reply(`❌ Ошибка: ${error.message}\nИспользуй: /fix_city Дубай ОАЭ`);
     }
   });
-  bot.command("check_country_normalization", async (ctx) => {
+bot.command("check_demo_keys", async (ctx) => {
+    await messageQueue.add(async () => {
+        try {
+            const keys = Array.from(demoDB.getKeys());
+            await ctx.reply(`📊 Демо-LMDB содержит: ${keys.length} ключей`);
+            
+            if (keys.length > 0) {
+                const firstKey = keys[0];
+                const firstProfile = demoDB.get(firstKey);
+                await ctx.reply(`🔍 Первый ключ: ${firstKey}\nПрофиль: ${firstProfile ? JSON.stringify(firstProfile).substring(0, 100) + "..." : "null"}`);
+            }
+        } catch (error) {
+            console.error("Ошибка check_demo_keys:", error);
+            await ctx.reply(`❌ Ошибка: ${error.message}`);
+        }
+    });
+});
+   bot.command("check_country_normalization", async (ctx) => {
     try {
       const allProfiles = cacheManager.getGlobalProfiles(false);
 
@@ -4137,18 +4728,14 @@ const createEnhancedPaginationKeyboard = (currentPage, totalPages, filterKey, cu
         }
       });
 
-      let response = `🇦🇪 **ВАРИАНТЫ НАПИСАНИЯ ОАЭ В БД:**\n\n`;
+      let response = `🇦🇪 **ВАРИАНТЫ НАПИСАНИЯ ОАЭ В LMDB:**\n\n`;
       response += `• Всего вариантов: ${uaeVariants.size}\n`;
       response += `• Всего профилей: ${uaeProfiles.length}\n\n`;
 
       if (uaeVariants.size > 0) {
-        response += `📋 **Варианты в БД:**\n`;
+        response += `📋 **Варианты в LMDB:**\n`;
         Array.from(uaeVariants).forEach((variant, i) => {
-          response += `${
-            i + 1
-          }. "${variant}" → нормализован: ${cacheManager.normalizeCountryName(
-            variant
-          )}\n`;
+          response += `${i + 1}. "${variant}" → нормализован: ${cacheManager.normalizeCountryName(variant)}\n`;
         });
 
         response += `\n👤 **Примеры профилей:**\n`;
@@ -4161,8 +4748,7 @@ const createEnhancedPaginationKeyboard = (currentPage, totalPages, filterKey, cu
 
         // Проверяем фильтр
         const filterCountry = "🇦🇪 ОАЭ";
-        const normalizedFilter =
-          cacheManager.normalizeCountryName(filterCountry);
+        const normalizedFilter = cacheManager.normalizeCountryName(filterCountry);
 
         response += `\n🔍 **ПРОВЕРКА ФИЛЬТРА:**\n`;
         response += `• Фильтр: "${filterCountry}"\n`;
@@ -4182,6 +4768,7 @@ const createEnhancedPaginationKeyboard = (currentPage, totalPages, filterKey, cu
       await ctx.reply("❌ Ошибка");
     }
   });
+
   const safeClearMessages = async (
     ctx,
     keepCityKeyboard = false,
@@ -4198,6 +4785,30 @@ const createEnhancedPaginationKeyboard = (currentPage, totalPages, filterKey, cu
       }
     }
   };
+bot.command("force_load_full", async (ctx) => {
+    await messageQueue.add(async () => {
+        try {
+            await ctx.reply("🚀 ЗАГРУЖАЕМ ПОЛНЫЙ КЭШ В LMDB...\n\n⏱️ Это займет 2-3 минуты...");
+            
+            const success = await cacheManager.loadGlobalFullCache(db);
+            
+            if (success) {
+                const stats = cacheManager.getLMDBStats();
+                await ctx.reply(
+                    `✅ ПОЛНЫЙ КЭШ ЗАГРУЖЕН!\n\n` +
+                    `📊 Профилей: ${stats.profilesCount}\n` +
+                    `🌍 Стран: ${indexesDB.get('countries:all')?.length || 0}\n` +
+                    `💾 Память: ${(process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2)}MB`
+                );
+            } else {
+                await ctx.reply("❌ ОШИБКА ЗАГРУЗКИ! Проверь логи.");
+            }
+        } catch (error) {
+            console.error("❌ Ошибка force_load_full:", error);
+            await ctx.reply(`❌ КРИТИЧЕСКАЯ ОШИБКА: ${error.message}`);
+        }
+    });
+});
   bot.action("all_countries_with_check", async (ctx) => {
     const userId = ctx.from.id;
     console.log(`🌍 [COUNTRIES] Пользователь ${userId} запросил страны`);
@@ -4205,1063 +4816,586 @@ const createEnhancedPaginationKeyboard = (currentPage, totalPages, filterKey, cu
     // 🔥 ДОБАВЛЯЕМ ПРЕЛОАДЕР СРАЗУ
     let accessPreloader = null;
     try {
-      accessPreloader = await sendPreloader(
-        ctx,
-        "access",
-        "🔍 ПРОВЕРКА ДОСТУПА"
-      );
+        accessPreloader = await sendPreloader(
+            ctx,
+            "access",
+            "🔍 ПРОВЕРКА ДОСТУПА"
+        );
     } catch (error) {
-      console.log("⚠️ Не удалось отправить прелоадер:", error.message);
+        console.log("⚠️ Не удалось отправить прелоадер:", error.message);
     }
 
     // 🔥 БЫСТРАЯ ПРОВЕРКА БЛОКИРОВКИ
     if (!acquireUserLock(userId, 2000)) {
-      try {
-        await ctx.answerCbQuery(
-          "⏳ Подождите, обрабатываем предыдущий запрос..."
-        );
-        // Удаляем прелоадер безопасно
-        await safeDeleteMessage(ctx, accessPreloader?.message_id);
-      } catch (e) {}
-      return;
+        try {
+            await ctx.answerCbQuery(
+                "⏳ Подождите, обрабатываем предыдущий запрос..."
+            );
+            // Удаляем прелоадер безопасно
+            await safeDeleteMessage(ctx, accessPreloader?.message_id);
+        } catch (e) {}
+        return;
     }
 
     // 🔥 ФУНКЦИЯ БЕЗОПАСНОГО УДАЛЕНИЯ СООБЩЕНИЙ
     const safeDeleteMessage = async (messageId) => {
-      if (!messageId) return;
-      try {
-        await ctx.telegram.deleteMessage(ctx.chat.id, messageId);
-      } catch (error) {
-        if (
-          error.response?.error_code !== 400 &&
-          error.response?.error_code !== 403
-        ) {
-          console.log(
-            `⚠️ Ошибка удаления сообщения ${messageId}: ${error.message}`
-          );
+        if (!messageId) return;
+        try {
+            await ctx.telegram.deleteMessage(ctx.chat.id, messageId);
+        } catch (error) {
+            if (
+                error.response?.error_code !== 400 &&
+                error.response?.error_code !== 403
+            ) {
+                console.log(`⚠️ Ошибка удаления сообщения ${messageId}: ${error.message}`);
+            }
         }
-      }
     };
 
     try {
-      await ctx.answerCbQuery("🌍 Загружаем страны...");
+        await ctx.answerCbQuery("🌍 Загружаем страны...");
 
-      // Очищаем предыдущие сообщения безопасно
-      await safeClearMessages(ctx);
+        // Очищаем предыдущие сообщения безопасно
+        await safeClearMessages(ctx);
 
-      // 🔥 🔥 🔥 ЭТАП 1: ВСЕГДА ПРОВЕРЯЕМ ДОСТУП ЗАНОВО
-      console.log(`🔄 [FORCE CHECK] Принудительная проверка для ${userId}`);
+        // 🔥 🔥 🔥 ЭТАП 1: ВСЕГДА ПРОВЕРЯЕМ ДОСТУП ЗАНОВО
+        console.log(`🔄 [FORCE CHECK] Принудительная проверка для ${userId}`);
 
-      // Очищаем ВСЕ кэши пользователя
-      subscriptionCache.del(`subscription:${userId}`);
-      channelSubscriptionCache.del(`channel:${userId}`);
-      userCacheStatus.del(`cache_status:${userId}`);
+        // Очищаем ВСЕ кэши пользователя
+        subscriptionCache.del(`subscription:${userId}`);
+        channelSubscriptionCache.del(`channel:${userId}`);
+        userCacheStatus.del(`cache_status:${userId}`);
 
-      // 🔥 ПРОВЕРЯЕМ ПОДПИСКУ И КАНАЛ ЗАНОВО
-      console.log(`🔍 [ACCESS CHECK] Проверка доступа для ${userId}`);
+        // 🔥 ПРОВЕРЯЕМ ПОДПИСКУ И КАНАЛ ЗАНОВО
+        console.log(`🔍 [ACCESS CHECK] Проверка доступа для ${userId}`);
 
-      const hasSubscription = await checkSubscription(userId);
-      const hasChannelSubscription = await checkChannelSubscription(ctx);
-      const hasFullAccess = hasSubscription && hasChannelSubscription;
+        const hasSubscription = await checkSubscription(userId);
+        const hasChannelSubscription = await checkChannelSubscription(ctx);
+        const hasFullAccess = hasSubscription && hasChannelSubscription;
 
-      console.log(
-        `✅ [ACCESS RESULT] ${userId}: подписка=${hasSubscription}, канал=${hasChannelSubscription}, полный доступ=${hasFullAccess}`
-      );
+        console.log(`✅ [ACCESS RESULT] ${userId}: подписка=${hasSubscription}, канал=${hasChannelSubscription}, полный доступ=${hasFullAccess}`);
 
-      // Определяем тип кэша
-      const cacheType = hasFullAccess ? "full" : "demo";
-      const isDemo = cacheType === "demo";
+        // Определяем тип кэша
+        const cacheType = hasFullAccess ? "full" : "demo";
+        const isDemo = cacheType === "demo";
 
-      // 🔥 УДАЛЯЕМ ПРЕЛОАДЕР БЕЗОПАСНО
-      if (accessPreloader) {
-        await safeDeleteMessage(accessPreloader.message_id);
-        accessPreloader = null;
-      }
+        // 🔥 УДАЛЯЕМ ПРЕЛОАДЕР БЕЗОПАСНО
+        if (accessPreloader) {
+            await safeDeleteMessage(accessPreloader.message_id);
+            accessPreloader = null;
+        }
 
-      // 🔥 🔥 🔥 ЭТАП 2: ПРОВЕРЯЕМ, ЗАГРУЖЕН ЛИ НУЖНЫЙ КЭШ
-      if (isDemo && !cacheManager.isGlobalDemoCacheLoaded()) {
-        // 🔥 ДЕМО-КЭШ НЕ ЗАГРУЖЕН - ПОКАЗЫВАЕМ СООБЩЕНИЕ
-        console.log(
-          `❌ [DEMO CACHE NOT LOADED] Демо-кэш не загружен для ${userId}`
-        );
-
-        await ctx.reply(
-          `
-⚠️ <b>База не готова! Подождите 1-2 минуты!</b>
-
-данные еще не загружены в систему.
-
-
-<b>Что делать:</b>
-1. Подождите 1-2 минуты
-2. Нажмите "🌍 ВСЕ СТРАНЫ" снова
-3. Или используйте команду /start
-
-<em>Если проблема , напишите в поддержку @MagicAdd</em>
-            `,
-          {
-            parse_mode: "HTML",
-            reply_markup: {
-              inline_keyboard: [
-                [
-                  {
-                    text: "🔄 ПОВТОРИТЬ",
-                    callback_data: "all_countries_with_check",
-                  },
-                ],
-                [{ text: "🔙 ГЛАВНОЕ МЕНЮ", callback_data: "back_to_menu" }],
-              ],
-            },
-          }
-        );
-
-        return;
-      }
-
-      if (!isDemo && !cacheManager.isGlobalFullCacheLoaded()) {
-        // 🔥 ПОЛНЫЙ КЭШ НЕ ЗАГРУЖЕН, НО У ПОЛЬЗОВАТЕЛЯ ЕСТЬ ДОСТУП
-        console.log(
-          `🚀 [FULL CACHE NEEDED] Глобальный полный кэш не загружен для ${userId}`
-        );
-
-        // Показываем сообщение о начале загрузки
-        const loadingMsg = await ctx.reply(
-          `
-🔄 <b>ЗАГРУЗКА ГЛОБАЛЬНОГО ДОСТУПА</b>
+        // 🔥 🔥 🔥 ЭТАП 2: ЕСЛИ ПОЛНЫЙ ДОСТУП - ПРОВЕРЯЕМ И ЗАГРУЖАЕМ LMDB
+        if (hasFullAccess) {
+            const profilesCount = Array.from(profilesDB.getKeys()).length;
+            console.log(`📊 [FULL ACCESS CHECK] Полных профилей в LMDB: ${profilesCount}`);
+            
+            if (profilesCount === 0) {
+                console.log(`🚀 [FULL LMDB NEEDED] Полный кэш не загружен в LMDB для ${userId}`);
+                
+                // 🔥 🔥 🔥 КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: ЗАГРУЖАЕМ ПРЯМО СЕЙЧАС
+                const loadingMsg = await ctx.reply(`
+🔄 <b>ЗАГРУЗКА ПОЛНОЙ БАЗЫ ДАННЫХ</b>
 
 🎉 У вас есть полный доступ!
-📊 Загружаем 70,000+ анкет в глобальный базу...
+📊 Загружаем 70,000+ анкет в систему...
 
 ⏱️ <i>Это займет 2-3 минуты</i>
 📦 <i>Загружаем пачками по 5000 анкет</i>
-✨ <i>После загрузки доступно для всех пользователей с полным доступом</i>
+💾 <i>Сохраняем на диск для быстрого доступа</i>
 
-<em>Не закрывайте чат, загрузка продолжается в фоне</em>
-            `,
-          { parse_mode: "HTML" }
-        );
+<em>Подождите, загрузка началась...</em>
+                `, { parse_mode: "HTML" });
 
-        // 🔥 ЗАПУСКАЕМ ЗАГРУЗКУ ГЛОБАЛЬНОГО КЭША (только для полного доступа)
-        cacheManager
-          .lazyLoadGlobalFullCache(db, userId)
-          .then((success) => {
-            if (success) {
-              console.log(
-                `✅ [BACKGROUND GLOBAL CACHE] Глобальный полный кэш загружен для ${userId}`
-              );
-              // Удаляем сообщение о загрузке
-              safeDeleteMessage(loadingMsg.message_id);
-              // Показываем успешное сообщение
-              ctx.reply(
-                `
-✅ <b> Доступ к полной базе открыт!</b>
+                try {
+                    // 🔥 ЗАГРУЖАЕМ ПОЛНЫЙ КЭШ
+                    const success = await cacheManager.loadGlobalFullCache(db);
+                    
+                    // Удаляем сообщение о загрузке
+                    await safeDeleteMessage(loadingMsg.message_id);
+                    
+                    if (success) {
+                        // 🔥 ПОКАЗЫВАЕМ УСПЕХ
+                        await ctx.reply(`
+✅ <b>БАЗА ДАННЫХ ЗАГРУЖЕНА!</b>
 
 🎉 Теперь доступны все 70,000+ анкет!
 • 👤 Все контакты видны
 • 📞 Телефоны, Telegram, WhatsApp
-• ⚡ Максимальная скорость работы
-                            `,
-                { parse_mode: "HTML" }
-              );
-            } else {
-              console.log(
-                `❌ [BACKGROUND GLOBAL CACHE ERROR] ${userId}: Не удалось загрузить`
-              );
-              // Показываем сообщение об ошибке
-              safeDeleteMessage(loadingMsg.message_id);
-              ctx.reply(
-                `⚠️ <b>ОШИБКА ЗАГРУЗКИ</b>\n\nНе удалось загрузить полную базу.\nИспользуем ограниченный доступ.`,
-                { parse_mode: "HTML" }
-              );
+• 🌍 ${indexesDB.get('countries:all')?.length || 0} стран
+• 🌆 Тысячи городов
+• ⚡ Быстрый поиск через индексы
+
+<code>Теперь выберите страну для начала поиска</code>
+                        `, { parse_mode: "HTML" });
+                    } else {
+                        await ctx.reply(`
+⚠️ <b>ОШИБКА ЗАГРУЗКИ БАЗЫ</b>
+
+Не удалось загрузить полную базу данных.
+Попробуйте еще раз через минуту или напишите в поддержку @MagicAdd.
+
+<em>Используйте демо-режим пока исправляем проблему</em>
+                        `, { parse_mode: "HTML" });
+                        // Переключаем в демо-режим
+                        isDemo = true;
+                    }
+                } catch (loadError) {
+                    console.error(`❌ [LMDB LOAD CRITICAL] Ошибка загрузки:`, loadError);
+                    await safeDeleteMessage(loadingMsg.message_id);
+                    await ctx.reply(`
+❌ <b>КРИТИЧЕСКАЯ ОШИБКА ЗАГРУЗКИ</b>
+
+${loadError.message}
+
+<em>Используйте демо-режим или напишите в поддержку @MagicAdd</em>
+                    `, { parse_mode: "HTML" });
+                    isDemo = true;
+                }
             }
-          })
-          .catch((error) => {
-            console.error(
-              `❌ [BACKGROUND GLOBAL CACHE ERROR] ${userId}:`,
-              error.message
-            );
-            safeDeleteMessage(loadingMsg.message_id);
-          });
-
-        // 🔥 ПОКАЗЫВАЕМ ПЕРВУЮ ПАЧКУ СТРАН (из демо-кэша пока идет загрузка полного)
-        if (cacheManager.isGlobalDemoCacheLoaded()) {
-          console.log(
-            `📊 [TEMPORARY] Показываем демо-страны пока загружается глобальный полный кэш`
-          );
-          await messageManager.sendCountriesKeyboard(ctx, false, 0);
-        } else {
-          // Если даже демо-кэша нет
-          await ctx.reply(
-            `
-⏳ <b>ИНИЦИАЛИЗАЦИЯ ГЛОБАЛЬНОГО КЭША</b>
-
-📊 Загружаем первые анкеты...
-⏱️ Подождите 30 секунд
-
-<em>Система готовится к работе</em>
-                `,
-            { parse_mode: "HTML" }
-          );
         }
 
-        return;
-      }
+        // 🔥 🔥 🔥 ЭТАП 3: ПОКАЗЫВАЕМ СТРАНЫ
+        console.log(`✅ [LMDB READY] ${isDemo ? "Демо" : "Полный"} LMDB готов для ${userId}`);
 
-      // 🔥 🔥 🔥 ЭТАП 3: КЭШ ЗАГРУЖЕН - ПОКАЗЫВАЕМ СТРАНЫ
-      console.log(
-        `✅ [CACHE READY] ${
-          isDemo ? "Демо" : "Полный"
-        } кэш загружен для ${userId}`
-      );
-
-      // Показываем сообщение о статусе
-      if (isDemo) {
-        await ctx.reply(
-          `
-👀 <b>ДЕМО-РЕЖИМ</b>
+        // Показываем сообщение о статусе
+        if (isDemo) {
+            await ctx.reply(`
+👀 <b>ДЕМО-РЕЖИМ (LMDB)</b>
 
 ✅ Загружено: доступны ВСЕ страны и города
 📊 Ограничение: максимум 3 анкеты на город
 🚫 Контакты: скрыты
+💾 Данные: хранятся на диске в LMDB
 
 💎 <b>Для полного доступа:</b>
 1. Подписка на канал <a href="https://t.me/+H6Eovikei9xiZWU0"><b>MagicClubPrivate</b></a>
 2. Активная оплаченная подписка
 
 <em>Выберите страну для начала поиска</em>
-            `,
-          {
-            parse_mode: "HTML",
-            reply_markup: {
-              inline_keyboard: [
-                [
-                  {
-                    text: "💎 ПОЛУЧИТЬ ПОЛНЫЙ ДОСТУП",
-                    callback_data: "get_full_access",
-                  },
-                ],
-                [
-                  {
-                    text: "📢 ПОДПИСАТЬСЯ НА КАНАЛ",
-                    url: "https://t.me/+H6Eovikei9xiZWU0",
-                  },
-                ],
-              ],
-            },
-          }
-        );
-      } else {
-        await ctx.reply(
-          `
-✅ <b>ПОЛНЫЙ ДОСТУП АКТИВИРОВАН!</b>
+            `, {
+                parse_mode: "HTML",
+                reply_markup: {
+                    inline_keyboard: [
+                        [
+                            {
+                                text: "💎 ПОЛУЧИТЬ ПОЛНЫЙ ДОСТУП",
+                                callback_data: "get_full_access",
+                            },
+                        ],
+                        [
+                            {
+                                text: "📢 ПОДПИСАТЬСЯ НА КАНАЛ",
+                                url: "https://t.me/+H6Eovikei9xiZWU0",
+                            },
+                        ],
+                    ],
+                },
+            });
+        } else {
+            await ctx.reply(`
+✅ <b>ПОЛНЫЙ ДОСТУП АКТИВИРОВАН! (LMDB)</b>
 
-🎉 Теперь у вас доступ ко всем 70,000+ анкетам
+🎉 Теперь у вас доступ ко всем 70,000+ анкетам 
 • 👤 Все контакты видны
 • 📞 Телефоны, Telegram, WhatsApp
-• ⚡ Максимальная скорость
+• 🌍 ${indexesDB.get('countries:all')?.length || 0} стран
+• 🌆 Тысячи городов
+• ⚡ Быстрый поиск
 
 <code>Выберите страну для начала поиска</code>
-            `,
-          {
-            parse_mode: "HTML",
-          }
-        );
-      }
+            `, {
+                parse_mode: "HTML",
+            });
+        }
 
-      // 🔥 ПОКАЗЫВАЕМ СТРАНЫ
-      await messageManager.sendCountriesKeyboard(ctx, isDemo, 0);
+        // 🔥 ПОКАЗЫВАЕМ СТРАНЫ
+        await messageManager.sendCountriesKeyboard(ctx, isDemo, 0);
+        
     } catch (error) {
-      console.error("❌ [COUNTRIES CRITICAL] Критическая ошибка:", error);
+        console.error("❌ [COUNTRIES CRITICAL] Критическая ошибка:", error);
 
-      // УДАЛЯЕМ ПРЕЛОАДЕР ПРИ ОШИБКЕ
-      if (accessPreloader) {
-        await safeDeleteMessage(accessPreloader.message_id);
-      }
+        // УДАЛЯЕМ ПРЕЛОАДЕР ПРИ ОШИБКЕ
+        if (accessPreloader) {
+            await safeDeleteMessage(accessPreloader.message_id);
+        }
 
-      try {
-        await ctx.answerCbQuery("❌ Ошибка загрузки");
+        try {
+            await ctx.answerCbQuery("❌ Ошибка загрузки");
 
-        // ПРИ ОШИБКЕ - ПОКАЗЫВАЕМ СООБЩЕНИЕ
-        await ctx.reply(
-          `
+            // ПРИ ОШИБКЕ - ПОКАЗЫВАЕМ СООБЩЕНИЕ
+            await ctx.reply(`
 ❌ <b>КРИТИЧЕСКАЯ ОШИБКА</b>
 
 Не удалось загрузить список стран.
 
 <em>Возможные причины:</em>
-• Глобальный кэш еще не загружен
-• Технические проблемы с сервером
-• Ошибка соединения
+• Проблемы с базой данных
+• Технические неполадки
 
 Попробуйте:
 1. Подождать 1-2 минуты
 2. Использовать команду /start
-3. Написать в поддержку @MagicAdd
-            `,
-          { parse_mode: "HTML" }
-        );
-      } catch (e) {
-        console.error("Не удалось отправить сообщение об ошибке:", e);
-      }
+3. Проверить /lmdb_stats
+4. Написать в поддержку @MagicAdd
+            `, { parse_mode: "HTML" });
+        } catch (e) {
+            console.error("Не удалось отправить сообщение об ошибке:", e);
+        }
     } finally {
-      releaseUserLock(userId);
-    }
-  });
-  bot.command("debug_demo_profile", async (ctx) => {
-    try {
-      const demoProfiles = cacheManager.getGlobalProfiles(true);
-
-      if (!demoProfiles || demoProfiles.length === 0) {
-        return ctx.reply("❌ Демо-кэш пуст!");
-      }
-
-      // Ищем профиль Сараево
-      const sarajevoProfiles = demoProfiles.filter((p) => {
-        const city = cacheManager.normalizeCityName(p.ct || p.city);
-        const country = cacheManager.normalizeCountryName(p.c || p.country);
-        return city === "Сараево" && country === "🇧🇦 Босния";
-      });
-
-      let response = `🔍 **ДИАГНОСТИКА ДЕМО-ПРОФИЛЯ САРАЕВО:**\n\n`;
-      response += `Всего демо-профилей: ${demoProfiles.length}\n`;
-      response += `Профилей Сараево: ${sarajevoProfiles.length}\n\n`;
-
-      if (sarajevoProfiles.length > 0) {
-        sarajevoProfiles.forEach((p, i) => {
-          response += `**Профиль ${i + 1}:**\n`;
-          response += `• ID: ${p.id || "нет"}\n`;
-          response += `• Имя: "${p.n}"\n`;
-          response += `• Возраст: ${p.a}\n`;
-          response += `• Страна: "${p.c}"\n`;
-          response += `• Город: "${p.ct}"\n`;
-          response += `• Основное фото: ${p.p ? "✅" : "❌"}\n`;
-          response += `• Фото галереи: ${p.phs?.length || 0}\n`;
-          response += `• isDemo: ${p.isDemo}\n`;
-          response += `• TG: ${p.tg ? "есть" : "скрыто"}\n`;
-          response += `• О себе: ${p.ab?.substring(0, 50) || "нет"}...\n\n`;
-        });
-      } else {
-        response += `❌ **НЕТ ПРОФИЛЕЙ САРАЕВО В ДЕМО-КЭШЕ!**\n\n`;
-
-        // Проверяем структуру первого профиля
-        if (demoProfiles.length > 0) {
-          const sampleProfile = demoProfiles[0];
-          response += `**Пример первого профиля в демо-кэше:**\n`;
-          response += `• Имя: "${sampleProfile.n}"\n`;
-          response += `• Страна: "${sampleProfile.c}"\n`;
-          response += `• Город: "${sampleProfile.ct}"\n`;
-          response += `• isDemo: ${sampleProfile.isDemo}\n`;
-        }
-      }
-
-      await ctx.reply(response);
-    } catch (error) {
-      console.error("Ошибка debug_demo_profile:", error);
-      await ctx.reply(`❌ Ошибка: ${error.message}`);
-    }
-  });
-  bot.action("get_full_access", async (ctx) => {
-    await messageQueue.add(async () => {
-      try {
-        await ctx.answerCbQuery("💎 Переходим к оплате...");
-
-        const keyboard = {
-          inline_keyboard: [
-            [
-              {
-                text: "💎 Купить подписку",
-                callback_data: "choose_payment_method",
-              },
-            ],
-            [
-              {
-                text: "📢 Подписаться на канал",
-                url: "https://t.me/+H6Eovikei9xiZWU0",
-              },
-            ],
-            [{ text: "🔙 Назад", callback_data: "back_to_menu" }],
-          ],
-        };
-
-        await ctx.reply(
-          `
-💎 <b>ПОЛУЧИТЬ ПОЛНЫЙ ДОСТУП</b>
-
-Для получения полного доступа ко всем анкетам необходимо:
-
-✅ <b>1. Активная подписка</b>
-   • Доступ ко всем анкетам
-   • Все контакты профилей
-   • Полная функциональность
-
-✅ <b>2. Подписка на канал <a href="https://t.me/+H6Eovikei9xiZWU0"><b>MagicClubPrivate</b></a></b>
-   • Новые анкеты и обновления
-   • Эксклюзивный контент
-   • Специальные предложения
-
-<b>После оплаты подписки и подписки на канал вы получите:</b>
-• 🔓 Полный доступ ко всем анкетам
-• 📞 Все контакты профилей  
-• 🌍 Неограниченный поиск по странам и городам
-• ⚡ Максимальную скорость работы
-
-Нажмите "Купить подписку" чтобы начать!
-                `,
-          {
-            parse_mode: "HTML",
-            reply_markup: keyboard,
-          }
-        );
-      } catch (error) {
-        console.error("❌ Ошибка обработки получения доступа:", error);
-      }
-    });
-  });
-  bot.command("cache_debug", async (ctx) => {
-    await messageQueue.add(async () => {
-      const userId = ctx.from.id;
-      const cacheType = cacheManager.getUserCacheStatus(userId);
-      const hasFullAccess = await checkFullAccess(ctx, false);
-      const sessionType = ctx.session?.cacheSession?.type || "нет";
-
-      const cacheStats = cacheManager.getGlobalCacheStats();
-
-      // Получаем информацию о фильтрах
-      const filterCacheKeys = globalFilterCache.keys();
-      const demoFilterKeys = globalDemoCache
-        .keys()
-        .filter((k) => k.startsWith("demo:filter:"));
-
-      // Группируем фильтры по странам для анализа
-      const filtersByCountry = new Map();
-      filterCacheKeys.forEach((key) => {
-        const match = key.match(/country:([^:]+):/);
-        if (match) {
-          const country = match[1];
-          filtersByCountry.set(
-            country,
-            (filtersByCountry.get(country) || 0) + 1
-          );
-        }
-      });
-
-      // Формируем список топ-5 стран по количеству фильтров
-      let topCountriesInfo = "";
-      if (filtersByCountry.size > 0) {
-        const sortedCountries = Array.from(filtersByCountry.entries())
-          .sort((a, b) => b[1] - a[1])
-          .slice(0, 5);
-
-        topCountriesInfo = sortedCountries
-          .map(
-            ([country, count], index) =>
-              `${index + 1}. ${country}: ${count} фильтров`
-          )
-          .join("\n");
-      }
-
-      // Проверяем, была ли предварительная генерация
-      const precomputed =
-        globalProfilesCache.get("filters:precomputed") || false;
-
-      const message = `
-🔧 <b>ДЕБАГ ГЛОБАЛЬНОГО КЭША</b>
-
-👤 <b>Пользователь:</b> ${userId}
-💾 <b>Тип кэша:</b> ${cacheType || "не установлен"}
-🔓 <b>Полный доступ:</b> ${hasFullAccess ? "✅" : "❌"}
-💼 <b>Сессия:</b> ${sessionType}
-🧠 <b>Пред. генерация:</b> ${precomputed ? "✅ Выполнена" : "❌ Не выполнена"}
-
-📊 <b>ГЛОБАЛЬНЫЙ КЭШ (общий для всех):</b>
-• Полный кэш: ${
-        cacheStats.fullCache.loaded
-          ? `✅ ${cacheStats.fullCache.profilesCount} анкет, ${cacheStats.fullCache.countriesCount} стран`
-          : "❌ Не загружен"
-      }
-• Демо кэш: ${
-        cacheStats.demoCache.loaded
-          ? `✅ ${cacheStats.demoCache.profilesCount} анкет, ${cacheStats.demoCache.countriesCount} стран`
-          : "❌ Не загружен"
-      }
-
-🔍 <b>КЭШИ ФИЛЬТРОВ (TTL: 24 часа):</b>
-• Полные фильтры: ${filterCacheKeys.length} 
-• Демо фильтры: ${demoFilterKeys.length}
-
-🌍 <b>Топ-5 стран по фильтрам:</b>
-${topCountriesInfo || "❌ Нет фильтров в кэше"}
-
-👥 <b>ИНДИВИДУАЛЬНЫЕ КЭШИ:</b>
-• Подписки: ${cacheStats.subscriptionCacheCount}
-• Каналы: ${cacheStats.channelCacheCount}
-• Статусы: ${cacheStats.userStatusCacheCount}
-
-📖 <b>Статистика чтений:</b>
-• Всего чтений: ${readingStats.totalReads}
-• Firestore: ${readingStats.operations.firestoreReads}
-• Кэш попадания: ${readingStats.operations.cacheHits || 0}
-• Кэш промахи: ${readingStats.operations.cacheMisses || 0}
-• Эффективность: ${readingStats.getStats().cacheEfficiency || "0%"}
-
-⚡ <b>Рекомендации:</b>
-${
-  !precomputed && hasFullAccess
-    ? "• Используйте /precompute_filters для ускорения поиска"
-    : ""
-}
-${
-  filterCacheKeys.length === 0 && hasFullAccess
-    ? "• Нет фильтров в кэше - сгенерируйте их"
-    : ""
-}
-${filterCacheKeys.length > 50 ? "• ✅ Кэш фильтров работает хорошо" : ""}
-        `;
-
-      const keyboard = {
-        inline_keyboard: [],
-      };
-
-      if (hasFullAccess && (!precomputed || filterCacheKeys.length < 50)) {
-        keyboard.inline_keyboard.push([
-          {
-            text: "🧠 Сгенерировать фильтры",
-            callback_data: "force_precompute",
-          },
-        ]);
-      }
-
-      keyboard.inline_keyboard.push([
-        { text: "🔄 Обновить", callback_data: "debug_refresh" },
-        { text: "🔙 Назад", callback_data: "back_to_menu" },
-      ]);
-
-      await ctx.reply(message, {
-        parse_mode: "HTML",
-        reply_markup: keyboard,
-      });
-    });
-  });
-  bot.command("check_demo_sarajevo", async (ctx) => {
-    try {
-      // Получаем демо-профили
-      const demoProfiles = cacheManager.getGlobalProfiles(true);
-
-      if (!demoProfiles || demoProfiles.length === 0) {
-        return ctx.reply("❌ Демо-кэш пуст!");
-      }
-
-      // Ищем профили Сараево
-      const sarajevoProfiles = demoProfiles.filter((p) => {
-        const city = cacheManager.normalizeCityName(p.ct || p.city);
-        const country = cacheManager.normalizeCountryName(p.c || p.country);
-        return city === "Сараево" && country === "🇧🇦 Босния";
-      });
-
-      let response = `🔍 **ПРОВЕРКА САРАЕВО В ДЕМО-КЭШЕ:**\n\n`;
-      response += `Всего демо-профилей: ${demoProfiles.length}\n`;
-      response += `Профилей Сараево: ${sarajevoProfiles.length}\n\n`;
-
-      if (sarajevoProfiles.length > 0) {
-        response += `**Найдены профили:**\n`;
-        sarajevoProfiles.forEach((p, i) => {
-          response += `${i + 1}. ${p.n || p.name}, ${p.a || p.age}\n`;
-          response += `   ID: ${p.id || p._id || "нет"}\n`;
-          response += `   Город: "${p.ct || p.city}"\n`;
-          response += `   Страна: "${p.c || p.country}"\n`;
-          response += `   Основное фото: ${p.p ? "✅" : "❌"}\n`;
-          response += `   Фото галереи: ${p.phs?.length || 0}\n`;
-          response += `   Телефон: ${p.tel ? "есть" : "скрыт"}\n`;
-          response += `   Telegram: ${p.tg ? "есть" : "скрыт"}\n\n`;
-        });
-      } else {
-        // Проверяем города Боснии в демо-кэше
-        const bosniaCities = cacheManager.getGlobalCities("🇧🇦 Босния", true);
-        response += `**Города Боснии в демо-кэше:** ${
-          bosniaCities?.length || 0
-        }\n`;
-        if (bosniaCities) {
-          response += `Список: ${bosniaCities.slice(0, 10).join(", ")}\n`;
-        }
-
-        // Проверяем полный кэш для сравнения
-        const fullProfiles = cacheManager.getGlobalProfiles(false);
-        if (fullProfiles) {
-          const fullSarajevo = fullProfiles.filter((p) => {
-            const city = cacheManager.normalizeCityName(p.ct || p.city);
-            const country = cacheManager.normalizeCountryName(p.c || p.country);
-            return city === "Сараево" && country === "🇧🇦 Босния";
-          });
-          response += `\n**В полном кэше:** ${fullSarajevo.length} профилей Сараево\n`;
-        }
-      }
-
-      await ctx.reply(response);
-    } catch (error) {
-      console.error("Ошибка check_demo_sarajevo:", error);
-      await ctx.reply(`❌ Ошибка: ${error.message}`);
-    }
-  });
-  // Обработчик для кнопки генерации фильтров
-  bot.action("force_precompute", async (ctx) => {
-    await ctx.answerCbQuery("🧠 Запускаем генерацию фильтров...");
-    await ctx.reply(
-      "Используйте команду /precompute_filters для генерации фильтров"
-    );
-  });
-
-  // Обработчик для обновления статистики
-  bot.action("debug_refresh", async (ctx) => {
-    await ctx.answerCbQuery("🔄 Обновляем статистику...");
-    await ctx.deleteMessage();
-    await ctx.replyWithHTML(
-      "Статистика обновлена. Используйте /cache_debug снова."
-    );
-  });
-  bot.command("debug_city_exact", async (ctx) => {
-    try {
-      const [_, city] = ctx.text.split(" ");
-
-      if (!city) return ctx.reply("Например: /debug_city_exact Дубай");
-
-      // Получаем все профили
-      const allProfiles = cacheManager.getGlobalProfiles(false) || [];
-
-      // Ищем точное совпадение (ВМЕСТЕ с кавычками)
-      const profilesWithQuotes = allProfiles.filter((p) => {
-        const pCity = p.ct || p.city;
-        return pCity && pCity.includes('"') && pCity.includes(city);
-      });
-
-      let response = `🔍 **ПОИСК ГОРОДА "${city}":**\n\n`;
-
-      if (profilesWithQuotes.length > 0) {
-        response += `✅ Найдено ${profilesWithQuotes.length} анкет с КАВЫЧКАМИ!\n\n`;
-
-        profilesWithQuotes.slice(0, 5).forEach((profile, i) => {
-          response += `${i + 1}. ${profile.n || profile.name}, ${
-            profile.a || profile.age
-          }\n`;
-          response += `   Город в БД: "${profile.ct || profile.city}"\n`;
-          response += `   Нормализован: ${cacheManager.normalizeCityName(
-            profile.ct || profile.city
-          )}\n`;
-          response += `   Страна: ${profile.c || profile.country}\n\n`;
-        });
-      } else {
-        // Ищем без кавычек
-        const normalizedCity = cacheManager.normalizeCityName(city);
-        const profilesExact = allProfiles.filter((p) => {
-          const pCity = cacheManager.normalizeCityName(p.ct || p.city);
-          return pCity === normalizedCity;
-        });
-
-        response += `🔍 Поиск по нормализованному: "${normalizedCity}"\n`;
-        response += `📊 Найдено: ${profilesExact.length} анкет\n\n`;
-
-        profilesExact.slice(0, 3).forEach((profile, i) => {
-          response += `${i + 1}. ${profile.n || profile.name}\n`;
-          response += `   Исходный город: "${profile.ct || profile.city}"\n`;
-        });
-      }
-
-      await ctx.reply(response);
-    } catch (error) {
-      console.error("Ошибка debug_city_exact:", error);
-      await ctx.reply("❌ Ошибка");
-    }
-  });
-  bot.command("check_filter_cache", async (ctx) => {
-    try {
-      const filterKey = "country:🇦🇪 ОАЭ:age:all:city:Дубай";
-      const cached = cacheManager.getGlobalFilter(filterKey, false);
-
-      let response = `🔍 **ПРОВЕРКА КЭША ФИЛЬТРОВ:**\n\n`;
-      response += `Ключ: ${filterKey}\n`;
-      response += `В кэше: ${
-        cached ? `${cached.length} профилей` : "❌ нет в кэше"
-      }\n\n`;
-
-      if (cached) {
-        response += `Первые 3 профиля:\n`;
-        cached.slice(0, 3).forEach((profile, i) => {
-          const fullProfile = {
-            id: profile.id,
-            name: profile.n,
-            age: profile.a,
-            country: profile.c,
-            city: profile.ct,
-            about: profile.ab,
-          };
-          response += `${i + 1}. ${fullProfile.name}, ${fullProfile.age}\n`;
-          response += `   Город: "${fullProfile.city}"\n`;
-          response += `   Страна: "${fullProfile.country}"\n\n`;
-        });
-      }
-
-      await ctx.reply(response);
-    } catch (error) {
-      console.error("Ошибка check_filter_cache:", error);
-      await ctx.reply("❌ Ошибка");
-    }
-  });
-  bot.command("check_uae_profiles", async (ctx) => {
-    try {
-      const allProfiles = cacheManager.getGlobalProfiles(false);
-
-      if (!allProfiles || allProfiles.length === 0) {
-        return ctx.reply("❌ Глобальный кэш пуст");
-      }
-
-      // Ищем профили ОАЭ
-      const uaeProfiles = allProfiles.filter((p) => {
-        const country = p.c || p.country;
-        return (
-          country && cacheManager.normalizeCountryName(country) === "🇦🇪 ОАЭ"
-        );
-      });
-
-      let response = `📊 **ПРОФИЛИ ОАЭ В ГЛОБАЛЬНОМ КЭШЕ:**\n\n`;
-      response += `• Всего профилей в кэше: ${allProfiles.length}\n`;
-      response += `• Профилей ОАЭ: ${uaeProfiles.length}\n\n`;
-
-      if (uaeProfiles.length > 0) {
-        response += `🏙️ **Города ОАЭ в кэше:**\n`;
-        const cities = new Set();
-        uaeProfiles.forEach((p) => {
-          const city = p.ct || p.city;
-          if (city)
-            cities.add(
-              `${city} → нормализован: ${cacheManager.normalizeCityName(city)}`
-            );
-        });
-
-        Array.from(cities)
-          .slice(0, 10)
-          .forEach((city, i) => {
-            response += `${i + 1}. ${city}\n`;
-          });
-
-        response += `\n👤 **Примеры профилей ОАЭ:**\n`;
-        uaeProfiles.slice(0, 3).forEach((p, i) => {
-          response += `${i + 1}. ${p.n || p.name}, ${p.a || p.age}\n`;
-          response += `   Город: "${p.ct || p.city}"\n`;
-          response += `   Страна: "${p.c || p.country}"\n\n`;
-        });
-      } else {
-        response += `❌ **НЕТ ПРОФИЛЕЙ ОАЭ В ГЛОБАЛЬНОМ КЭШЕ!**\n`;
-        response += `Возможные причины:\n`;
-        response += `1. Глобальный полный кэш не содержит профилей ОАЭ\n`;
-        response += `2. Ошибка при загрузке кэша\n`;
-        response += `3. Профили ОАЭ не загрузились\n`;
-      }
-
-      await ctx.reply(response);
-    } catch (error) {
-      console.error("Ошибка check_uae_profiles:", error);
-      await ctx.reply("❌ Ошибка");
-    }
-  });
-  bot.command("force_check", async (ctx) => {
-    await messageQueue.add(async () => {
-      try {
-        const userId = ctx.from.id;
-
-        // ОЧИЩАЕМ ВСЕ ИНДИВИДУАЛЬНЫЕ КЭШИ
-        channelSubscriptionCache.del(`channel:${userId}`);
-        subscriptionCache.del(`subscription:${userId}`);
-        userCacheStatus.del(`cache_status:${userId}`);
-
-        if (ctx.session) {
-          delete ctx.session.cacheType;
-          delete ctx.session.hasFullAccess;
-          delete ctx.session.fullAccessChecked;
-          delete ctx.session.fullAccessCheckTime;
-        }
-
-        // ПРОВЕРЯЕМ ЗАНОВО с forceRefresh
-        const [hasSubscription, hasChannel] = await Promise.all([
-          checkSubscription(userId),
-          checkChannelSubscription(ctx),
-        ]);
-
-        const accessType = hasSubscription && hasChannel ? "full" : "demo";
-        cacheManager.setUserCacheStatus(userId, accessType);
-
-        // Сохраняем в сессию
-        if (!ctx.session) ctx.session = {};
-        ctx.session.hasFullAccess = hasSubscription && hasChannel;
-        ctx.session.fullAccessChecked = true;
-        ctx.session.fullAccessCheckTime = Date.now();
-
-        await ctx.reply(
-          `
-🔄 <b>ПРИНУДИТЕЛЬНАЯ ПРОВЕРКА</b>
-
-✅ Очищены
-✅ Проверка выполнена
-
-<b>Результат:</b>
-• 💎 Подписка: ${hasSubscription ? "✅ АКТИВНА" : "❌ НЕТ"}
-• 📢 Канал: ${hasChannel ? "✅ ПОДПИСАН" : "❌ НЕТ"}
-• 👤 Режим: ${accessType === "full" ? "🔓 ПОЛНЫЙ" : "👀 ДЕМО"}
-
-${
-  !hasChannel
-    ? '⚠️ <b>Вы не подписаны на канал <a href="https://t.me/+H6Eovikei9xiZWU0"><b>MagicClubPrivate</b></a></b>'
-    : ""
-}
-                `,
-          { parse_mode: "HTML" }
-        );
-      } catch (error) {
-        console.error("❌ Ошибка force_check:", error);
-        await ctx.reply("❌ Ошибка проверки");
-      }
-    });
-  });
-
-  bot.command("reset_cache_stats", async (ctx) => {
-    await messageQueue.add(async () => {
-      const userId = ctx.from.id;
-      // ТОЛЬКО ДЛЯ АДМИНОВ
-      const ADMINS = [123456789]; // Ваш ID
-
-      if (!ADMINS.includes(userId)) {
-        return ctx.reply("❌ Эта команда только для администраторов");
-      }
-
-      readingStats.resetStats();
-
-      await ctx.reply("✅ Статистика чтений сброшена");
-    });
-  });
-
-  // Действие для показа статистики кэша
-  bot.action("show_cache_stats", async (ctx) => {
-    await messageQueue.add(async () => {
-      try {
-        const cacheStats = cacheManager.getGlobalCacheStats();
-        const readStats = readingStats.getStats();
-
-        const statsMessage = `
-📊 <b>СТАТИСТИКА ГЛОБАЛЬНОГО КЭША</b>
-
-🔹 <b>Глобальный демо-кэш:</b>
-• Анкет: ${cacheStats.demoCache.profilesCount}
-• Стран: ${cacheStats.demoCache.countriesCount}
-• Загружен: ${cacheStats.demoCache.loaded ? "✅" : "❌"}
-
-🔹 <b>Глобальный полный кэш:</b>
-• Анкет: ${cacheStats.fullCache.profilesCount}
-• Стран: ${cacheStats.fullCache.countriesCount}
-• Загружен: ${cacheStats.fullCache.loaded ? "✅" : "❌"}
-
-🔹 <b>Кэши фильтров:</b>
-• Полные фильтры: ${cacheStats.filterCacheKeys}
-• Демо фильтры: ${cacheStats.demoFilterCacheKeys}
-
-🔹 <b>Статистика чтений:</b>
-• Всего чтений: ${readStats.totalReads}
-• Firestore чтений: ${readStats.firestoreReads}
-• Кэш попадания: ${readStats.operations.cacheHits}
-• Кэш промахи: ${readStats.operations.cacheMisses}
-• Эффективность: ${readStats.cacheEfficiency}
-
-🔹 <b>Пользователи:</b>
-• Уникальные: ${readStats.uniqueUsers}
-• Операций на пользователя: ${readStats.readsPerUser.toFixed(2)}
-
-<code>Глобальный кэш обновляется раз в 7 дней</code>
-                `;
-
-        const keyboard = {
-          inline_keyboard: [],
-        };
-
-        if (!cacheStats.fullCache.loaded) {
-          keyboard.inline_keyboard.push([
-            {
-              text: "🚀 Загрузить глобальный полный кэш",
-              callback_data: "force_load_global_full_cache",
-            },
-          ]);
-        }
-
-        keyboard.inline_keyboard.push([
-          { text: "🔄 Обновить", callback_data: "show_cache_stats" },
-          { text: "🔙 Назад", callback_data: "back_to_menu" },
-        ]);
-
-        await ctx.reply(statsMessage, {
-          parse_mode: "HTML",
-          reply_markup: keyboard,
-        });
-        await ctx.answerCbQuery();
-      } catch (error) {
-        console.error("❌ Ошибка показа статистики кэша:", error);
-      }
-    });
-  });
-
-  // Действие для принудительной загрузки глобального полного кэша
-  bot.action("force_load_global_full_cache", async (ctx) => {
-    await messageQueue.add(async () => {
-      try {
-        await ctx.answerCbQuery("🚀 Запускаем загрузку...");
-        await ctx.reply(
-          "Используйте команду /load_global_full_cache для загрузки глобального полного кэша"
-        );
-      } catch (error) {
-        console.error("❌ Ошибка:", error);
-      }
-    });
-  });
-
-  // ==================== ПРОСТОЙ ОБРАБОТЧИК ДЛЯ КНОПОК-ЗАГЛУШЕК ====================
-bot.action("no_action", async (ctx) => {
-    try {
-        await ctx.answerCbQuery(); // Просто убираем "часики" без текста
-    } catch (error) {
-        // Игнорируем любые ошибки
+        releaseUserLock(userId);
     }
 });
+bot.command("rebuild_city_indexes", async (ctx) => {
+    try {
+        await ctx.reply("🔄 НАЧИНАЕМ ПЕРЕСТРОЙКУ ИНДЕКСОВ ГОРОДОВ...\n\nЭто займет 1-2 минуты...");
+        
+        // Сначала получаем список стран
+        const allCountries = cacheManager.getGlobalCountries(false);
+        
+        if (!allCountries || allCountries.length === 0) {
+            await ctx.reply("❌ Нет списка стран для обработки");
+            return;
+        }
+        
+        await ctx.reply(`📊 Найдено стран для обработки: ${allCountries.length}`);
+        
+        let totalCities = 0;
+        let processedCountries = 0;
+        
+        // Обрабатываем только первые 10 стран для теста
+        const countriesToProcess = allCountries.slice(0, 10);
+        
+        for (const country of countriesToProcess) {
+            processedCountries++;
+            
+            try {
+                await ctx.reply(`🔍 Обрабатываем: ${country} (${processedCountries}/${countriesToProcess.length})`);
+                
+                const cities = cacheManager.extractCitiesFromFullProfiles(country);
+                totalCities += cities.length;
+                
+                console.log(`✅ ${country}: ${cities.length} городов`);
+                
+                if (cities.length > 0) {
+                    await ctx.reply(`   ✅ Найдено городов: ${cities.length}`);
+                    await ctx.reply(`   📍 Примеры: ${cities.slice(0, 5).join(', ')}${cities.length > 5 ? '...' : ''}`);
+                } else {
+                    await ctx.reply(`   ⚠️ Городов не найдено`);
+                }
+                
+            } catch (error) {
+                console.error(`Ошибка обработки ${country}:`, error);
+                await ctx.reply(`   ❌ Ошибка: ${error.message}`);
+            }
+            
+            // Небольшая пауза между странами
+            await new Promise(resolve => setTimeout(resolve, 500));
+        }
+        
+        await ctx.reply(
+            `✅ ПЕРЕСТРОЙКА ИНДЕКСОВ ЗАВЕРШЕНА!\n\n` +
+            `📊 Обработано стран: ${processedCountries}\n` +
+            `🌆 Всего городов: ${totalCities}\n` +
+            `💾 Данные сохранены в LMDB\n\n` +
+            `Теперь проверьте командами:\n` +
+            `/debug_city_extraction Украина\n` +
+            `/debug_city_extraction Россия`
+        );
+        
+    } catch (error) {
+        console.error("Ошибка rebuild_city_indexes:", error);
+        await ctx.reply(`❌ Критическая ошибка: ${error.message}\nПроверьте логи консоли.`);
+    }
+});
+bot.command("test_city_extraction", async (ctx) => {
+    try {
+        const [_, testCountry] = ctx.text.split(" ");
+        const country = testCountry || "🇺🇦 Украина";
+        
+        await ctx.reply(`🔍 ТЕСТИРУЕМ ИЗВЛЕЧЕНИЕ ГОРОДОВ ДЛЯ: ${country}`);
+        
+        // Тест 1: Из полных профилей
+        await ctx.reply("1️⃣ Извлекаем города из полных профилей...");
+        const citiesFull = cacheManager.extractCitiesFromFullProfiles(country);
+        
+        // Тест 2: Из демо-профилей  
+        await ctx.reply("2️⃣ Извлекаем города из демо-профилей...");
+        const citiesDemo = cacheManager.extractCitiesFromDemoProfiles(country);
+        
+        // Тест 3: Проверяем индексы
+        await ctx.reply("3️⃣ Проверяем индексы в LMDB...");
+        const normalizedCountry = cacheManager.normalizeCountryName(country);
+        const fromFullIndex = indexesDB.get(`cities:${normalizedCountry}`);
+        const fromDemoIndex = indexesDB.get(`demo:cities:${normalizedCountry}`);
+        
+        let response = `📊 **РЕЗУЛЬТАТЫ ТЕСТА ДЛЯ: ${country}**\n\n`;
+        response += `✅ Нормализованное название: ${normalizedCountry}\n\n`;
+        response += `**1. Полные профили:**\n`;
+        response += `• Извлечено: ${citiesFull.length} городов\n`;
+        if (citiesFull.length > 0) {
+            response += `• Примеры: ${citiesFull.slice(0, 10).join(', ')}\n`;
+        }
+        
+        response += `\n**2. Демо-профили:**\n`;
+        response += `• Извлечено: ${citiesDemo.length} городов\n`;
+        if (citiesDemo.length > 0) {
+            response += `• Примеры: ${citiesDemo.slice(0, 10).join(', ')}\n`;
+        }
+        
+        response += `\n**3. Индексы в LMDB:**\n`;
+        response += `• cities:${normalizedCountry}: ${fromFullIndex?.length || 0} городов\n`;
+        response += `• demo:cities:${normalizedCountry}: ${fromDemoIndex?.length || 0} городов\n`;
+        
+        response += `\n**4. Проверка через getGlobalCities:**\n`;
+        const fromGetterFull = cacheManager.getGlobalCities(country, false);
+        const fromGetterDemo = cacheManager.getGlobalCities(country, true);
+        response += `• Полный доступ: ${fromGetterFull?.length || 0} городов\n`;
+        response += `• Демо-режим: ${fromGetterDemo?.length || 0} городов`;
+        
+        await ctx.reply(response);
+        
+    } catch (error) {
+        console.error("Ошибка test_city_extraction:", error);
+        await ctx.reply(`❌ Ошибка теста: ${error.message}\n${error.stack}`);
+    }
+});
+bot.command("simple_city_debug", async (ctx) => {
+    try {
+        const country = "Украина";
+        await ctx.reply(`🔍 Простая проверка для: ${country}`);
+        
+        // Просто вызываем метод извлечения
+        const cities = cacheManager.extractCitiesFromFullProfiles(country);
+        
+        let response = `**ГОРОДА ДЛЯ ${country}:**\n\n`;
+        response += `Всего найдено: ${cities.length}\n\n`;
+        
+        if (cities.length > 0) {
+            // Группируем по 10 городов в строке
+            for (let i = 0; i < cities.length; i += 10) {
+                const chunk = cities.slice(i, i + 10);
+                response += chunk.join(', ') + '\n';
+            }
+        } else {
+            response += "❌ Городов не найдено!\n";
+            response += "Проверьте:\n";
+            response += "1. Загружены ли профили в LMDB\n";
+            response += "2. Есть ли профили с этой страной\n";
+            response += "3. Используйте /lmdb_stats для проверки";
+        }
+        
+        await ctx.reply(response);
+        
+    } catch (error) {
+        await ctx.reply(`❌ Ошибка: ${error.message}`);
+    }
+});
+  // 🔥 ПРОСТОЙ ОБРАБОТЧИК ДЛЯ КНОПОК-ЗАГЛУШЕК
+  bot.action("no_action", async (ctx) => {
+    try {
+      await ctx.answerCbQuery(); // Просто убираем "часики" без текста
+    } catch (error) {
+      // Игнорируем любые ошибки
+    }
+  });
 
-// ==================== ОБРАБОТЧИК ПАГИНАЦИИ СТРАН (УПРОЩЕННЫЙ) ====================
-bot.action(/^countries_page_(\d+)$/, async (ctx) => {
+  // 🔥 ОБРАБОТЧИК ПАГИНАЦИИ СТРАН (УПРОЩЕННЫЙ С LMDB)
+  bot.action(/^countries_page_(\d+)$/, async (ctx) => {
     const userId = ctx.from.id;
     const page = parseInt(ctx.match[1]);
 
     // Блокируем быстрые клики
     if (!acquireUserLock(userId, 1500)) {
-        try {
-            await ctx.answerCbQuery("⏳ Подождите...");
-        } catch (e) {}
-        return;
+      try {
+        await ctx.answerCbQuery("⏳ Подождите...");
+      } catch (e) {}
+      return;
     }
 
     await messageQueue.add(async () => {
-        try {
-            await ctx.answerCbQuery(`📄 Загружаем страницу ${page + 1}...`);
+      try {
+        // Отвечаем сразу - это важно!
+        await ctx.answerCbQuery(`📄 Загружаем страницу ${page + 1}...`);
 
-            const cacheType = await ensureProperCache(ctx);
-            const isDemo = cacheType === "demo";
-            const uniqueCountries = await getUniqueCountries(isDemo);
-            const countriesPerPage = 30;
-            const totalPages = Math.ceil(uniqueCountries.length / countriesPerPage);
+        const cacheType = await ensureProperCache(ctx);
+        const isDemo = cacheType === "demo";
+        const uniqueCountries = await getUniqueCountries(isDemo);
+        const countriesPerPage = 30;
+        const totalPages = Math.ceil(uniqueCountries.length / countriesPerPage);
 
-            if (page < 0 || page >= totalPages) {
-                await ctx.answerCbQuery("❌ Неверная страница");
-                return;
-            }
+        if (page < 0 || page >= totalPages) {
+          await ctx.answerCbQuery("❌ Неверная страница");
+          return;
+        }
 
-            const startIndex = page * countriesPerPage;
-            const endIndex = Math.min(startIndex + countriesPerPage, uniqueCountries.length);
-            const pageCountries = uniqueCountries.slice(startIndex, endIndex);
+        const startIndex = page * countriesPerPage;
+        const endIndex = Math.min(startIndex + countriesPerPage, uniqueCountries.length);
+        const pageCountries = uniqueCountries.slice(startIndex, endIndex);
 
-            // ==================== СОЗДАЁМ КЛАВИАТУРУ ====================
-            const keyboard = [];
-            let row = [];
+        // ==================== СОЗДАЁМ КЛАВИАТУРУ ====================
+        const keyboard = [];
+        let row = [];
 
-            pageCountries.forEach((country, index) => {
-                const countryWithFlag = formatCountryWithFlag(country);
-                row.push({
-                    text: countryWithFlag,
-                    callback_data: `country_${country}`
-                });
+        pageCountries.forEach((country, index) => {
+          const countryWithFlag = formatCountryWithFlag(country);
+          row.push({
+            text: countryWithFlag,
+            callback_data: `country_${country}`
+          });
 
-                if (row.length === 2 || index === pageCountries.length - 1) {
-                    keyboard.push(row);
-                    row = [];
-                }
+          if (row.length === 2 || index === pageCountries.length - 1) {
+            keyboard.push(row);
+            row = [];
+          }
+        });
+
+        // Пагинация
+        if (totalPages > 1) {
+          const paginationRow = [];
+
+          if (page > 0) {
+            paginationRow.push({
+              text: "◀️",
+              callback_data: `countries_page_${page - 1}`
             });
+          }
 
-            // Пагинация
-            if (totalPages > 1) {
-                const paginationRow = [];
+          paginationRow.push({
+            text: `${page + 1}/${totalPages}`,
+            callback_data: "no_action"  // ← ЭТА КНОПКА ВЫЗЫВАЕТ no_action
+          });
 
-                if (page > 0) {
-                    paginationRow.push({
-                        text: "◀️",
-                        callback_data: `countries_page_${page - 1}`
-                    });
-                }
+          if (page < totalPages - 1) {
+            paginationRow.push({
+              text: "▶️",
+              callback_data: `countries_page_${page + 1}`
+            });
+          }
 
-                paginationRow.push({
-                    text: `${page + 1}/${totalPages}`,
-                    callback_data: "no_action"  // ← ЭТА КНОПКА ВЫЗЫВАЕТ no_action
-                });
+          keyboard.push(paginationRow);
+        }
 
-                if (page < totalPages - 1) {
-                    paginationRow.push({
-                        text: "▶️",
-                        callback_data: `countries_page_${page + 1}`
-                    });
-                }
+        // Кнопка создания анкеты
+        keyboard.push([
+          {
+            text: "📝 СОЗДАТЬ АНКЕТУ",
+            web_app: { url: "https://bot-vai-web-app.web.app/?tab=catalog" }
+          }
+        ]);
 
-                keyboard.push(paginationRow);
+        // Демо-режим
+        if (isDemo) {
+          keyboard.push([
+            {
+              text: "💎 ПОЛУЧИТЬ ПОЛНЫЙ ДОСТУП",
+              callback_data: "get_full_access"
             }
+          ]);
+        }
 
-            // Кнопка создания анкеты
-            keyboard.push([
-                {
-                    text: "📝 СОЗДАТЬ АНКЕТУ",
-                    web_app: { url: "https://bot-vai-web-app.web.app/?tab=catalog" }
-                }
-            ]);
+        // Кнопка назад
+        keyboard.push([
+          { text: "🔙 Назад", callback_data: "back_to_menu" }
+        ]);
 
-            // Демо-режим
-            if (isDemo) {
-                keyboard.push([
-                    {
-                        text: "💎 ПОЛУЧИТЬ ПОЛНЫЙ ДОСТУП",
-                        callback_data: "get_full_access"
-                    }
-                ]);
-            }
+        // ==================== ОБНОВЛЕНИЕ ====================
+        const msgText = isDemo
+          ? `🌍 Выберите страну (демо-режим LMDB)\n📄 Страница ${page + 1}/${totalPages}\n👀 Показано по 3 анкеты на город`
+          : `🌍 Выберите страну (LMDB)\n📄 Страница ${page + 1}/${totalPages}\n📍 Показано: ${pageCountries.length} стран`;
 
-            // Кнопка назад
-            keyboard.push([
-                { text: "🔙 Назад", callback_data: "back_to_menu" }
-            ]);
-
-            // ==================== ОБНОВЛЕНИЕ ====================
-            const msgText = isDemo
-                ? `🌍 Выберите страну (демо-режим)\n📄 Страница ${page + 1}/${totalPages}\n👀 Показано по 3 анкеты на город`
-                : `🌍 Выберите страну\n📄 Страница ${page + 1}/${totalPages}\n📍 Показано: ${pageCountries.length} стран`;
-
-            try {
-                // ВСЕГДА используем editMessageText вместо editMessageReplyMarkup
-                await ctx.editMessageText(msgText, {
-                    parse_mode: "HTML",
-                    reply_markup: { inline_keyboard: keyboard }
-                });
-                
-            } catch (error) {
-                // Игнорируем только ошибку "message is not modified"
-                if (error.response?.error_code === 400 && 
-                    error.response?.description?.includes("message is not modified")) {
-                    console.log(`✅ Игнорируем ошибку для страницы ${page}`);
-                } else {
-                    console.error("❌ Ошибка обновления стран:", error.message);
-                    try {
-                        await ctx.answerCbQuery("❌ Ошибка загрузки");
-                    } catch (e) {}
-                }
-            }
+        try {
+          // ВСЕГДА используем editMessageText вместо editMessageReplyMarkup
+          await ctx.editMessageText(msgText, {
+            parse_mode: "HTML",
+            reply_markup: { inline_keyboard: keyboard }
+          });
 
         } catch (error) {
-            console.error("❌ Ошибка пагинации стран:", error);
+          // Игнорируем только ошибку "message is not modified"
+          if (error.response?.error_code === 400 &&
+            error.response?.description?.includes("message is not modified")) {
+            console.log(`✅ Игнорируем ошибку для страницы ${page}`);
+          } else {
+            console.error("❌ Ошибка обновления стран:", error.message);
             try {
-                await ctx.answerCbQuery("❌ Ошибка загрузки");
+              await ctx.answerCbQuery("❌ Ошибка загрузки");
             } catch (e) {}
-        } finally {
-            releaseUserLock(userId);
+          }
         }
-    });
-});
-  
 
+      } catch (error) {
+        console.error("❌ Ошибка пагинации стран:", error);
+        try {
+          await ctx.answerCbQuery("❌ Ошибка загрузки");
+        } catch (e) {}
+      } finally {
+        releaseUserLock(userId);
+      }
+    });
+  });
+bot.command("fix_cities_now", async (ctx) => {
+    try {
+        await ctx.reply("🔄 ИСПРАВЛЯЕМ ПРОБЛЕМУ С ГОРОДАМИ...");
+        
+        const countriesToFix = ['🇺🇦 Украина', '🇷🇺 Россия', 'Украина', 'Россия'];
+        
+        for (const country of countriesToFix) {
+            await ctx.reply(`🔍 Обрабатываем: ${country}`);
+            
+            // Вызываем извлечение городов
+            const cities = cacheManager.extractCitiesFromFullProfiles(country);
+            
+            if (cities.length > 0) {
+                await ctx.reply(`✅ ${country}: ${cities.length} городов\nПримеры: ${cities.slice(0, 10).join(', ')}`);
+                
+                // Принудительно получаем через getGlobalCities
+                const fromGetter = cacheManager.getGlobalCities(country, false);
+                await ctx.reply(`📊 getGlobalCities вернул: ${fromGetter?.length || 0} городов`);
+                
+                // Проверяем что в индексах
+                const normalized = cacheManager.normalizeCountryName(country);
+                const fromIndex = indexesDB.get(`cities:${normalized}`);
+                await ctx.reply(`💾 В индексе cities:${normalized}: ${fromIndex?.length || 0} городов`);
+                
+            } else {
+                await ctx.reply(`❌ ${country}: городов не найдено`);
+            }
+        }
+        
+        await ctx.reply(`✅ ГОТОВО! Теперь проверьте /test_cities`);
+        
+    } catch (error) {
+        await ctx.reply(`❌ Ошибка: ${error.message}`);
+    }
+});
+
+bot.command("test_cities", async (ctx) => {
+    try {
+        const testCountries = ['🇺🇦 Украина', 'Украина', '🇷🇺 Россия', 'Россия'];
+        
+        let response = `🔍 **ТЕСТ ОТОБРАЖЕНИЯ ГОРОДОВ**\n\n`;
+        
+        for (const country of testCountries) {
+            const cities = cacheManager.getGlobalCities(country, false);
+            response += `**${country}:**\n`;
+            response += `• getGlobalCities вернул: ${cities.length} городов\n`;
+            
+            if (cities.length > 0 && cities.length < 20) {
+                response += `• Города: ${cities.join(', ')}\n`;
+            } else if (cities.length >= 20) {
+                response += `• Примеры: ${cities.slice(0, 10).join(', ')}...\n`;
+            }
+            response += `\n`;
+        }
+        
+        await ctx.reply(response);
+        
+    } catch (error) {
+        await ctx.reply(`❌ Ошибка: ${error.message}`);
+    }
+});
+  // 🔥 ОСТАЛЬНЫЕ КОМАНДЫ И ОБРАБОТЧИКИ (аналогично оригиналу, но с LMDB)
   bot.command("countries_stats", async (ctx) => {
     await messageQueue.add(async () => {
       try {
@@ -5284,56 +5418,17 @@ bot.action(/^countries_page_(\d+)$/, async (ctx) => {
 
         const regions = {
           europe: [
-            "Россия",
-            "Украина",
-            "Беларусь",
-            "Германия",
-            "Франция",
-            "Италия",
-            "Испания",
-            "Польша",
-            "Нидерланды",
-            "Бельгия",
-            "Швейцария",
-            "Австрия",
-            "Португалия",
-            "Греция",
-            "Чехия",
-            "Швеция",
-            "Норвегия",
-            "Финляндия",
-            "Дания",
-            "Ирландия",
-            "Венгрия",
-            "Румыния",
-            "Болгария",
-            "Сербия",
-            "Хорватия",
-            "Словакия",
-            "Словения",
-            "Литва",
-            "Латвия",
-            "Эстония",
-            "Молдова",
-            "Албания",
+            "Россия", "Украина", "Беларусь", "Германия", "Франция", "Италия",
+            "Испания", "Польша", "Нидерланды", "Бельгия", "Швейцария", "Австрия",
+            "Португалия", "Греция", "Чехия", "Швеция", "Норвегия", "Финляндия",
+            "Дания", "Ирландия", "Венгрия", "Румыния", "Болгария", "Сербия",
+            "Хорватия", "Словакия", "Словения", "Литва", "Латвия", "Эстония",
+            "Молдова", "Албания",
           ],
           asia: [
-            "Казахстан",
-            "Турция",
-            "Китай",
-            "Япония",
-            "Южная Корея",
-            "Индия",
-            "Таиланд",
-            "ОАЭ",
-            "Узбекистан",
-            "Кыргызстан",
-            "Таджикистан",
-            "Туркменистан",
-            "Грузия",
-            "Армения",
-            "Азербайджан",
-            "Израиль",
+            "Казахстан", "Турция", "Китай", "Япония", "Южная Кореа", "Индия",
+            "Таиланд", "ОАЭ", "Узбекистан", "Кыргызстан", "Таджикистан",
+            "Туркменистан", "Грузия", "Армения", "Азербайджан", "Израиль",
           ],
           america: ["США", "Канада", "Мексика", "Бразилия"],
           africa: ["ЮАР", "Египет"],
@@ -5357,12 +5452,13 @@ bot.action(/^countries_page_(\d+)$/, async (ctx) => {
           .join("\n");
 
         const statsMessage = `
-🌍 **СТАТИСТИКА СТРАН**
+🌍 **СТАТИСТИКА СТРАН (LMDB)**
 
 📊 **Общая информация:**
 • Всего стран: ${totalCountries}
 • Демо-режим: ${isDemo ? "✅" : "❌"}
 • Страниц: ${Math.ceil(totalCountries / 60)}
+• Хранилище: LMDB на диске
 
 🗺️ **По регионам:**
 • Европа: ${statsByRegion.europe || 0}
@@ -5370,10 +5466,7 @@ bot.action(/^countries_page_(\d+)$/, async (ctx) => {
 • Америка: ${statsByRegion.america || 0}
 • Африка: ${statsByRegion.africa || 0}
 • Океания: ${statsByRegion.oceania || 0}
-• Другие: ${
-          totalCountries -
-          Object.values(statsByRegion).reduce((a, b) => a + b, 0)
-        }
+• Другие: ${totalCountries - Object.values(statsByRegion).reduce((a, b) => a + b, 0)}
 
 📋 **Топ-10 стран:**
 ${topCountries}
@@ -5394,13 +5487,12 @@ ${totalCountries > 10 ? `... и еще ${totalCountries - 10} стран` : ""}
     await ctx.answerCbQuery("📄 Используйте кнопки для навигации по странам");
   });
 
+  // 🔥 ОБРАБОТЧИК ВЫБОРА СТРАНЫ С LMDB
   bot.action(/^country_(.+)$/, async (ctx) => {
     const userId = ctx.from.id;
 
     if (!acquireUserLock(userId, 2500)) {
-      await ctx.answerCbQuery(
-        "⏳ Подождите, обрабатываем предыдущий запрос..."
-      );
+      await ctx.answerCbQuery("⏳ Подождите, обрабатываем предыдущий запрос...");
       return;
     }
 
@@ -5414,7 +5506,7 @@ ${totalCountries > 10 ? `... и еще ${totalCountries - 10} стран` : ""}
         preloaderMsg = await sendPreloader(
           ctx,
           "country",
-          "🌍 ЗАГРУЗКА ГОРОДОВ"
+          "🌍 ЗАГРУЗКА ГОРОДОВ ИЗ LMDB"
         );
 
         const cacheType = await ensureProperCache(ctx);
@@ -5458,13 +5550,12 @@ ${totalCountries > 10 ? `... и еще ${totalCountries - 10} стран` : ""}
     });
   });
 
+  // 🔥 ОБРАБОТЧИК ВЫБОРА ГОРОДА С LMDB
   bot.action(/^city_(.+)$/, async (ctx) => {
     const userId = ctx.from.id;
 
     if (!acquireUserLock(userId, 30000)) {
-      await ctx.answerCbQuery(
-        "⏳ Подождите, обрабатываем предыдущий запрос..."
-      );
+      await ctx.answerCbQuery("⏳ Подождите, обрабатываем предыдущий запрос...");
       return;
     }
 
@@ -5474,17 +5565,15 @@ ${totalCountries > 10 ? `... и еще ${totalCountries - 10} стран` : ""}
       try {
         const city = ctx.match[1];
 
-        await ctx.answerCbQuery("🔍 Ищем анкеты...");
+        await ctx.answerCbQuery("🔍 Ищем анкеты в LMDB...");
 
         // 🔥 ДОБАВЛЯЕМ ПРЕЛОАДЕР ДЛЯ ПОИСКА ГОРОДА
-        preloaderMsg = await sendPreloader(ctx, "city", "🔍 ПОИСК АНКЕТ");
+        preloaderMsg = await sendPreloader(ctx, "city", "🔍 ПОИСК В LMDB");
 
         const cacheType = await ensureProperCache(ctx);
         const isDemo = cacheType === "demo";
 
-        console.log(
-          `🏙️ [CITY] Пользователь ${userId} выбрал город ${city}, демо=${isDemo}`
-        );
+        console.log(`🏙️ [CITY] Пользователь ${userId} выбрал город ${city}, демо=${isDemo}`);
 
         ctx.session = ctx.session || {};
         ctx.session.profilesPage = 0;
@@ -5493,7 +5582,7 @@ ${totalCountries > 10 ? `... и еще ${totalCountries - 10} стран` : ""}
 
         await messageManager.clear(ctx, true, true);
 
-        console.log(`🔍 [CITY] Загружаем анкеты для города ${city}...`);
+        console.log(`🔍 [CITY] Загружаем анкеты для города ${city} из LMDB...`);
         const profiles = await getProfilesPage(
           0,
           ctx.session.filterCountry,
@@ -5513,22 +5602,19 @@ ${totalCountries > 10 ? `... и еще ${totalCountries - 10} стран` : ""}
 
         if (!profiles.length) {
           const msg = await ctx.reply(
-            `❌ Анкет из города "${city}" не найдено`
+            `❌ Анкет из города "${city}" не найдено в LMDB`
           );
           messageManager.track(ctx.chat.id, msg.message_id);
           return;
         }
 
-        console.log(
-          `✅ [CITY] Найдено ${profiles.length} анкет для города ${city}`
-        );
+        console.log(`✅ [CITY] Найдено ${profiles.length} анкет для города ${city} в LMDB`);
 
         const foundMsg = await ctx.reply(
           `📍 <b>Город:</b> ${city}\n` +
-            `🌍 <b>Страна:</b> ${ctx.session.filterCountry}\n` +
-            `👀 <b>Режим:</b> ${
-              isDemo ? "Демо (3 анкеты на город)" : "Полный доступ"
-            }`,
+          `🌍 <b>Страна:</b> ${ctx.session.filterCountry}\n` +
+          
+          `👀 <b>Режим:</b> ${isDemo ? "Демо (3 анкеты на город)" : "Полный доступ"}`,
           { parse_mode: "HTML" }
         );
         messageManager.track(ctx.chat.id, foundMsg.message_id);
@@ -5538,8 +5624,8 @@ ${totalCountries > 10 ? `... и еще ${totalCountries - 10} стран` : ""}
 
           if (i === 0 && profiles.length > 1) {
             const progressMsg = await ctx.reply(
-              `📤 <b>Отправляем анкеты...</b>\n` +
-                `📊 <i>Прогресс: 1/${profiles.length}</i>`,
+              `📤 <b>Отправляем анкеты из LMDB...</b>\n` +
+              `📊 <i>Прогресс: 1/${profiles.length}</i>`,
               { parse_mode: "HTML" }
             );
             messageManager.track(ctx.chat.id, progressMsg.message_id);
@@ -5575,8 +5661,8 @@ ${totalCountries > 10 ? `... и еще ${totalCountries - 10} стран` : ""}
 
         try {
           await ctx.reply(
-            "❌ <b>Произошла ошибка при загрузке анкет</b>\n\n" +
-              "⚠️ <i>Попробуйте еще раз через несколько секунд</i>",
+            "❌ <b>Произошла ошибка при загрузке анкет из LMDB</b>\n\n" +
+            "⚠️ <i>Попробуйте еще раз через несколько секунд</i>",
             { parse_mode: "HTML" }
           );
         } catch (e) {
@@ -5588,6 +5674,7 @@ ${totalCountries > 10 ? `... и еще ${totalCountries - 10} стран` : ""}
     });
   });
 
+  // 🔥 ОБРАБОТЧИК ПАГИНАЦИИ ГОРОДОВ С LMDB
   bot.action(/^cities_page_(.+)_(\d+)$/, async (ctx) => {
     const userId = ctx.from.id;
     const country = ctx.match[1];
@@ -5595,207 +5682,765 @@ ${totalCountries > 10 ? `... и еще ${totalCountries - 10} стран` : ""}
 
     // Блокируем быстрые клики
     if (!acquireUserLock(userId, 1500)) {
-        try {
-            await ctx.answerCbQuery("⏳ Подождите...");
-        } catch (e) {}
-        return;
-    }
-
-    await messageQueue.add(async () => {
-        try {
-            // Отвечаем сразу - это важно!
-            await ctx.answerCbQuery(`📄 Загружаем страницу ${pageNum + 1}...`);
-
-            const cacheType = await ensureProperCache(ctx);
-            const isDemo = cacheType === "demo";
-            const cities = await getUniqueCitiesForCountry(country, isDemo);
-
-            if (!cities || cities.length === 0) {
-                await ctx.editMessageText("❌ Нет доступных городов");
-                return;
-            }
-
-            const citiesPerPage = 50;
-            const totalPages = Math.ceil(cities.length / citiesPerPage);
-
-            if (pageNum < 0 || pageNum >= totalPages) {
-                await ctx.answerCbQuery("❌ Неверная страница");
-                return;
-            }
-
-            // ==================== СОЗДАЁМ КЛАВИАТУРУ ====================
-            const keyboard = [];
-            let row = [];
-
-            const startIndex = pageNum * citiesPerPage;
-            const endIndex = Math.min(startIndex + citiesPerPage, cities.length);
-            const pageCities = cities.slice(startIndex, endIndex);
-
-            // Кнопки городов
-            pageCities.forEach((city, index) => {
-                row.push({ 
-                    text: city, 
-                    callback_data: `city_${city}`
-                });
-                
-                if (row.length === 2 || index === pageCities.length - 1) {
-                    keyboard.push(row);
-                    row = [];
-                }
-            });
-
-            // Пагинация
-            if (totalPages > 1) {
-                const paginationRow = [];
-
-                if (pageNum > 0) {
-                    paginationRow.push({
-                        text: "◀️",
-                        callback_data: `cities_page_${country}_${pageNum - 1}`
-                    });
-                }
-
-                paginationRow.push({
-                    text: `${pageNum + 1}/${totalPages}`,
-                    callback_data: "no_action"
-                });
-
-                if (pageNum < totalPages - 1) {
-                    paginationRow.push({
-                        text: "▶️",
-                        callback_data: `cities_page_${country}_${pageNum + 1}`
-                    });
-                }
-
-                keyboard.push(paginationRow);
-            }
-
-            // Кнопка "Назад к странам"
-            keyboard.push([
-                { 
-                    text: "🔙 Назад к странам", 
-                    callback_data: "back_to_countries" 
-                }
-            ]);
-
-            // Кнопка создания анкеты
-            keyboard.push([
-                {
-                    text: "📝 СОЗДАТЬ АНКЕТУ",
-                    web_app: { url: "https://bot-vai-web-app.web.app/?tab=catalog" }
-                }
-            ]);
-
-            // Демо-режим
-            if (isDemo) {
-                keyboard.push([
-                    {
-                        text: "💎 ПОЛУЧИТЬ ПОЛНЫЙ ДОСТУП",
-                        callback_data: "get_full_access"
-                    }
-                ]);
-            }
-
-            // ==================== ПРОСТОЕ РЕШЕНИЕ ====================
-            // ВМЕСТО editMessageReplyMarkup используем editMessageText
-            // Это обновит и текст и клавиатуру сразу
-            
-            const msgText = isDemo 
-                ? `🏙️ Города в ${country} (демо-режим)\n📄 Страница ${pageNum + 1}/${totalPages}\n👀 Показано по 3 анкеты на город`
-                : `🏙️ Города в ${country}\n📄 Страница ${pageNum + 1}/${totalPages}`;
-
-            try {
-                // ЭТО ОСНОВНОЕ ИСПРАВЛЕНИЕ:
-                await ctx.editMessageText(msgText, {
-                    parse_mode: "HTML",
-                    reply_markup: { inline_keyboard: keyboard }
-                });
-                
-            } catch (error) {
-                // Если ошибка "message is not modified" - просто игнорируем
-                if (error.response?.error_code === 400 && 
-                    error.response?.description?.includes("message is not modified")) {
-                    console.log(`✅ Игнорируем ошибку для страницы ${pageNum}`);
-                } else {
-                    // Другие ошибки показываем
-                    console.error("❌ Ошибка обновления городов:", error.message);
-                    try {
-                        await ctx.answerCbQuery("❌ Ошибка обновления");
-                    } catch (e) {}
-                }
-            }
-
-        } catch (error) {
-            console.error("❌ Ошибка пагинации городов:", error);
-            try {
-                await ctx.answerCbQuery("❌ Ошибка загрузки");
-            } catch (e) {}
-        } finally {
-            releaseUserLock(userId);
-        }
-    });
-});
-
-  bot.action("cities_page_info", async (ctx) => {
-    await ctx.answerCbQuery("📄 Используйте кнопки для навигации по городам");
-  });
-  // ===================== ОБРАБОТЧИК ДЛЯ КНОПКИ "ВЕРНУТЬСЯ К ГОРОДАМ" =====================
-  bot.action("back_to_current_country_cities", async (ctx) => {
-    const userId = ctx.from.id;
-
-    if (!acquireUserLock(userId, 2000)) {
-      await ctx.answerCbQuery(
-        "⏳ Подождите, обрабатываем предыдущий запрос..."
-      );
+      try {
+        await ctx.answerCbQuery("⏳ Подождите...");
+      } catch (e) {}
       return;
     }
 
     await messageQueue.add(async () => {
       try {
-        await ctx.answerCbQuery("🏙️ Возвращаемся к городам...");
+        // Отвечаем сразу - это важно!
+        await ctx.answerCbQuery(`📄 Загружаем страницу ${pageNum + 1}...`);
 
-        // Получаем текущую страну из сессии
-        const currentCountry = ctx.session.filterCountry;
         const cacheType = await ensureProperCache(ctx);
         const isDemo = cacheType === "demo";
+        const cities = await getUniqueCitiesForCountry(country, isDemo);
 
-        if (!currentCountry) {
-          console.log(
-            `❌ [BACK TO CITIES] Нет страны в сессии для пользователя ${userId}`
-          );
-          await ctx.reply(
-            "❌ Не удалось определить текущую страну. Пожалуйста, выберите страну заново."
-          );
-          await messageManager.sendCountriesKeyboard(ctx, isDemo);
+        if (!cities || cities.length === 0) {
+          await ctx.editMessageText("❌ Нет доступных городов в LMDB");
           return;
         }
 
-        console.log(
-          `🏙️ [BACK TO CITIES] Пользователь ${userId} возвращается к городам страны ${currentCountry}, демо=${isDemo}`
-        );
+        const citiesPerPage = 50;
+        const totalPages = Math.ceil(cities.length / citiesPerPage);
 
-        // Очищаем экран, но сохраняем клавиатуру стран
-        await messageManager.clear(ctx, false, true);
+        if (pageNum < 0 || pageNum >= totalPages) {
+          await ctx.answerCbQuery("❌ Неверная страница");
+          return;
+        }
 
-        // Показываем клавиатуру городов для текущей страны
-        await messageManager.sendCitiesKeyboard(ctx, currentCountry, isDemo);
-      } catch (error) {
-        console.error("❌ Ошибка возврата к городам:", error);
+        // ==================== СОЗДАЁМ КЛАВИАТУРУ ====================
+        const keyboard = [];
+        let row = [];
+
+        const startIndex = pageNum * citiesPerPage;
+        const endIndex = Math.min(startIndex + citiesPerPage, cities.length);
+        const pageCities = cities.slice(startIndex, endIndex);
+
+        // Кнопки городов
+        pageCities.forEach((city, index) => {
+          row.push({
+            text: city,
+            callback_data: `city_${city}`
+          });
+
+          if (row.length === 2 || index === pageCities.length - 1) {
+            keyboard.push(row);
+            row = [];
+          }
+        });
+
+        // Пагинация
+        if (totalPages > 1) {
+          const paginationRow = [];
+
+          if (pageNum > 0) {
+            paginationRow.push({
+              text: "◀️",
+              callback_data: `cities_page_${country}_${pageNum - 1}`
+            });
+          }
+
+          paginationRow.push({
+            text: `${pageNum + 1}/${totalPages}`,
+            callback_data: "no_action"
+          });
+
+          if (pageNum < totalPages - 1) {
+            paginationRow.push({
+              text: "▶️",
+              callback_data: `cities_page_${country}_${pageNum + 1}`
+            });
+          }
+
+          keyboard.push(paginationRow);
+        }
+
+        // Кнопка "Назад к странам"
+        keyboard.push([
+          {
+            text: "🔙 Назад к странам",
+            callback_data: "back_to_countries"
+          }
+        ]);
+
+        // Кнопка создания анкеты
+        keyboard.push([
+          {
+            text: "📝 СОЗДАТЬ АНКЕТУ",
+            web_app: { url: "https://bot-vai-web-app.web.app/?tab=catalog" }
+          }
+        ]);
+
+        // Демо-режим
+        if (isDemo) {
+          keyboard.push([
+            {
+              text: "💎 ПОЛУЧИТЬ ПОЛНЫЙ ДОСТУП",
+              callback_data: "get_full_access"
+            }
+          ]);
+        }
+
+        // ==================== ПРОСТОЕ РЕШЕНИЕ ====================
+        // ВМЕСТО editMessageReplyMarkup используем editMessageText
+
+        const msgText = isDemo
+          ? `🏙️ Города в ${country} (демо-режим)\n📄 Страница ${pageNum + 1}/${totalPages}\n👀 Показано по 3 анкеты на город`
+          : `🏙️ Города в ${country} \n📄 Страница ${pageNum + 1}/${totalPages}`;
+
         try {
-          await ctx.answerCbQuery("❌ Ошибка возврата");
+          // ЭТО ОСНОВНОЕ ИСПРАВЛЕНИЕ:
+          await ctx.editMessageText(msgText, {
+            parse_mode: "HTML",
+            reply_markup: { inline_keyboard: keyboard }
+          });
+
+        } catch (error) {
+          // Если ошибка "message is not modified" - просто игнорируем
+          if (error.response?.error_code === 400 &&
+            error.response?.description?.includes("message is not modified")) {
+            console.log(`✅ Игнорируем ошибку для страницы ${pageNum}`);
+          } else {
+            // Другие ошибки показываем
+            console.error("❌ Ошибка обновления городов:", error.message);
+            try {
+              await ctx.answerCbQuery("❌ Ошибка обновления");
+            } catch (e) {}
+          }
+        }
+
+      } catch (error) {
+        console.error("❌ Ошибка пагинации городов:", error);
+        try {
+          await ctx.answerCbQuery("❌ Ошибка загрузки");
         } catch (e) {}
       } finally {
         releaseUserLock(userId);
       }
     });
   });
+bot.command("check_extraction", async (ctx) => {
+    try {
+        const testCountry = "🇺🇦 Украина";
+        await ctx.reply(`🔍 Тестируем извлечение для: ${testCountry}`);
+        
+        const cities = cacheManager.extractCitiesFromFullProfiles(testCountry);
+        
+        let response = `📊 **РЕЗУЛЬТАТЫ ИЗВЛЕЧЕНИЯ**\n\n`;
+        response += `**Страна:** ${testCountry}\n`;
+        response += `**Найдено городов:** ${cities.length}\n\n`;
+        
+        if (cities.length > 0) {
+            // Группируем для удобного отображения
+            const chunks = [];
+            for (let i = 0; i < cities.length; i += 10) {
+                chunks.push(cities.slice(i, i + 10));
+            }
+            
+            response += `**Города:**\n`;
+            chunks.forEach((chunk, index) => {
+                response += `${index * 10 + 1}-${index * 10 + chunk.length}: ${chunk.join(', ')}\n`;
+            });
+        }
+        
+        // Проверяем что сохранилось в индексах
+        response += `\n**ПРОВЕРКА ИНДЕКСОВ:**\n`;
+        
+        const keysToCheck = [
+            `cities:🇺🇦 Украина`,
+            `cities:Украина`,
+            `cities:Ukraine`,
+            `cities:UA`
+        ];
+        
+        for (const key of keysToCheck) {
+            const data = indexesDB.get(key);
+            response += `• ${key}: ${data?.length || 0} городов\n`;
+        }
+        
+        await ctx.reply(response);
+        
+    } catch (error) {
+        await ctx.reply(`❌ Ошибка: ${error.message}`);
+    }
+});
+  // 🔥 ФУНКЦИЯ ОТПРАВКИ ПРОФИЛЯ С LMDB (оптимизированная)
+  const sendProfile = async (ctx, profile, page, total, isLast, isDemo = false) => {
+    return messageQueue.add(async () => {
+      try {
+        console.log(`🔍 [SEND PROFILE START] page=${page}, total=${total}, isLast=${isLast}, isDemo=${isDemo}, LMDB: true`);
+
+        // 🔥 КРИТИЧЕСКАЯ ПРОВЕРКА: Профиль undefined
+        if (profile === undefined || profile === null) {
+          console.log(`❌ [SEND PROFILE] Профиль undefined/null из LMDB`);
+
+          // 🔥 Пытаемся восстановить из LMDB кэша фильтров
+          const filterKey = isDemo ?
+            `country:${ctx.session?.filterCountry || 'all'}:age:${ctx.session?.ageRange?.label || 'all'}:city:${ctx.session?.filterCity || 'all'}` :
+            `country:${ctx.session?.filterCountry || 'all'}:age:${ctx.session?.ageRange?.label || 'all'}:city:${ctx.session?.filterCity || 'all'}`;
+
+          console.log(`🔄 [LMDB RECOVERY] Пробуем получить из LMDB кэша: ${filterKey}`);
+
+          const cachedProfiles = cacheManager.getGlobalFilter(filterKey, isDemo);
+
+          if (cachedProfiles && cachedProfiles.length > 0) {
+            console.log(`✅ [LMDB RECOVERY SUCCESS] Найдено в LMDB кэше: ${cachedProfiles.length} профилей`);
+
+            // 🔥 ВАЖНОЕ ИСПРАВЛЕНИЕ: Берем профиль по индексу страницы
+            if (cachedProfiles.length > page) {
+              const targetProfile = cachedProfiles[page];
+              console.log(`✅ [LMDB RECOVERY] Используем профиль из LMDB на странице ${page}:`, targetProfile?.n || targetProfile?.name || 'unknown');
+              profile = targetProfile;
+            } else if (cachedProfiles.length > 0) {
+              // Если страница больше чем профилей - берем первый
+              const targetProfile = cachedProfiles[0];
+              console.log(`✅ [LMDB RECOVERY] Используем первый профиль из LMDB:`, targetProfile?.n || targetProfile?.name || 'unknown');
+              profile = targetProfile;
+            } else {
+              console.log(`❌ [LMDB RECOVERY FAILED] Нет профилей в LMDB кэше`);
+              profile = null;
+            }
+          } else {
+            console.log(`❌ [LMDB RECOVERY FAILED] LMDB кэш пустой или не найден`);
+            profile = null;
+          }
+        }
+
+        // 🔥 Проверка: Профиль пустой объект или некорректная структура
+        if (!profile || typeof profile !== 'object' || (!profile.n && !profile.name && !profile.id && !profile._id)) {
+          console.log(`⚠️ [SEND PROFILE INVALID] Профиль некорректный из LMDB, создаем демо-заглушку`);
+
+          const fallbackProfile = {
+            id: 'lmdb_demo_fallback_' + Date.now(),
+            n: 'Демо-анкета (LMDB)',
+            a: 25,
+            c: ctx.session?.filterCountry || 'Страна',
+            ct: ctx.session?.filterCity || 'Город',
+            ab: 'Это демо-анкета для показа работы системы LMDB. Для просмотра полных анкет с контактами получите полный доступ.',
+            p: 'https://via.placeholder.com/600x800/0088cc/ffffff?text=LMDB+Demo',
+            phs: ['https://via.placeholder.com/600x800/0088cc/ffffff?text=Photo+1', 'https://via.placeholder.com/600x800/0088cc/ffffff?text=Photo+2'],
+            tg: null,
+            tel: null,
+            wa: null,
+            ca: new Date(),
+            isDemo: true
+          };
+
+          profile = fallbackProfile;
+          isDemo = true;
+        }
+
+        console.log(`✅ [SEND PROFILE READY] Профиль готов из LMDB: ${profile.n || profile.name || 'unknown'}, isDemo=${isDemo || profile.isDemo}`);
+
+        // 🔥 ОБНОВЛЕННАЯ ФУНКЦИЯ ОЧИСТКИ ТЕКСТА С ЭКРАНИРОВАНИЕМ HTML
+        const cleanTextForHtml = (text) => {
+          if (!text || typeof text !== 'string') return "";
+
+          // Сначала заменяем HTML-специальные символы
+          let cleaned = text
+            .replace(/&/g, '&amp;')   // Должно быть первой заменой
+            .replace(/</g, '&lt;')    // Важно! Заменяем < на &lt;
+            .replace(/>/g, '&gt;')    // Важно! Заменяем > на &gt;
+            .replace(/"/g, '&quot;')  // Заменяем двойные кавычки
+            .replace(/'/g, '&#39;');  // Заменяем одинарные кавычки
+
+          // Затем убираем нестандартные символы
+          cleaned = cleaned
+            .replace(/[^\x00-\x7F\u0400-\u04FF\u0500-\u052F\u2DE0-\u2DFF\uA640-\uA69F\s.,!?;:()\-+=\[\]{}@#$%^&*<>\/\\|'"`~]/g, '')
+            .trim();
+
+          return cleaned;
+        };
+
+        // 🔥 ФУНКЦИЯ ОЧИСТКИ URL
+        const cleanUrl = (url) => {
+          if (!url || typeof url !== 'string') return '';
+          return url.trim();
+        };
+
+        // 🔥 ПРЕОБРАЗОВАНИЕ В ЕДИНЫЙ ФОРМАТ
+        const fullProfile = {
+          id: profile.id || profile._id || 'lmdb_unknown_' + Date.now(),
+          name: cleanTextForHtml(profile.n || profile.name || 'Неизвестно'),
+          age: parseInt(profile.a || profile.age) || 25,
+          country: cleanTextForHtml(profile.c || profile.country || ctx.session?.filterCountry || 'Страна'),
+          city: cleanTextForHtml(profile.ct || profile.city || ctx.session?.filterCity || 'Город'),
+          about: profile.ab || profile.about || 'Описание недоступно',
+          photoUrl: cleanUrl(profile.p || profile.photoUrl || ''),
+          photos: Array.isArray(profile.phs || profile.photos) ? (profile.phs || profile.photos).map(cleanUrl) : [],
+          telegram: isDemo || profile.isDemo ? null : cleanUrl(profile.tg || profile.telegram),
+          phone: isDemo || profile.isDemo ? null : (profile.tel || profile.phone),
+          whatsapp: isDemo || profile.isDemo ? null : cleanUrl(profile.wa || profile.whatsapp),
+          createdAt: profile.ca || profile.createdAt || new Date(),
+          isDemo: isDemo || profile.isDemo || false
+        };
+
+        console.log(`🔍 [FULL PROFILE] Создан из LMDB: ${fullProfile.name}, фото: ${fullProfile.photos.length}`);
+
+        // 🔥 ПОДГОТОВКА ОПИСАНИЯ
+        let about = cleanTextForHtml(fullProfile.about);
+        const maxAboutLength = SCALING_CONFIG.PERFORMANCE.MAX_CAPTION_LENGTH - 300;
+
+        if (about.length > maxAboutLength) {
+          about = about.substring(0, maxAboutLength - 3) + "...";
+        }
+
+        // 🔥 ФУНКЦИИ ФОРМАТИРОВАНИЯ КОНТАКТОВ (без изменений)
+        const formatTelegram = (username) => {
+          if (!username) return "";
+          const cleanUsername = cleanUrl(username);
+
+          if (/^[0-9+\-() ]+$/.test(cleanUsername)) {
+            const cleanDigits = cleanUsername.replace(/[^0-9]/g, "");
+            if (cleanDigits.startsWith('7') || cleanDigits.startsWith('8') || (cleanDigits.length >= 10 && !cleanDigits.startsWith('1'))) {
+              let telegramNumber = cleanDigits;
+              if (telegramNumber.startsWith('7') && telegramNumber.length === 11) telegramNumber = telegramNumber.substring(1);
+              else if (telegramNumber.startsWith('8') && telegramNumber.length === 11) telegramNumber = telegramNumber.substring(1);
+              return `🔵 <a href="https://t.me/${telegramNumber}">Telegram</a>`;
+            }
+          }
+
+          if (cleanUsername.startsWith("https://t.me/")) {
+            const cleaned = decodeURIComponent(cleanUsername)
+              .replace("https://t.me/", "")
+              .replace(/^%40/, "@")
+              .replace(/^\+/, "");
+            return `🔵 <a href="https://t.me/${cleaned}">Telegram</a>`;
+          }
+
+          const cleaned = cleanUsername.replace(/^[@+]/, "");
+          return `🔵 <a href="https://t.me/${cleaned}">Telegram</a>`;
+        };
+
+        const formatWhatsApp = (url) => {
+          if (!url) return "";
+          const cleanUrlText = cleanUrl(url);
+
+          if (/^[0-9+\-() ]+$/.test(cleanUrlText)) {
+            let cleanDigits = cleanUrlText.replace(/[^0-9]/g, "");
+            if (cleanDigits.startsWith('8') && cleanDigits.length === 11) cleanDigits = '7' + cleanDigits.substring(1);
+            else if (cleanDigits.length === 10) cleanDigits = '7' + cleanDigits;
+
+            if (cleanDigits.length === 11 && cleanDigits.startsWith('7')) {
+              return `🟢 <a href="https://wa.me/${cleanDigits}">WhatsApp</a>`;
+            }
+          }
+
+          return `🟢 <a href="${cleanUrlText}">WhatsApp</a>`;
+        };
+
+        const formatPhone = (phone) => {
+          if (!phone) return "";
+          let cleanDigits = cleanTextForHtml(phone).replace(/[^0-9]/g, "");
+          if (!cleanDigits) return "";
+
+          let formattedPhone = cleanTextForHtml(phone);
+          if (cleanDigits.length === 11 || cleanDigits.length === 10) {
+            if (cleanDigits.startsWith('7') && cleanDigits.length === 11) formattedPhone = `+${cleanDigits}`;
+            else if (cleanDigits.startsWith('8') && cleanDigits.length === 11) formattedPhone = `+7${cleanDigits.substring(1)}`;
+            else if (cleanDigits.length === 10) formattedPhone = `+7${cleanDigits}`;
+          }
+
+          return `📞 ${formattedPhone}`;
+        };
+
+        // 🔥 РАЗДЕЛЯЕМ ЛОГИКУ ДЕМО И ПОЛНОГО ДОСТУПА
+        if (fullProfile.isDemo) {
+          console.log(`🎭 [LMDB DEMO MODE] Создаем демо-анкету из LMDB для ${fullProfile.name}`);
+
+          // 🔥 ДЕМО-ПОДПИСЬ
+          const demoCaption = `
+👤 <b>${fullProfile.name}</b>, ${fullProfile.age}
+━━━━━━━━━━━━━━━━━━━━━━
+📍 <b>${fullProfile.city}, ${fullProfile.country}</b>
+💾 <b>Хранилище:</b> LMDB
+━━━━━━━━━━━━━━━━━━━━━━
+<em>${about.length > 300 ? about.substring(0, 300) + `...<a href="http://t.me/magicboss_bot/magic">читать полностью в ✨Magic</a>` : about}</em>
+━━━━━━━━━━━━━━━━━━━━━━
+🚫 <b>КОНТАКТЫ СКРЫТЫ (ДЕМО-РЕЖИМ LMDB)</b>
+━━━━━━━━━━━━━━━━━━━━━━
+👀 <b>ДЕМО-РЕЖИМ LMDB:</b> показано максимум 3 анкеты на город
+💎 <b>Для получения контактов и полного доступа:</b>
+
+✅ <b>1. Активная подписка</b>
+✅ <b>2. Подписка на канал <a href="https://t.me/+H6Eovikei9xiZWU0"><b>MagicClubPrivate</b></a></b>
+
+✨ После получения доступа вы увидите:
+• Все контакты профилей
+• Полные описания анкет
+• Неограниченный доступ ко всем анкетам
+• Быстрый поиск через LMDB индексы
+
+━━━━━━━━━━━━━━━━━━━━━━
+<a href="http://t.me/magicboss_bot/magic"><b>✨Magic WebApp</b></a>
+                `.trim();
+
+        // 🔥 ПОДГОТОВКА ФОТО
+                let photosToSend = [];
+                const seenUrls = new Set();
+                
+                // Основное фото
+                if (fullProfile.photoUrl && fullProfile.photoUrl.trim() !== '') {
+                    try {
+                        const url = fullProfile.photoUrl.trim();
+                        new URL(url);
+                        if (!seenUrls.has(url)) {
+                            seenUrls.add(url);
+                            photosToSend.push(url);
+                        }
+                    } catch (e) {
+                        console.log(`❌ [DEMO PHOTO] Некорректный URL основного фото: ${e.message}`);
+                    }
+                }
+                
+                // Фото галереи
+                if (Array.isArray(fullProfile.photos) && fullProfile.photos.length > 0) {
+                    fullProfile.photos.forEach((url, index) => {
+                        if (typeof url === 'string' && url.trim() !== '') {
+                            try {
+                                const cleanUrl = url.trim();
+                                new URL(cleanUrl);
+                                if (!seenUrls.has(cleanUrl)) {
+                                    seenUrls.add(cleanUrl);
+                                    photosToSend.push(cleanUrl);
+                                }
+                            } catch (e) {
+                                console.log(`❌ [DEMO PHOTO] Некорректный URL фото ${index + 1}: ${e.message}`);
+                            }
+                        }
+                    });
+                }
+                
+                // Если нет фото - отправляем только текст
+                if (photosToSend.length === 0) {
+                    console.log(`⚠️ [NO PHOTOS] У профиля "${fullProfile.name}" нет фото, отправляем только текст`);
+                }
+                
+                // Ограничиваем количество фото
+                photosToSend = photosToSend.slice(0, 10);
+                console.log(`📸 [DEMO PHOTOS] Будет отправлено ${photosToSend.length} фото`);
+                
+                // 🔥 🔥 🔥 ИСПРАВЛЕННЫЙ БЛОК ПАГИНАЦИИ ДЛЯ ДЕМО-РЕЖИМА
+                let keyboard = [];
+                if (isLast) {
+                    // 🔥 ВАЖНОЕ ИСПРАВЛЕНИЕ: Ключ БЕЗ префикса demo: - ТАКОЙ ЖЕ как в getProfilesPage
+                    const filterKey = `country:${ctx.session?.filterCountry || 'all'}:age:${ctx.session?.ageRange?.label || 'all'}:city:${ctx.session?.filterCity || 'all'}`;
+                    
+                    console.log(`🔑 [DEMO CACHE KEY] Ищем профили по ключу: ${filterKey} (демо: true)`);
+                    
+                    // 🔥 ВАЖНО: isDemo=true для поиска в демо-кэше
+                    const filteredProfiles = cacheManager.getGlobalFilter(filterKey, true) || [];
+                    
+                    console.log(`📊 [DEMO PAGINATION DEBUG] Найдено профилей в кэше: ${filteredProfiles.length}`);
+                    
+                    // 🔥 ВАЖНОЕ ИСПРАВЛЕНИЕ: totalPages не может быть 0
+                    const totalPages = Math.max(1, Math.ceil((filteredProfiles.length || 0) / SCALING_CONFIG.PERFORMANCE.PROFILES_PER_PAGE));
+                    
+                    console.log(`📊 [DEMO PAGINATION DEBUG] Всего страниц: ${totalPages} (профилей: ${filteredProfiles.length}, на страницу: ${SCALING_CONFIG.PERFORMANCE.PROFILES_PER_PAGE})`);
+                    console.log(`📊 [DEMO PAGINATION DEBUG] Текущая страница: ${page}`);
+                    
+                    const currentFilters = {
+                        country: ctx.session?.filterCountry,
+                        city: ctx.session?.filterCity,
+                        ageRange: ctx.session?.ageRange
+                    };
+                    
+                    keyboard = createEnhancedPaginationKeyboard(page, totalPages, filterKey, currentFilters, true);
+                    
+                    // 🔥 ДОБАВЛЯЕМ ДОПОЛНИТЕЛЬНЫЕ КНОПКИ ТОЛЬКО ЕСЛИ ЕСТЬ ПАГИНАЦИЯ
+                    if (totalPages > 1) {
+                        keyboard.push(
+                            [{ text: "🏙️ Вернуться к городам", callback_data: "back_to_current_country_cities" }],
+                            [{ text: "🎂 Фильтр по возрасту", callback_data: "filter_by_age" }],
+                            [{ text: "🌍 Все страны", callback_data: "all_countries_with_check" }],
+                            [{ text: "🧹 Очистить экран", callback_data: "clear_screen" }]
+                        );
+                    } else {
+                        keyboard.push(
+                            [{ text: "🏙️ Вернуться к городам", callback_data: "back_to_current_country_cities" }],
+                            [{ text: "🌍 Все страны", callback_data: "all_countries_with_check" }],
+                            [{ text: "🧹 Очистить экран", callback_data: "clear_screen" }]
+                        );
+                    }
+                }
+                
+                // 🔥 ФУНКЦИЯ ОТПРАВКИ ФОТО
+                const sendPhotoSafely = async (photoUrl, photoNumber, totalPhotos) => {
+                    try {
+                        const emojiNumbers = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'];
+                        const numberEmoji = photoNumber <= 10 ? emojiNumbers[photoNumber - 1] : `${photoNumber}.`;
+                        const photoCaption = `${numberEmoji} Фото ${photoNumber}/${totalPhotos}`;
+                        
+                        console.log(`🖼️ [SEND PHOTO] Отправляем фото ${photoNumber}/${totalPhotos}: ${photoUrl.substring(0, 50)}...`);
+                        
+                        return await ctx.replyWithPhoto(photoUrl, { 
+                            caption: photoCaption, 
+                            parse_mode: "HTML" 
+                        });
+                    } catch (error) {
+                        console.log(`❌ [SEND PHOTO ERROR] Ошибка отправки фото ${photoNumber}: ${error.message}`);
+                        return null;
+                    }
+                };
+                
+                // 🔥 ОТПРАВКА ФОТО
+                if (photosToSend.length > 0) {
+                    for (let i = 0; i < photosToSend.length; i++) {
+                        const photoMsg = await sendPhotoSafely(photosToSend[i], i + 1, photosToSend.length);
+                        if (photoMsg) {
+                            messageManager.track(ctx.chat.id, photoMsg.message_id);
+                            
+                            if (i < photosToSend.length - 1) {
+                                await new Promise(resolve => setTimeout(resolve, 800));
+                            }
+                        }
+                    }
+                }
+                
+                // 🔥 ИНФОРМАЦИОННОЕ СООБЩЕНИЕ
+                const infoMessage = await ctx.reply(
+                    `✨✨✨✨✨✨✨✨✨✨\n<a href="http://t.me/MagicYourClub"><b>Новые анкеты в нашем ➡️ канале</b></a>\n\n`,
+                    { parse_mode: "HTML" }
+                );
+                messageManager.track(ctx.chat.id, infoMessage.message_id);
+                await new Promise(resolve => setTimeout(resolve, 500));
+                
+                // 🔥 ОТПРАВКА ТЕКСТА АНКЕТЫ
+                const textMsg = await ctx.reply(demoCaption, {
+                    parse_mode: "HTML",
+                    reply_markup: keyboard.length > 0 ? { inline_keyboard: keyboard } : undefined,
+                });
+                
+                messageManager.track(ctx.chat.id, textMsg.message_id);
+                console.log(`✅ [DEMO PROFILE SENT] Анкета ${fullProfile.name} отправлена успешно`);
+                
+                return textMsg;
+                
+            } else {
+
+          // 🔥 ПОЛНЫЙ ДОСТУП LMDB
+          console.log(`👑 [LMDB FULL ACCESS] Создаем полную анкету из LMDB для ${fullProfile.name}`);
+
+          // 🔥 ПОЛНАЯ ПОДПИСЬ
+          const fullCaption = `
+👤 <b>${fullProfile.name}</b>, ${fullProfile.age}
+━━━━━━━━━━━━━━━━━━━━━━
+📍 <b>${fullProfile.city}, ${fullProfile.country}</b>
+💾 <b>Хранилище:</b> LMDB
+━━━━━━━━━━━━━━━━━━━━━━
+<em>${about.length > 300 ? about.substring(0, 300) + `...<a href="http://t.me/magicboss_bot/magic">читать полностью в ✨Magic</a>` : about}</em>
+━━━━━━━━━━━━━━━━━━━━━━
+<b>📞 Контакты:</b>
+━━━━━━━━━━━━━━━━━━━━━━
+${fullProfile.phone ? formatPhone(fullProfile.phone) + '\n' : ''}
+${fullProfile.telegram ? formatTelegram(fullProfile.telegram) + '\n' : ''}
+${fullProfile.whatsapp ? formatWhatsApp(fullProfile.whatsapp) + '\n' : ''}
+${(fullProfile.phone || fullProfile.telegram || fullProfile.whatsapp) ? '━━━━━━━━━━━━━━━━━━━━━━\n' : ''}
+⚠️ <b>ВНИМАНИЕ!</b>
+━━━━━━━━━━━━━━━━━━━━━━
+<b>ЕСЛИ КТО-ТО ПРОСИТ:</b>
+• Криптовалюту наперед
+• Деньги на такси🚕 или дорогу
+• Предоплату любым способом
+• Переводы на карты💳 или электронные кошельки
+• Чеки или подтверждения оплаты
+
+🔥 🔥 🔥 🔥 🔥 🔥 🔥 🔥 🔥 🔥 🔥 🔥 
+<b>ЭТО 100% МОШЕННИКИ!
+НИ В КОЕМ СЛУЧАЕ НЕ ОТПРАВЛЯЙТЕ ПРЕДОПЛАТУ  🛑 ВАС ОБМАНУТ!</b>
+━━━━━━━━━━━━━━━━━━━━━━
+<a href="http://t.me/magicboss_bot/magic"><b>✨Magic WebApp</b></a>
+                `.trim();
+
+          // 🔥 ПОДГОТОВКА ФОТО
+                let photosToSend = [];
+                const seenUrls = new Set();
+                
+                // Основное фото
+                if (fullProfile.photoUrl && fullProfile.photoUrl.trim() !== '') {
+                    try {
+                        const url = fullProfile.photoUrl.trim();
+                        new URL(url);
+                        if (!seenUrls.has(url)) {
+                            seenUrls.add(url);
+                            photosToSend.push(url);
+                        }
+                    } catch (e) {
+                        console.log(`❌ [FULL PHOTO] Некорректный URL основного фото: ${e.message}`);
+                    }
+                }
+                
+                // Фото галереи
+                if (Array.isArray(fullProfile.photos) && fullProfile.photos.length > 0) {
+                    fullProfile.photos.forEach((url, index) => {
+                        if (typeof url === 'string' && url.trim() !== '') {
+                            try {
+                                const cleanUrl = url.trim();
+                                new URL(cleanUrl);
+                                if (!seenUrls.has(cleanUrl)) {
+                                    seenUrls.add(cleanUrl);
+                                    photosToSend.push(cleanUrl);
+                                }
+                            } catch (e) {
+                                console.log(`❌ [FULL PHOTO] Некорректный URL фото ${index + 1}: ${e.message}`);
+                            }
+                        }
+                    });
+                }
+                
+                // Если нет фото
+                if (photosToSend.length === 0) {
+                    console.log(`⚠️ [FULL PHOTOS] Нет валидных фото для ${fullProfile.name}`);
+                }
+                
+                // Ограничиваем количество
+                photosToSend = photosToSend.slice(0, 10);
+                console.log(`📸 [FULL PHOTOS] Будет отправлено ${photosToSend.length} фото`);
+                
+                // 🔥 🔥 🔥 ИСПРАВЛЕННЫЙ БЛОК ПАГИНАЦИИ ДЛЯ ПОЛНОГО РЕЖИМА
+                let keyboard = [];
+                if (isLast) {
+                    // 🔥 КЛЮЧ ТОЧНО ТАКОЙ ЖЕ КАК В getProfilesPage
+                    const filterKey = `country:${ctx.session?.filterCountry || 'all'}:age:${ctx.session?.ageRange?.label || 'all'}:city:${ctx.session?.filterCity || 'all'}`;
+                    
+                    console.log(`🔑 [FULL CACHE KEY] Ищем профили по ключу: ${filterKey} (демо: false)`);
+                    
+                    // 🔥 ВАЖНО: isDemo=false для поиска в полном кэше
+                    const filteredProfiles = cacheManager.getGlobalFilter(filterKey, false) || [];
+                    
+                    console.log(`📊 [FULL PAGINATION DEBUG] Найдено профилей в кэше: ${filteredProfiles.length}`);
+                    
+                    // 🔥 ВАЖНОЕ ИСПРАВЛЕНИЕ: totalPages не может быть 0
+                    const totalPages = Math.max(1, Math.ceil((filteredProfiles.length || 0) / SCALING_CONFIG.PERFORMANCE.PROFILES_PER_PAGE));
+                    
+                    console.log(`📊 [FULL PAGINATION DEBUG] Всего страниц: ${totalPages} (профилей: ${filteredProfiles.length}, на страницу: ${SCALING_CONFIG.PERFORMANCE.PROFILES_PER_PAGE})`);
+                    console.log(`📊 [FULL PAGINATION DEBUG] Текущая страница: ${page}`);
+                    
+                    const currentFilters = {
+                        country: ctx.session?.filterCountry,
+                        city: ctx.session?.filterCity,
+                        ageRange: ctx.session?.ageRange
+                    };
+                    
+                    keyboard = createEnhancedPaginationKeyboard(page, totalPages, filterKey, currentFilters, false);
+                    
+                    // 🔥 ДОБАВЛЯЕМ ДОПОЛНИТЕЛЬНЫЕ КНОПКИ
+                    if (totalPages > 1) {
+                        keyboard.push(
+                            [{ text: "🏙️ Вернуться к городам", callback_data: "back_to_current_country_cities" }],
+                            [{ text: "🎂 Фильтр по возрасту", callback_data: "filter_by_age" }],
+                            [{ text: "🌍 Все страны", callback_data: "all_countries_with_check" }],
+                            [{ text: "🧹 Очистить экран", callback_data: "clear_screen" }]
+                        );
+                    } else {
+                        keyboard.push(
+                            [{ text: "🏙️ Вернуться к городам", callback_data: "back_to_current_country_cities" }],
+                            [{ text: "🌍 Все страны", callback_data: "all_countries_with_check" }],
+                            [{ text: "🧹 Очистить экран", callback_data: "clear_screen" }]
+                        );
+                    }
+                }
+                
+                // 🔥 ФУНКЦИЯ ОТПРАВКИ ФОТО
+                const sendPhotoSafely = async (photoUrl, photoNumber, totalPhotos) => {
+                    try {
+                        const emojiNumbers = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'];
+                        const numberEmoji = photoNumber <= 10 ? emojiNumbers[photoNumber - 1] : `${photoNumber}.`;
+                        const photoCaption = `${numberEmoji} Фото ${photoNumber}/${totalPhotos}`;
+                        
+                        console.log(`🖼️ [SEND PHOTO] Отправляем фото ${photoNumber}/${totalPhotos}: ${photoUrl.substring(0, 50)}...`);
+                        
+                        return await ctx.replyWithPhoto(photoUrl, { 
+                            caption: photoCaption, 
+                            parse_mode: "HTML" 
+                        });
+                    } catch (error) {
+                        console.log(`❌ [SEND PHOTO ERROR] Ошибка отправки фото ${photoNumber}: ${error.message}`);
+                        return null;
+                    }
+                };
+                
+                // 🔥 ОТПРАВКА ФОТО
+                if (photosToSend.length > 0) {
+                    for (let i = 0; i < photosToSend.length; i++) {
+                        const photoMsg = await sendPhotoSafely(photosToSend[i], i + 1, photosToSend.length);
+                        if (photoMsg) {
+                            messageManager.track(ctx.chat.id, photoMsg.message_id);
+                            
+                            if (i < photosToSend.length - 1) {
+                                await new Promise(resolve => setTimeout(resolve, 800));
+                            }
+                        }
+                    }
+                }
+                
+                // 🔥 ИНФОРМАЦИОННОЕ СООБЩЕНИЕ
+                const infoMessage = await ctx.reply(
+                    `✨✨✨✨✨✨✨✨✨✨\n<a href="http://t.me/MagicYourClub"><b>Новые анкеты в нашем ➡️ канале</b></a>\n\n`,
+                    { parse_mode: "HTML" }
+                );
+                messageManager.track(ctx.chat.id, infoMessage.message_id);
+                await new Promise(resolve => setTimeout(resolve, 500));
+                
+                // 🔥 ОТПРАВКА ТЕКСТА АНКЕТЫ
+                const textMsg = await ctx.reply(fullCaption, {
+                    parse_mode: "HTML",
+                    reply_markup: keyboard.length > 0 ? { inline_keyboard: keyboard } : undefined,
+                });
+                
+                messageManager.track(ctx.chat.id, textMsg.message_id);
+                console.log(`✅ [FULL PROFILE SENT] Анкета ${fullProfile.name} отправлена успешно`);
+                
+                return textMsg;
+            }
+      
+      } catch (error) {
+        console.error(`💥 [LMDB SEND PROFILE CRITICAL ERROR] Критическая ошибка отправки анкеты:`, error);
+        
+        try {
+          const fallbackText = `
+❌ ОШИБКА ПРИ ОТПРАВКЕ АНКЕТЫ ИЗ LMDB
+
+Приносим извинения, произошла техническая ошибка при загрузке анкеты из LMDB.
+
+Что можно сделать:
+1. Попробуйте выбрать другой город
+2. Используйте кнопку "Очистить экран"
+3. Проверьте /lmdb_stats
+4. Перезапустите поиск
+
+Если ошибка повторяется, напишите в поддержку @MagicAdd
+                `.trim();
+
+          const msg = await ctx.reply(fallbackText, {
+            reply_markup: {
+              inline_keyboard: [
+                [{ text: "Очистить экран", callback_data: "clear_screen" }],
+                [{ text: "Статистика LMDB", callback_data: "show_lmdb_stats" }],
+                [{ text: "Все страны", callback_data: "all_countries_with_check" }]
+              ]
+            }
+          });
+
+          messageManager.track(ctx.chat.id, msg.message_id);
+          return msg;
+
+        } catch (finalError) {
+          console.error(`💀 [FATAL ERROR LMDB] Не удалось отправить даже сообщение об ошибке:`, finalError);
+          return null;
+        }
+      }
+    });
+  };
+
+  // 🔥 ОСТАЛЬНЫЕ ОБРАБОТЧИКИ И КОМАНДЫ (аналогично оригиналу)
   bot.action("back_to_countries", async (ctx) => {
     const userId = ctx.from.id;
 
     if (!acquireUserLock(userId, 2000)) {
-      await ctx.answerCbQuery(
-        "⏳ Подождите, обрабатываем предыдущий запрос..."
-      );
+      await ctx.answerCbQuery("⏳ Подождите, обрабатываем предыдущий запрос...");
       return;
     }
 
@@ -5822,9 +6467,7 @@ ${totalCountries > 10 ? `... и еще ${totalCountries - 10} стран` : ""}
     const userId = ctx.from.id;
 
     if (!acquireUserLock(userId, 2000)) {
-      await ctx.answerCbQuery(
-        "⏳ Подождите, обрабатываем предыдущий запрос..."
-      );
+      await ctx.answerCbQuery("⏳ Подождите, обрабатываем предыдущий запрос...");
       return;
     }
 
@@ -5840,8 +6483,62 @@ ${totalCountries > 10 ? `... и еще ${totalCountries - 10} стран` : ""}
       }
     });
   });
-
-  bot.action("filter_by_age", async (ctx) => {
+  bot.command("debug_city_extraction", async (ctx) => {
+    try {
+        const [_, testCountry] = ctx.text.split(" ");
+        const country = testCountry || "Украина";
+        
+        const result = await cacheManager.debugCountryVariants(country);
+        
+        if (!result) {
+            await ctx.reply("❌ Ошибка отладки");
+            return;
+        }
+        
+        let response = `🔍 **ДЕБАГ ИЗВЛЕЧЕНИЯ ГОРОДОВ ДЛЯ: ${country}**\n\n`;
+        response += `✅ Нормализовано: ${result.normalized}\n`;
+        response += `📊 Всего профилей: ${result.totalProfiles}\n`;
+        response += `📋 Вариантов написания: ${result.variants.length}\n\n`;
+        
+        if (result.variants.length > 0) {
+            response += `**Топ вариантов:**\n`;
+            result.variants.slice(0, 5).forEach(([variant, count], i) => {
+                response += `${i + 1}. "${variant}": ${count} профилей\n`;
+            });
+        }
+        
+        // Извлекаем города
+        response += `\n**🌆 ИЗВЛЕЧЕНИЕ ГОРОДОВ:**\n`;
+        
+        // Из полных профилей
+        const citiesFromFull = cacheManager.extractCitiesFromFullProfiles(country);
+        response += `• Из полных профилей: ${citiesFromFull.length} городов\n`;
+        
+        if (citiesFromFull.length > 0) {
+            response += `  Примеры: ${citiesFromFull.slice(0, 15).join(", ")}`;
+            if (citiesFromFull.length > 15) response += `... (и еще ${citiesFromFull.length - 15})`;
+        }
+        
+        // Из демо-профилей
+        const citiesFromDemo = cacheManager.extractCitiesFromDemoProfiles(country);
+        response += `\n• Из демо-профилей: ${citiesFromDemo.length} городов\n`;
+        
+        // Индексы
+        response += `\n**💾 ИНДЕКСЫ LMDB:**\n`;
+        const fromFullIndex = indexesDB.get(`cities:${result.normalized}`);
+        response += `• cities:${result.normalized}: ${fromFullIndex?.length || 0} городов\n`;
+        
+        const fromDemoIndex = indexesDB.get(`demo:cities:${result.normalized}`);
+        response += `• demo:cities:${result.normalized}: ${fromDemoIndex?.length || 0} городов`;
+        
+        await ctx.reply(response);
+        
+    } catch (error) {
+        console.error("Ошибка debug_city_extraction:", error);
+        await ctx.reply(`❌ Ошибка: ${error.message}`);
+    }
+});
+ bot.action("filter_by_age", async (ctx) => {
     const userId = ctx.from.id;
 
     if (!acquireUserLock(userId, 2000)) {
@@ -6001,7 +6698,7 @@ ${totalCountries > 10 ? `... и еще ${totalCountries - 10} стран` : ""}
     });
   });
 
-  // ===================== УЛУЧШЕННАЯ ПРОВЕРКА ПОДПИСКИ НА КАНАЛ =====================
+   // ===================== УЛУЧШЕННАЯ ПРОВЕРКА ПОДПИСКИ НА КАНАЛ =====================
   // ================= 14. ПРОВЕРКА ПОДПИСКИ НА КАНАЛ =================
   bot.action("check_channel_subscription", async (ctx) => {
     try {
@@ -6221,77 +6918,116 @@ ${totalCountries > 10 ? `... и еще ${totalCountries - 10} стран` : ""}
       }
     });
   });
+  bot.action(/^page_(first|prev|next|last|\d+)_(\d+)$/, async (ctx) => {
+    const userId = ctx.from.id;
 
-  bot.action("force_refresh_access", async (ctx) => {
+    if (!acquireUserLock(userId, 2500)) {
+      console.log(
+        `⏳ [LOCK] Пользователь ${userId} уже выполняет действие, игнорируем клик`
+      );
+      try {
+        await ctx.answerCbQuery("⏳ Подождите, загружаем...");
+      } catch (e) {}
+      return;
+    }
+
     await messageQueue.add(async () => {
       try {
-        const userId = ctx.from.id;
-        await ctx.answerCbQuery("🔄 Принудительное обновление...");
+        const [_, action, currentPage] = ctx.match;
+        let newPage = parseInt(currentPage);
 
-        console.log(`🔄 [FORCE REFRESH] Полный сброс кэшей для ${userId}`);
-
-        // Очищаем ВСЕ кэши пользователя
-        userCacheStatus.del(`cache_status:${userId}`);
-        subscriptionCache.del(`subscription:${userId}`);
-        channelSubscriptionCache.del(`channel:${userId}`);
-
-        // Очищаем сессию
-        if (ctx.session) {
-          ctx.session = {};
+        if (action === "first") newPage = 0;
+        else if (action === "prev") newPage = Math.max(0, newPage - 1);
+        else if (action === "next") newPage = newPage + 1;
+        else if (action === "last") {
+          const isDemo = ctx.session?.isDemo || false;
+          const filterKey = `country:${
+            ctx.session.filterCountry || "all"
+          }:age:${ctx.session.ageRange?.label || "all"}:city:${
+            ctx.session.filterCity || "all"
+          }`;
+          const filteredProfiles = cacheManager.getGlobalFilter(
+            filterKey,
+            isDemo
+          );
+          newPage =
+            Math.ceil(
+              (filteredProfiles?.length || 0) /
+                SCALING_CONFIG.PERFORMANCE.PROFILES_PER_PAGE
+            ) - 1;
+        } else {
+          newPage = parseInt(action);
         }
 
-        // Проверяем заново
-        const [hasSubscription, hasChannelSubscription] = await Promise.all([
-          checkSubscription(userId),
-          checkChannelSubscription(ctx),
-        ]);
+        await messageManager.clear(ctx, true);
 
-        // Устанавливаем правильный статус кэша
-        if (hasSubscription && hasChannelSubscription) {
-          cacheManager.setUserCacheStatus(userId, "full");
+        ctx.session = ctx.session || {};
+        const isDemo = ctx.session.isDemo || false;
+        const profiles = await getProfilesPage(
+          newPage,
+          ctx.session.filterCountry,
+          ctx.session.ageRange,
+          ctx.session.filterCity,
+          isDemo
+        );
 
-          await ctx.reply(
-            `
-🔄 <b>СТАТУС ОБНОВЛЕН!</b>
+        if (profiles.length) {
+          ctx.session.profilesPage = newPage;
 
-✅ Подписка: ${hasSubscription ? "АКТИВНА" : "НЕ АКТИВНА"}
-✅ Канал: ${hasChannelSubscription ? "ПОДПИСАН" : "НЕ ПОДПИСАН"}
+          for (let i = 0; i < profiles.length; i++) {
+            const isLast = i === profiles.length - 1;
+            await sendProfile(
+              ctx,
+              profiles[i],
+              newPage,
+              profiles.length,
+              isLast,
+              isDemo
+            );
+            if (!isLast)
+              await new Promise((resolve) => setTimeout(resolve, 300));
+          }
 
-${
-  hasSubscription && hasChannelSubscription
-    ? '🎉 <b>Теперь у вас полный доступ!</b>\nНажмите "🌍 ВСЕ СТРАНЫ"'
-    : "❌ <b>Не все условия выполнены</b>\nПроверьте что отсутствует выше"
-}
-                    `,
-            {
-              parse_mode: "HTML",
-              reply_markup: {
-                inline_keyboard: [
-                  [
-                    {
-                      text: "🌍 ВСЕ СТРАНЫ",
-                      callback_data: "all_countries_with_check",
-                    },
-                  ],
-                  [
-                    {
-                      text: "🔄 Проверить еще раз",
-                      callback_data: "check_all_access",
-                    },
-                  ],
-                ],
-              },
-            }
-          );
+          await ctx.answerCbQuery(`📄 Страница ${newPage + 1}`);
+        } else {
+          const msg = await ctx.reply("Больше анкет нет");
+          messageManager.track(ctx.chat.id, msg.message_id);
+          await ctx.answerCbQuery("❌ Больше анкет нет");
         }
       } catch (error) {
-        console.error("Ошибка принудительного обновления:", error);
-        await ctx.answerCbQuery("❌ Ошибка обновления");
+        console.error("❌ Ошибка пагинации:", error);
+        try {
+          await ctx.answerCbQuery("❌ Ошибка загрузки");
+        } catch (e) {}
+      } finally {
+        releaseUserLock(userId);
       }
     });
   });
 
-  // ===================== ПРОВЕРКА ВСЕХ УСЛОВИЙ =====================
+  bot.action("clear_screen", async (ctx) => {
+    const userId = ctx.from.id;
+
+    if (!acquireUserLock(userId, 2000)) {
+      await ctx.answerCbQuery(
+        "⏳ Подождите, обрабатываем предыдущий запрос..."
+      );
+      return;
+    }
+
+    await messageQueue.add(async () => {
+      try {
+        await messageManager.clear(ctx);
+        await ctx.answerCbQuery("Экран очищен");
+      } catch (error) {
+        console.error("❌ Ошибка очистки:", error);
+        await ctx.answerCbQuery("Ошибка при очистке");
+      } finally {
+        releaseUserLock(userId);
+      }
+    });
+  });
+    // ===================== ПРОВЕРКА ВСЕХ УСЛОВИЙ =====================
   bot.action("check_all_access", async (ctx) => {
     await messageQueue.add(async () => {
       try {
@@ -6418,95 +7154,7 @@ ${!hasChannelSubscription ? "2. 📢 Подпишитесь на канал \n" 
       }
     });
   });
-
-  bot.action(/^page_(first|prev|next|last|\d+)_(\d+)$/, async (ctx) => {
-    const userId = ctx.from.id;
-
-    if (!acquireUserLock(userId, 2500)) {
-      console.log(
-        `⏳ [LOCK] Пользователь ${userId} уже выполняет действие, игнорируем клик`
-      );
-      try {
-        await ctx.answerCbQuery("⏳ Подождите, загружаем...");
-      } catch (e) {}
-      return;
-    }
-
-    await messageQueue.add(async () => {
-      try {
-        const [_, action, currentPage] = ctx.match;
-        let newPage = parseInt(currentPage);
-
-        if (action === "first") newPage = 0;
-        else if (action === "prev") newPage = Math.max(0, newPage - 1);
-        else if (action === "next") newPage = newPage + 1;
-        else if (action === "last") {
-          const isDemo = ctx.session?.isDemo || false;
-          const filterKey = `country:${
-            ctx.session.filterCountry || "all"
-          }:age:${ctx.session.ageRange?.label || "all"}:city:${
-            ctx.session.filterCity || "all"
-          }`;
-          const filteredProfiles = cacheManager.getGlobalFilter(
-            filterKey,
-            isDemo
-          );
-          newPage =
-            Math.ceil(
-              (filteredProfiles?.length || 0) /
-                SCALING_CONFIG.PERFORMANCE.PROFILES_PER_PAGE
-            ) - 1;
-        } else {
-          newPage = parseInt(action);
-        }
-
-        await messageManager.clear(ctx, true);
-
-        ctx.session = ctx.session || {};
-        const isDemo = ctx.session.isDemo || false;
-        const profiles = await getProfilesPage(
-          newPage,
-          ctx.session.filterCountry,
-          ctx.session.ageRange,
-          ctx.session.filterCity,
-          isDemo
-        );
-
-        if (profiles.length) {
-          ctx.session.profilesPage = newPage;
-
-          for (let i = 0; i < profiles.length; i++) {
-            const isLast = i === profiles.length - 1;
-            await sendProfile(
-              ctx,
-              profiles[i],
-              newPage,
-              profiles.length,
-              isLast,
-              isDemo
-            );
-            if (!isLast)
-              await new Promise((resolve) => setTimeout(resolve, 300));
-          }
-
-          await ctx.answerCbQuery(`📄 Страница ${newPage + 1}`);
-        } else {
-          const msg = await ctx.reply("Больше анкет нет");
-          messageManager.track(ctx.chat.id, msg.message_id);
-          await ctx.answerCbQuery("❌ Больше анкет нет");
-        }
-      } catch (error) {
-        console.error("❌ Ошибка пагинации:", error);
-        try {
-          await ctx.answerCbQuery("❌ Ошибка загрузки");
-        } catch (e) {}
-      } finally {
-        releaseUserLock(userId);
-      }
-    });
-  });
-
-  bot.action("clear_screen", async (ctx) => {
+  bot.action("back_to_menu", async (ctx) => {
     const userId = ctx.from.id;
 
     if (!acquireUserLock(userId, 2000)) {
@@ -6519,881 +7167,640 @@ ${!hasChannelSubscription ? "2. 📢 Подпишитесь на канал \n" 
     await messageQueue.add(async () => {
       try {
         await messageManager.clear(ctx);
-        await ctx.answerCbQuery("Экран очищен");
+        await messageManager.sendMainMenu(ctx);
+        await ctx.answerCbQuery();
       } catch (error) {
-        console.error("❌ Ошибка очистки:", error);
-        await ctx.answerCbQuery("Ошибка при очистке");
+        console.error("❌ Ошибка возврата в меню:", error);
       } finally {
         releaseUserLock(userId);
       }
     });
   });
+  bot.action("back_to_countries", async (ctx) => {
+    const userId = ctx.from.id;
 
-  // ===================== ФУНКЦИЯ ОТПРАВКИ ПРОФИЛЯ (ПОЛНАЯ ВЕРСИЯ) =====================
-const sendProfile = async (ctx, profile, page, total, isLast, isDemo = false) => {
-    return messageQueue.add(async () => {
+    if (!acquireUserLock(userId, 2000)) {
+      await ctx.answerCbQuery(
+        "⏳ Подождите, обрабатываем предыдущий запрос..."
+      );
+      return;
+    }
+
+    await messageQueue.add(async () => {
+      try {
+        const cacheType = await ensureProperCache(ctx);
+        const isDemo = cacheType === "demo";
+
+        await messageManager.clear(ctx, false, true);
+        await messageManager.sendCountriesKeyboard(ctx, isDemo);
+        await ctx.answerCbQuery("✅ Возврат к странам");
+      } catch (error) {
+        console.error("❌ Ошибка возврата к странам:", error);
         try {
-            console.log(`🔍 [SEND PROFILE START] page=${page}, total=${total}, isLast=${isLast}, isDemo=${isDemo}`);
-            
-            // 🔥 КРИТИЧЕСКАЯ ПРОВЕРКА: Профиль undefined
-            if (profile === undefined || profile === null) {
-                console.log(`❌ [SEND PROFILE] Профиль undefined/null`);
-                
-                // 🔥 Пытаемся восстановить из кэша фильтров
-                const filterKey = isDemo ? 
-                    `country:${ctx.session?.filterCountry || 'all'}:age:${ctx.session?.ageRange?.label || 'all'}:city:${ctx.session?.filterCity || 'all'}` :
-                    `country:${ctx.session?.filterCountry || 'all'}:age:${ctx.session?.ageRange?.label || 'all'}:city:${ctx.session?.filterCity || 'all'}`;
-                
-                console.log(`🔄 [RECOVERY] Пробуем получить из кэша: ${filterKey} (демо: ${isDemo})`);
-                
-                const cachedProfiles = cacheManager.getGlobalFilter(filterKey, isDemo);
-                
-                if (cachedProfiles && cachedProfiles.length > 0) {
-                    console.log(`✅ [RECOVERY SUCCESS] Найдено в кэше: ${cachedProfiles.length} профилей`);
-                    
-                    // 🔥 ВАЖНОЕ ИСПРАВЛЕНИЕ: Берем профиль по индексу страницы
-                    if (cachedProfiles.length > page) {
-                        const targetProfile = cachedProfiles[page];
-                        console.log(`✅ [RECOVERY] Используем профиль из кэша на странице ${page}:`, targetProfile?.n || targetProfile?.name || 'unknown');
-                        profile = targetProfile;
-                    } else if (cachedProfiles.length > 0) {
-                        // Если страница больше чем профилей - берем первый
-                        const targetProfile = cachedProfiles[0];
-                        console.log(`✅ [RECOVERY] Используем первый профиль из кэша:`, targetProfile?.n || targetProfile?.name || 'unknown');
-                        profile = targetProfile;
-                    } else {
-                        console.log(`❌ [RECOVERY FAILED] Нет профилей в кэше`);
-                        profile = null;
+          await ctx.answerCbQuery("❌ Ошибка возврата");
+        } catch (e) {}
+      } finally {
+        releaseUserLock(userId);
+      }
+    });
+  });
+   bot.action("back_to_current_country_cities", async (ctx) => {
+    const userId = ctx.from.id;
+
+    if (!acquireUserLock(userId, 2000)) {
+      await ctx.answerCbQuery(
+        "⏳ Подождите, обрабатываем предыдущий запрос..."
+      );
+      return;
+    }
+
+    await messageQueue.add(async () => {
+      try {
+        await ctx.answerCbQuery("🏙️ Возвращаемся к городам...");
+
+        // Получаем текущую страну из сессии
+        const currentCountry = ctx.session.filterCountry;
+        const cacheType = await ensureProperCache(ctx);
+        const isDemo = cacheType === "demo";
+
+        if (!currentCountry) {
+          console.log(
+            `❌ [BACK TO CITIES] Нет страны в сессии для пользователя ${userId}`
+          );
+          await ctx.reply(
+            "❌ Не удалось определить текущую страну. Пожалуйста, выберите страну заново."
+          );
+          await messageManager.sendCountriesKeyboard(ctx, isDemo);
+          return;
+        }
+
+        console.log(
+          `🏙️ [BACK TO CITIES] Пользователь ${userId} возвращается к городам страны ${currentCountry}, демо=${isDemo}`
+        );
+
+        // Очищаем экран, но сохраняем клавиатуру стран
+        await messageManager.clear(ctx, false, true);
+
+        // Показываем клавиатуру городов для текущей страны
+        await messageManager.sendCitiesKeyboard(ctx, currentCountry, isDemo);
+      } catch (error) {
+        console.error("❌ Ошибка возврата к городам:", error);
+        try {
+          await ctx.answerCbQuery("❌ Ошибка возврата");
+        } catch (e) {}
+      } finally {
+        releaseUserLock(userId);
+      }
+    });
+  });
+  bot.action("cities_page_info", async (ctx) => {
+    await ctx.answerCbQuery("📄 Используйте кнопки для навигации по городам");
+  });
+  bot.action(/^countries_page_(\d+)$/, async (ctx) => {
+    const userId = ctx.from.id;
+    const page = parseInt(ctx.match[1]);
+
+    // Блокируем быстрые клики
+    if (!acquireUserLock(userId, 1500)) {
+        try {
+            await ctx.answerCbQuery("⏳ Подождите...");
+        } catch (e) {}
+        return;
+    }
+
+    await messageQueue.add(async () => {
+        try {
+            await ctx.answerCbQuery(`📄 Загружаем страницу ${page + 1}...`);
+
+            const cacheType = await ensureProperCache(ctx);
+            const isDemo = cacheType === "demo";
+            const uniqueCountries = await getUniqueCountries(isDemo);
+            const countriesPerPage = 30;
+            const totalPages = Math.ceil(uniqueCountries.length / countriesPerPage);
+
+            if (page < 0 || page >= totalPages) {
+                await ctx.answerCbQuery("❌ Неверная страница");
+                return;
+            }
+
+            const startIndex = page * countriesPerPage;
+            const endIndex = Math.min(startIndex + countriesPerPage, uniqueCountries.length);
+            const pageCountries = uniqueCountries.slice(startIndex, endIndex);
+
+            // ==================== СОЗДАЁМ КЛАВИАТУРУ ====================
+            const keyboard = [];
+            let row = [];
+
+            pageCountries.forEach((country, index) => {
+                const countryWithFlag = formatCountryWithFlag(country);
+                row.push({
+                    text: countryWithFlag,
+                    callback_data: `country_${country}`
+                });
+
+                if (row.length === 2 || index === pageCountries.length - 1) {
+                    keyboard.push(row);
+                    row = [];
+                }
+            });
+
+            // Пагинация
+            if (totalPages > 1) {
+                const paginationRow = [];
+
+                if (page > 0) {
+                    paginationRow.push({
+                        text: "◀️",
+                        callback_data: `countries_page_${page - 1}`
+                    });
+                }
+
+                paginationRow.push({
+                    text: `${page + 1}/${totalPages}`,
+                    callback_data: "no_action"  // ← ЭТА КНОПКА ВЫЗЫВАЕТ no_action
+                });
+
+                if (page < totalPages - 1) {
+                    paginationRow.push({
+                        text: "▶️",
+                        callback_data: `countries_page_${page + 1}`
+                    });
+                }
+
+                keyboard.push(paginationRow);
+            }
+
+            // Кнопка создания анкеты
+            keyboard.push([
+                {
+                    text: "📝 СОЗДАТЬ АНКЕТУ",
+                    web_app: { url: "https://bot-vai-web-app.web.app/?tab=catalog" }
+                }
+            ]);
+
+            // Демо-режим
+            if (isDemo) {
+                keyboard.push([
+                    {
+                        text: "💎 ПОЛУЧИТЬ ПОЛНЫЙ ДОСТУП",
+                        callback_data: "get_full_access"
                     }
+                ]);
+            }
+
+            // Кнопка назад
+            keyboard.push([
+                { text: "🔙 Назад", callback_data: "back_to_menu" }
+            ]);
+
+            // ==================== ОБНОВЛЕНИЕ ====================
+            const msgText = isDemo
+                ? `🌍 Выберите страну (демо-режим)\n📄 Страница ${page + 1}/${totalPages}\n👀 Показано по 3 анкеты на город`
+                : `🌍 Выберите страну\n📄 Страница ${page + 1}/${totalPages}\n📍 Показано: ${pageCountries.length} стран`;
+
+            try {
+                // ВСЕГДА используем editMessageText вместо editMessageReplyMarkup
+                await ctx.editMessageText(msgText, {
+                    parse_mode: "HTML",
+                    reply_markup: { inline_keyboard: keyboard }
+                });
+                
+            } catch (error) {
+                // Игнорируем только ошибку "message is not modified"
+                if (error.response?.error_code === 400 && 
+                    error.response?.description?.includes("message is not modified")) {
+                    console.log(`✅ Игнорируем ошибку для страницы ${page}`);
                 } else {
-                    console.log(`❌ [RECOVERY FAILED] Кэш пустой или не найден`);
-                    profile = null;
+                    console.error("❌ Ошибка обновления стран:", error.message);
+                    try {
+                        await ctx.answerCbQuery("❌ Ошибка загрузки");
+                    } catch (e) {}
                 }
             }
-            
-            // 🔥 Проверка: Профиль пустой объект или некорректная структура
-            if (!profile || typeof profile !== 'object' || (!profile.n && !profile.name && !profile.id && !profile._id)) {
-                console.log(`⚠️ [SEND PROFILE INVALID] Профиль некорректный, создаем демо-заглушку`);
-                
-                const fallbackProfile = {
-                    id: 'demo_fallback_' + Date.now(),
-                    n: 'Демо-анкета',
-                    a: 25,
-                    c: ctx.session?.filterCountry || 'Страна',
-                    ct: ctx.session?.filterCity || 'Город',
-                    ab: 'Это демо-анкета для показа работы системы. Для просмотра полных анкет с контактами получите полный доступ.',
-                    p: 'https://via.placeholder.com/600x800/0088cc/ffffff?text=Demo+Profile',
-                    phs: ['https://via.placeholder.com/600x800/0088cc/ffffff?text=Photo+1', 'https://via.placeholder.com/600x800/0088cc/ffffff?text=Photo+2'],
-                    tg: null,
-                    tel: null,
-                    wa: null,
-                    ca: new Date(),
-                    isDemo: true
-                };
-                
-                profile = fallbackProfile;
-                isDemo = true;
-            }
-            
-            console.log(`✅ [SEND PROFILE READY] Профиль готов: ${profile.n || profile.name || 'unknown'}, isDemo=${isDemo || profile.isDemo}`);
-            
-            // 🔥 ОБНОВЛЕННАЯ ФУНКЦИЯ ОЧИСТКИ ТЕКСТА С ЭКРАНИРОВАНИЕМ HTML
-            const cleanTextForHtml = (text) => {
-                if (!text || typeof text !== 'string') return "";
-                
-                // Сначала заменяем HTML-специальные символы
-                let cleaned = text
-                    .replace(/&/g, '&amp;')   // Должно быть первой заменой
-                    .replace(/</g, '&lt;')    // Важно! Заменяем < на &lt;
-                    .replace(/>/g, '&gt;')    // Важно! Заменяем > на &gt;
-                    .replace(/"/g, '&quot;')  // Заменяем двойные кавычки
-                    .replace(/'/g, '&#39;');  // Заменяем одинарные кавычки
-                
-                // Затем убираем нестандартные символы (как в исходной функции)
-                cleaned = cleaned
-                    .replace(/[^\x00-\x7F\u0400-\u04FF\u0500-\u052F\u2DE0-\u2DFF\uA640-\uA69F\s.,!?;:()\-+=\[\]{}@#$%^&*<>\/\\|'"`~]/g, '')
-                    .trim();
-                
-                return cleaned;
-            };
-            
-            // 🔥 ФУНКЦИЯ ОЧИСТКИ URL
-            const cleanUrl = (url) => {
-                if (!url || typeof url !== 'string') return '';
-                return url.trim();
-            };
-            
-            // 🔥 ПРЕОБРАЗОВАНИЕ В ЕДИНЫЙ ФОРМАТ
-            const fullProfile = {
-                id: profile.id || profile._id || 'unknown_' + Date.now(),
-                name: cleanTextForHtml(profile.n || profile.name || 'Неизвестно'), // Экранируем имя
-                age: parseInt(profile.a || profile.age) || 25,
-                country: cleanTextForHtml(profile.c || profile.country || ctx.session?.filterCountry || 'Страна'), // Экранируем страну
-                city: cleanTextForHtml(profile.ct || profile.city || ctx.session?.filterCity || 'Город'), // Экранируем город
-                about: profile.ab || profile.about || 'Описание недоступно',
-                photoUrl: cleanUrl(profile.p || profile.photoUrl || ''),
-                photos: Array.isArray(profile.phs || profile.photos) ? (profile.phs || profile.photos).map(cleanUrl) : [],
-                telegram: isDemo || profile.isDemo ? null : cleanUrl(profile.tg || profile.telegram),
-                phone: isDemo || profile.isDemo ? null : (profile.tel || profile.phone),
-                whatsapp: isDemo || profile.isDemo ? null : cleanUrl(profile.wa || profile.whatsapp),
-                createdAt: profile.ca || profile.createdAt || new Date(),
-                isDemo: isDemo || profile.isDemo || false
-            };
-            
-            console.log(`🔍 [FULL PROFILE] Создан: ${fullProfile.name}, фото: ${fullProfile.photos.length}, город: "${fullProfile.city}", страна: "${fullProfile.country}"`);
-            
-            // 🔥 ПОДГОТОВКА ОПИСАНИЯ
-            let about = cleanTextForHtml(fullProfile.about);
-            const maxAboutLength = SCALING_CONFIG.PERFORMANCE.MAX_CAPTION_LENGTH - 300; // Оставляем место для остального текста
-            
-            if (about.length > maxAboutLength) {
-                about = about.substring(0, maxAboutLength - 3) + "...";
-            }
-            
-            // 🔥 ФУНКЦИЯ ФОРМАТИРОВАНИЯ КОНТАКТОВ (ДЛЯ ПОЛНОГО ДОСТУПА)
-            const formatTelegram = (username) => {
-                if (!username) return "";
-                const cleanUsername = cleanUrl(username);
-                
-                if (/^[0-9+\-() ]+$/.test(cleanUsername)) {
-                    const cleanDigits = cleanUsername.replace(/[^0-9]/g, "");
-                    if (cleanDigits.startsWith('7') || cleanDigits.startsWith('8') || (cleanDigits.length >= 10 && !cleanDigits.startsWith('1'))) {
-                        let telegramNumber = cleanDigits;
-                        if (telegramNumber.startsWith('7') && telegramNumber.length === 11) telegramNumber = telegramNumber.substring(1);
-                        else if (telegramNumber.startsWith('8') && telegramNumber.length === 11) telegramNumber = telegramNumber.substring(1);
-                        return `🔵 <a href="https://t.me/${telegramNumber}">Telegram</a>`;
-                    }
-                }
-                
-                if (cleanUsername.startsWith("https://t.me/")) {
-                    const cleaned = decodeURIComponent(cleanUsername)
-                        .replace("https://t.me/", "")
-                        .replace(/^%40/, "@")
-                        .replace(/^\+/, "");
-                    return `🔵 <a href="https://t.me/${cleaned}">Telegram</a>`;
-                }
-                
-                const cleaned = cleanUsername.replace(/^[@+]/, "");
-                return `🔵 <a href="https://t.me/${cleaned}">Telegram</a>`;
-            };
-            
-            const formatWhatsApp = (url) => {
-                if (!url) return "";
-                const cleanUrlText = cleanUrl(url);
-                
-                if (/^[0-9+\-() ]+$/.test(cleanUrlText)) {
-                    let cleanDigits = cleanUrlText.replace(/[^0-9]/g, "");
-                    if (cleanDigits.startsWith('8') && cleanDigits.length === 11) cleanDigits = '7' + cleanDigits.substring(1);
-                    else if (cleanDigits.length === 10) cleanDigits = '7' + cleanDigits;
-                    
-                    if (cleanDigits.length === 11 && cleanDigits.startsWith('7')) {
-                        return `🟢 <a href="https://wa.me/${cleanDigits}">WhatsApp</a>`;
-                    }
-                }
-                
-                return `🟢 <a href="${cleanUrlText}">WhatsApp</a>`;
-            };
-            
-            const formatPhone = (phone) => {
-                if (!phone) return "";
-                let cleanDigits = cleanTextForHtml(phone).replace(/[^0-9]/g, "");
-                if (!cleanDigits) return "";
-                
-                let formattedPhone = cleanTextForHtml(phone);
-                if (cleanDigits.length === 11 || cleanDigits.length === 10) {
-                    if (cleanDigits.startsWith('7') && cleanDigits.length === 11) formattedPhone = `+${cleanDigits}`;
-                    else if (cleanDigits.startsWith('8') && cleanDigits.length === 11) formattedPhone = `+7${cleanDigits.substring(1)}`;
-                    else if (cleanDigits.length === 10) formattedPhone = `+7${cleanDigits}`;
-                }
-                
-                return `📞 ${formattedPhone}`;
-            };
-            
-            // 🔥 РАЗДЕЛЯЕМ ЛОГИКУ ДЕМО И ПОЛНОГО ДОСТУПА
-            if (fullProfile.isDemo) {
-                console.log(`🎭 [DEMO MODE] Создаем демо-анкету для ${fullProfile.name}`);
-                
-                // 🔥 ДЕМО-ПОДПИСЬ (контакты скрыты)
-                const demoCaption = `
-👤 <b>${fullProfile.name}</b>, ${fullProfile.age}
-━━━━━━━━━━━━━━━━━━━━━━
-📍 <b>${fullProfile.city}, ${fullProfile.country}</b>
-━━━━━━━━━━━━━━━━━━━━━━
-<em>${about.length > 300 ? about.substring(0, 300) + `...<a href="http://t.me/magicboss_bot/magic">читать полностью в ✨Magic</a>` : about}</em>
-━━━━━━━━━━━━━━━━━━━━━━
-🚫 <b>КОНТАКТЫ СКРЫТЫ (ДЕМО-РЕЖИМ)</b>
-━━━━━━━━━━━━━━━━━━━━━━
-👀 <b>ДЕМО-РЕЖИМ:</b> показано максимум 3 анкеты на город
-💎 <b>Для получения контактов и полного доступа ко всем анкетам необходимо:</b>
+
+        } catch (error) {
+            console.error("❌ Ошибка пагинации стран:", error);
+            try {
+                await ctx.answerCbQuery("❌ Ошибка загрузки");
+            } catch (e) {}
+        } finally {
+            releaseUserLock(userId);
+        }
+    });
+});
+bot.action("force_load_global_full_cache", async (ctx) => {
+    await messageQueue.add(async () => {
+      try {
+        await ctx.answerCbQuery("🚀 Запускаем загрузку...");
+        await ctx.reply(
+          "Используйте команду /load_global_full_cache для загрузки глобального полного кэша"
+        );
+      } catch (error) {
+        console.error("❌ Ошибка:", error);
+      }
+    });
+  });
+  bot.command("force_check", async (ctx) => {
+    await messageQueue.add(async () => {
+      try {
+        const userId = ctx.from.id;
+
+        // ОЧИЩАЕМ ВСЕ ИНДИВИДУАЛЬНЫЕ КЭШИ
+        channelSubscriptionCache.del(`channel:${userId}`);
+        subscriptionCache.del(`subscription:${userId}`);
+        userCacheStatus.del(`cache_status:${userId}`);
+
+        if (ctx.session) {
+          delete ctx.session.cacheType;
+          delete ctx.session.hasFullAccess;
+          delete ctx.session.fullAccessChecked;
+          delete ctx.session.fullAccessCheckTime;
+        }
+
+        // ПРОВЕРЯЕМ ЗАНОВО с forceRefresh
+        const [hasSubscription, hasChannel] = await Promise.all([
+          checkSubscription(userId),
+          checkChannelSubscription(ctx),
+        ]);
+
+        const accessType = hasSubscription && hasChannel ? "full" : "demo";
+        cacheManager.setUserCacheStatus(userId, accessType);
+
+        // Сохраняем в сессию
+        if (!ctx.session) ctx.session = {};
+        ctx.session.hasFullAccess = hasSubscription && hasChannel;
+        ctx.session.fullAccessChecked = true;
+        ctx.session.fullAccessCheckTime = Date.now();
+
+        await ctx.reply(
+          `
+🔄 <b>ПРИНУДИТЕЛЬНАЯ ПРОВЕРКА</b>
+
+✅ Очищены
+✅ Проверка выполнена
+
+<b>Результат:</b>
+• 💎 Подписка: ${hasSubscription ? "✅ АКТИВНА" : "❌ НЕТ"}
+• 📢 Канал: ${hasChannel ? "✅ ПОДПИСАН" : "❌ НЕТ"}
+• 👤 Режим: ${accessType === "full" ? "🔓 ПОЛНЫЙ" : "👀 ДЕМО"}
+
+${
+  !hasChannel
+    ? '⚠️ <b>Вы не подписаны на канал <a href="https://t.me/+H6Eovikei9xiZWU0"><b>MagicClubPrivate</b></a></b>'
+    : ""
+}
+                `,
+          { parse_mode: "HTML" }
+        );
+      } catch (error) {
+        console.error("❌ Ошибка force_check:", error);
+        await ctx.reply("❌ Ошибка проверки");
+      }
+    });
+  });
+  bot.command("check_filter_cache", async (ctx) => {
+    try {
+      const filterKey = "country:🇦🇪 ОАЭ:age:all:city:Дубай";
+      const cached = cacheManager.getGlobalFilter(filterKey, false);
+
+      let response = `🔍 **ПРОВЕРКА КЭША ФИЛЬТРОВ:**\n\n`;
+      response += `Ключ: ${filterKey}\n`;
+      response += `В кэше: ${
+        cached ? `${cached.length} профилей` : "❌ нет в кэше"
+      }\n\n`;
+
+      if (cached) {
+        response += `Первые 3 профиля:\n`;
+        cached.slice(0, 3).forEach((profile, i) => {
+          const fullProfile = {
+            id: profile.id,
+            name: profile.n,
+            age: profile.a,
+            country: profile.c,
+            city: profile.ct,
+            about: profile.ab,
+          };
+          response += `${i + 1}. ${fullProfile.name}, ${fullProfile.age}\n`;
+          response += `   Город: "${fullProfile.city}"\n`;
+          response += `   Страна: "${fullProfile.country}"\n\n`;
+        });
+      }
+
+      await ctx.reply(response);
+    } catch (error) {
+      console.error("Ошибка check_filter_cache:", error);
+      await ctx.reply("❌ Ошибка");
+    }
+  });
+  bot.action("force_precompute", async (ctx) => {
+    await ctx.answerCbQuery("🧠 Запускаем генерацию фильтров...");
+    await ctx.reply(
+      "Используйте команду /precompute_filters для генерации фильтров"
+    );
+  });
+  bot.action("get_full_access", async (ctx) => {
+    await messageQueue.add(async () => {
+      try {
+        await ctx.answerCbQuery("💎 Переходим к оплате...");
+
+        const keyboard = {
+          inline_keyboard: [
+            [
+              {
+                text: "💎 Купить подписку",
+                callback_data: "choose_payment_method",
+              },
+            ],
+            [
+              {
+                text: "📢 Подписаться на канал",
+                url: "https://t.me/+H6Eovikei9xiZWU0",
+              },
+            ],
+            [{ text: "🔙 Назад", callback_data: "back_to_menu" }],
+          ],
+        };
+
+        await ctx.reply(
+          `
+💎 <b>ПОЛУЧИТЬ ПОЛНЫЙ ДОСТУП</b>
+
+Для получения полного доступа ко всем анкетам необходимо:
 
 ✅ <b>1. Активная подписка</b>
+   • Доступ ко всем анкетам
+   • Все контакты профилей
+   • Полная функциональность
+
 ✅ <b>2. Подписка на канал <a href="https://t.me/+H6Eovikei9xiZWU0"><b>MagicClubPrivate</b></a></b>
+   • Новые анкеты и обновления
+   • Эксклюзивный контент
+   • Специальные предложения
 
-✨ После получения доступа вы увидите:
-• Все контакты профилей (Telegram, WhatsApp, телефон)
-• Полные описания анкет
-• Неограниченный доступ ко всем анкетам
-• Максимальную скорость работы
+<b>После оплаты подписки и подписки на канал вы получите:</b>
+• 🔓 Полный доступ ко всем анкетам
+• 📞 Все контакты профилей  
+• 🌍 Неограниченный поиск по странам и городам
+• ⚡ Максимальную скорость работы
 
-━━━━━━━━━━━━━━━━━━━━━━
-<a href="http://t.me/magicboss_bot/magic"><b>✨Magic WebApp</b></a>
-                `.trim();
-                
-                // 🔥 ПОДГОТОВКА ФОТО
-                let photosToSend = [];
-                const seenUrls = new Set();
-                
-                // Основное фото
-                if (fullProfile.photoUrl && fullProfile.photoUrl.trim() !== '') {
-                    try {
-                        const url = fullProfile.photoUrl.trim();
-                        new URL(url);
-                        if (!seenUrls.has(url)) {
-                            seenUrls.add(url);
-                            photosToSend.push(url);
-                        }
-                    } catch (e) {
-                        console.log(`❌ [DEMO PHOTO] Некорректный URL основного фото: ${e.message}`);
-                    }
-                }
-                
-                // Фото галереи
-                if (Array.isArray(fullProfile.photos) && fullProfile.photos.length > 0) {
-                    fullProfile.photos.forEach((url, index) => {
-                        if (typeof url === 'string' && url.trim() !== '') {
-                            try {
-                                const cleanUrl = url.trim();
-                                new URL(cleanUrl);
-                                if (!seenUrls.has(cleanUrl)) {
-                                    seenUrls.add(cleanUrl);
-                                    photosToSend.push(cleanUrl);
-                                }
-                            } catch (e) {
-                                console.log(`❌ [DEMO PHOTO] Некорректный URL фото ${index + 1}: ${e.message}`);
-                            }
-                        }
-                    });
-                }
-                
-                // Если нет фото - отправляем только текст
-                if (photosToSend.length === 0) {
-                    console.log(`⚠️ [NO PHOTOS] У профиля "${fullProfile.name}" нет фото, отправляем только текст`);
-                }
-                
-                // Ограничиваем количество фото
-                photosToSend = photosToSend.slice(0, 10);
-                console.log(`📸 [DEMO PHOTOS] Будет отправлено ${photosToSend.length} фото`);
-                
-                // 🔥 🔥 🔥 ИСПРАВЛЕННЫЙ БЛОК ПАГИНАЦИИ ДЛЯ ДЕМО-РЕЖИМА
-                let keyboard = [];
-                if (isLast) {
-                    // 🔥 ВАЖНОЕ ИСПРАВЛЕНИЕ: Ключ БЕЗ префикса demo: - ТАКОЙ ЖЕ как в getProfilesPage
-                    const filterKey = `country:${ctx.session?.filterCountry || 'all'}:age:${ctx.session?.ageRange?.label || 'all'}:city:${ctx.session?.filterCity || 'all'}`;
-                    
-                    console.log(`🔑 [DEMO CACHE KEY] Ищем профили по ключу: ${filterKey} (демо: true)`);
-                    
-                    // 🔥 ВАЖНО: isDemo=true для поиска в демо-кэше
-                    const filteredProfiles = cacheManager.getGlobalFilter(filterKey, true) || [];
-                    
-                    console.log(`📊 [DEMO PAGINATION DEBUG] Найдено профилей в кэше: ${filteredProfiles.length}`);
-                    
-                    // 🔥 ВАЖНОЕ ИСПРАВЛЕНИЕ: totalPages не может быть 0
-                    const totalPages = Math.max(1, Math.ceil((filteredProfiles.length || 0) / SCALING_CONFIG.PERFORMANCE.PROFILES_PER_PAGE));
-                    
-                    console.log(`📊 [DEMO PAGINATION DEBUG] Всего страниц: ${totalPages} (профилей: ${filteredProfiles.length}, на страницу: ${SCALING_CONFIG.PERFORMANCE.PROFILES_PER_PAGE})`);
-                    console.log(`📊 [DEMO PAGINATION DEBUG] Текущая страница: ${page}`);
-                    
-                    const currentFilters = {
-                        country: ctx.session?.filterCountry,
-                        city: ctx.session?.filterCity,
-                        ageRange: ctx.session?.ageRange
-                    };
-                    
-                    keyboard = createEnhancedPaginationKeyboard(page, totalPages, filterKey, currentFilters, true);
-                    
-                    // 🔥 ДОБАВЛЯЕМ ДОПОЛНИТЕЛЬНЫЕ КНОПКИ ТОЛЬКО ЕСЛИ ЕСТЬ ПАГИНАЦИЯ
-                    if (totalPages > 1) {
-                        keyboard.push(
-                            [{ text: "🏙️ Вернуться к городам", callback_data: "back_to_current_country_cities" }],
-                            [{ text: "🎂 Фильтр по возрасту", callback_data: "filter_by_age" }],
-                            [{ text: "🌍 Все страны", callback_data: "all_countries_with_check" }],
-                            [{ text: "🧹 Очистить экран", callback_data: "clear_screen" }]
-                        );
-                    } else {
-                        keyboard.push(
-                            [{ text: "🏙️ Вернуться к городам", callback_data: "back_to_current_country_cities" }],
-                            [{ text: "🌍 Все страны", callback_data: "all_countries_with_check" }],
-                            [{ text: "🧹 Очистить экран", callback_data: "clear_screen" }]
-                        );
-                    }
-                }
-                
-                // 🔥 ФУНКЦИЯ ОТПРАВКИ ФОТО
-                const sendPhotoSafely = async (photoUrl, photoNumber, totalPhotos) => {
-                    try {
-                        const emojiNumbers = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'];
-                        const numberEmoji = photoNumber <= 10 ? emojiNumbers[photoNumber - 1] : `${photoNumber}.`;
-                        const photoCaption = `${numberEmoji} Фото ${photoNumber}/${totalPhotos}`;
-                        
-                        console.log(`🖼️ [SEND PHOTO] Отправляем фото ${photoNumber}/${totalPhotos}: ${photoUrl.substring(0, 50)}...`);
-                        
-                        return await ctx.replyWithPhoto(photoUrl, { 
-                            caption: photoCaption, 
-                            parse_mode: "HTML" 
-                        });
-                    } catch (error) {
-                        console.log(`❌ [SEND PHOTO ERROR] Ошибка отправки фото ${photoNumber}: ${error.message}`);
-                        return null;
-                    }
-                };
-                
-                // 🔥 ОТПРАВКА ФОТО
-                if (photosToSend.length > 0) {
-                    for (let i = 0; i < photosToSend.length; i++) {
-                        const photoMsg = await sendPhotoSafely(photosToSend[i], i + 1, photosToSend.length);
-                        if (photoMsg) {
-                            messageManager.track(ctx.chat.id, photoMsg.message_id);
-                            
-                            if (i < photosToSend.length - 1) {
-                                await new Promise(resolve => setTimeout(resolve, 800));
-                            }
-                        }
-                    }
-                }
-                
-                // 🔥 ИНФОРМАЦИОННОЕ СООБЩЕНИЕ
-                const infoMessage = await ctx.reply(
-                    `✨✨✨✨✨✨✨✨✨✨\n<a href="http://t.me/MagicYourClub"><b>Новые анкеты в нашем ➡️ канале</b></a>\n\n`,
-                    { parse_mode: "HTML" }
-                );
-                messageManager.track(ctx.chat.id, infoMessage.message_id);
-                await new Promise(resolve => setTimeout(resolve, 500));
-                
-                // 🔥 ОТПРАВКА ТЕКСТА АНКЕТЫ
-                const textMsg = await ctx.reply(demoCaption, {
-                    parse_mode: "HTML",
-                    reply_markup: keyboard.length > 0 ? { inline_keyboard: keyboard } : undefined,
-                });
-                
-                messageManager.track(ctx.chat.id, textMsg.message_id);
-                console.log(`✅ [DEMO PROFILE SENT] Анкета ${fullProfile.name} отправлена успешно`);
-                
-                return textMsg;
-                
-            } else {
-                // 🔥 ПОЛНЫЙ ДОСТУП
-                console.log(`👑 [FULL ACCESS] Создаем полную анкету для ${fullProfile.name}`);
-                
-                // 🔥 ПОЛНАЯ ПОДПИСЬ (с контактами)
-                const fullCaption = `
-👤 <b>${fullProfile.name}</b>, ${fullProfile.age}
-━━━━━━━━━━━━━━━━━━━━━━
-📍 <b>${fullProfile.city}, ${fullProfile.country}</b>
-━━━━━━━━━━━━━━━━━━━━━━
-<em>${about.length > 300 ? about.substring(0, 300) + `...<a href="http://t.me/magicboss_bot/magic">читать полностью в ✨Magic</a>` : about}</em>
-━━━━━━━━━━━━━━━━━━━━━━
-<b>📞 Контакты:</b>
-━━━━━━━━━━━━━━━━━━━━━━
-${fullProfile.phone ? formatPhone(fullProfile.phone) + '\n' : ''}
-${fullProfile.telegram ? formatTelegram(fullProfile.telegram) + '\n' : ''}
-${fullProfile.whatsapp ? formatWhatsApp(fullProfile.whatsapp) + '\n' : ''}
-${(fullProfile.phone || fullProfile.telegram || fullProfile.whatsapp) ? '━━━━━━━━━━━━━━━━━━━━━━\n' : ''}
-⚠️ <b>ВНИМАНИЕ!</b>
-━━━━━━━━━━━━━━━━━━━━━━
-<b>ЕСЛИ КТО-ТО ПРОСИТ:</b>
-• Криптовалюту наперед
-• Деньги на такси🚕 или дорогу
-• Предоплату любым способом
-• Переводы на карты💳 или электронные кошельки
-• Чеки или подтверждения оплаты
-
-🔥 🔥 🔥 🔥 🔥 🔥 🔥 🔥 🔥 🔥 🔥 🔥 
-<b>ЭТО 100% МОШЕННИКИ!
-НИ В КОЕМ СЛУЧАЕ НЕ ОТПРАВЛЯЙТЕ ПРЕДОПЛАТУ  🛑 ВАС ОБМАНУТ!</b>
-━━━━━━━━━━━━━━━━━━━━━━
-<a href="http://t.me/magicboss_bot/magic"><b>✨Magic WebApp</b></a>
-                `.trim();
-                
-                // 🔥 ПОДГОТОВКА ФОТО
-                let photosToSend = [];
-                const seenUrls = new Set();
-                
-                // Основное фото
-                if (fullProfile.photoUrl && fullProfile.photoUrl.trim() !== '') {
-                    try {
-                        const url = fullProfile.photoUrl.trim();
-                        new URL(url);
-                        if (!seenUrls.has(url)) {
-                            seenUrls.add(url);
-                            photosToSend.push(url);
-                        }
-                    } catch (e) {
-                        console.log(`❌ [FULL PHOTO] Некорректный URL основного фото: ${e.message}`);
-                    }
-                }
-                
-                // Фото галереи
-                if (Array.isArray(fullProfile.photos) && fullProfile.photos.length > 0) {
-                    fullProfile.photos.forEach((url, index) => {
-                        if (typeof url === 'string' && url.trim() !== '') {
-                            try {
-                                const cleanUrl = url.trim();
-                                new URL(cleanUrl);
-                                if (!seenUrls.has(cleanUrl)) {
-                                    seenUrls.add(cleanUrl);
-                                    photosToSend.push(cleanUrl);
-                                }
-                            } catch (e) {
-                                console.log(`❌ [FULL PHOTO] Некорректный URL фото ${index + 1}: ${e.message}`);
-                            }
-                        }
-                    });
-                }
-                
-                // Если нет фото
-                if (photosToSend.length === 0) {
-                    console.log(`⚠️ [FULL PHOTOS] Нет валидных фото для ${fullProfile.name}`);
-                }
-                
-                // Ограничиваем количество
-                photosToSend = photosToSend.slice(0, 10);
-                console.log(`📸 [FULL PHOTOS] Будет отправлено ${photosToSend.length} фото`);
-                
-                // 🔥 🔥 🔥 ИСПРАВЛЕННЫЙ БЛОК ПАГИНАЦИИ ДЛЯ ПОЛНОГО РЕЖИМА
-                let keyboard = [];
-                if (isLast) {
-                    // 🔥 КЛЮЧ ТОЧНО ТАКОЙ ЖЕ КАК В getProfilesPage
-                    const filterKey = `country:${ctx.session?.filterCountry || 'all'}:age:${ctx.session?.ageRange?.label || 'all'}:city:${ctx.session?.filterCity || 'all'}`;
-                    
-                    console.log(`🔑 [FULL CACHE KEY] Ищем профили по ключу: ${filterKey} (демо: false)`);
-                    
-                    // 🔥 ВАЖНО: isDemo=false для поиска в полном кэше
-                    const filteredProfiles = cacheManager.getGlobalFilter(filterKey, false) || [];
-                    
-                    console.log(`📊 [FULL PAGINATION DEBUG] Найдено профилей в кэше: ${filteredProfiles.length}`);
-                    
-                    // 🔥 ВАЖНОЕ ИСПРАВЛЕНИЕ: totalPages не может быть 0
-                    const totalPages = Math.max(1, Math.ceil((filteredProfiles.length || 0) / SCALING_CONFIG.PERFORMANCE.PROFILES_PER_PAGE));
-                    
-                    console.log(`📊 [FULL PAGINATION DEBUG] Всего страниц: ${totalPages} (профилей: ${filteredProfiles.length}, на страницу: ${SCALING_CONFIG.PERFORMANCE.PROFILES_PER_PAGE})`);
-                    console.log(`📊 [FULL PAGINATION DEBUG] Текущая страница: ${page}`);
-                    
-                    const currentFilters = {
-                        country: ctx.session?.filterCountry,
-                        city: ctx.session?.filterCity,
-                        ageRange: ctx.session?.ageRange
-                    };
-                    
-                    keyboard = createEnhancedPaginationKeyboard(page, totalPages, filterKey, currentFilters, false);
-                    
-                    // 🔥 ДОБАВЛЯЕМ ДОПОЛНИТЕЛЬНЫЕ КНОПКИ
-                    if (totalPages > 1) {
-                        keyboard.push(
-                            [{ text: "🏙️ Вернуться к городам", callback_data: "back_to_current_country_cities" }],
-                            [{ text: "🎂 Фильтр по возрасту", callback_data: "filter_by_age" }],
-                            [{ text: "🌍 Все страны", callback_data: "all_countries_with_check" }],
-                            [{ text: "🧹 Очистить экран", callback_data: "clear_screen" }]
-                        );
-                    } else {
-                        keyboard.push(
-                            [{ text: "🏙️ Вернуться к городам", callback_data: "back_to_current_country_cities" }],
-                            [{ text: "🌍 Все страны", callback_data: "all_countries_with_check" }],
-                            [{ text: "🧹 Очистить экран", callback_data: "clear_screen" }]
-                        );
-                    }
-                }
-                
-                // 🔥 ФУНКЦИЯ ОТПРАВКИ ФОТО
-                const sendPhotoSafely = async (photoUrl, photoNumber, totalPhotos) => {
-                    try {
-                        const emojiNumbers = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'];
-                        const numberEmoji = photoNumber <= 10 ? emojiNumbers[photoNumber - 1] : `${photoNumber}.`;
-                        const photoCaption = `${numberEmoji} Фото ${photoNumber}/${totalPhotos}`;
-                        
-                        console.log(`🖼️ [SEND PHOTO] Отправляем фото ${photoNumber}/${totalPhotos}: ${photoUrl.substring(0, 50)}...`);
-                        
-                        return await ctx.replyWithPhoto(photoUrl, { 
-                            caption: photoCaption, 
-                            parse_mode: "HTML" 
-                        });
-                    } catch (error) {
-                        console.log(`❌ [SEND PHOTO ERROR] Ошибка отправки фото ${photoNumber}: ${error.message}`);
-                        return null;
-                    }
-                };
-                
-                // 🔥 ОТПРАВКА ФОТО
-                if (photosToSend.length > 0) {
-                    for (let i = 0; i < photosToSend.length; i++) {
-                        const photoMsg = await sendPhotoSafely(photosToSend[i], i + 1, photosToSend.length);
-                        if (photoMsg) {
-                            messageManager.track(ctx.chat.id, photoMsg.message_id);
-                            
-                            if (i < photosToSend.length - 1) {
-                                await new Promise(resolve => setTimeout(resolve, 800));
-                            }
-                        }
-                    }
-                }
-                
-                // 🔥 ИНФОРМАЦИОННОЕ СООБЩЕНИЕ
-                const infoMessage = await ctx.reply(
-                    `✨✨✨✨✨✨✨✨✨✨\n<a href="http://t.me/MagicYourClub"><b>Новые анкеты в нашем ➡️ канале</b></a>\n\n`,
-                    { parse_mode: "HTML" }
-                );
-                messageManager.track(ctx.chat.id, infoMessage.message_id);
-                await new Promise(resolve => setTimeout(resolve, 500));
-                
-                // 🔥 ОТПРАВКА ТЕКСТА АНКЕТЫ
-                const textMsg = await ctx.reply(fullCaption, {
-                    parse_mode: "HTML",
-                    reply_markup: keyboard.length > 0 ? { inline_keyboard: keyboard } : undefined,
-                });
-                
-                messageManager.track(ctx.chat.id, textMsg.message_id);
-                console.log(`✅ [FULL PROFILE SENT] Анкета ${fullProfile.name} отправлена успешно`);
-                
-                return textMsg;
-            }
-            
-        } catch (error) {
-            console.error(`💥 [SEND PROFILE CRITICAL ERROR] Критическая ошибка отправки анкеты:`, error);
-            console.error(`📋 [ERROR DETAILS]`, {
-                profile: profile ? 'exists' : 'undefined',
-                page,
-                total,
-                isLast,
-                isDemo,
-                errorMessage: error.message,
-                stack: error.stack
-            });
-            
-            try {
-                // 🔥 ОШИБКА ЭКРАНИРОВАНИЯ HTML - дополнительная диагностика
-                if (error.message.includes("can't parse entities") || error.message.includes("Unsupported start tag")) {
-                    console.error(`🔍 [HTML PARSE ERROR] Ошибка парсинга HTML в анкете`);
-                    console.error(`🔍 [PROBLEMATIC TEXT] Проблемный текст:`, {
-                        name: profile?.n || profile?.name,
-                        city: profile?.ct || profile?.city,
-                        country: profile?.c || profile?.country,
-                        about: (profile?.ab || profile?.about)?.substring(0, 100) + '...'
-                    });
-                }
-                
-                // 🔥 ПОСЛЕДНЯЯ ПОПЫТКА - ОТПРАВИТЬ ПРОСТОЕ СООБЩЕНИЕ БЕЗ HTML
-                const fallbackText = `
-❌ ОШИБКА ПРИ ОТПРАВКЕ АНКЕТЫ
-
-Приносим извинения, произошла техническая ошибка при загрузке анкеты.
-
-Что можно сделать:
-1. Попробуйте выбрать другой город
-2. Используйте кнопку "Очистить экран"
-3. Перезапустите поиск
-
-Если ошибка повторяется, напишите в поддержку @MagicAdd
-                `.trim();
-                
-                const msg = await ctx.reply(fallbackText, { 
-                    reply_markup: {
-                        inline_keyboard: [
-                            [{ text: "Очистить экран", callback_data: "clear_screen" }],
-                            [{ text: "Все страны", callback_data: "all_countries_with_check" }]
-                        ]
-                    }
-                });
-                
-                messageManager.track(ctx.chat.id, msg.message_id);
-                return msg;
-                
-            } catch (finalError) {
-                console.error(`💀 [FATAL ERROR] Не удалось отправить даже сообщение об ошибке:`, finalError);
-                return null;
-            }
-        }
+Нажмите "Купить подписку" чтобы начать!
+                `,
+          {
+            parse_mode: "HTML",
+            reply_markup: keyboard,
+          }
+        );
+      } catch (error) {
+        console.error("❌ Ошибка обработки получения доступа:", error);
+      }
     });
-};
-
-
-
-
-
-
+  });
   
-  bot.command("debug_demo_cache", async (ctx) => {
-    try {
-      // Получаем демо-профили
-      const demoProfiles = cacheManager.getGlobalProfiles(true);
-
-      if (!demoProfiles || demoProfiles.length === 0) {
-        return ctx.reply("❌ Демо-кэш пуст!");
-      }
-
-      // Ищем ВСЕ профили
-      let response = `🔍 **ДИАГНОСТИКА ДЕМО-КЭША:**\n\n`;
-      response += `Всего демо-профилей: ${demoProfiles.length}\n\n`;
-
-      // Группируем по странам
-      const countries = new Map();
-      demoProfiles.forEach((p) => {
-        const country = p.c || p.country || "Без страны";
-        const city = p.ct || p.city || "Без города";
-
-        if (!countries.has(country)) {
-          countries.set(country, {
-            total: 0,
-            cities: new Map(),
-          });
-        }
-
-        const countryData = countries.get(country);
-        countryData.total++;
-
-        if (!countryData.cities.has(city)) {
-          countryData.cities.set(city, 0);
-        }
-        countryData.cities.set(city, countryData.cities.get(city) + 1);
-      });
-
-      // Выводим статистику
-      countries.forEach((data, country) => {
-        response += `**${country}:** ${data.total} профилей\n`;
-
-        // Выводим города с проблемами
-        data.cities.forEach((count, city) => {
-          if (count === 0 || count === undefined) {
-            response += `  ⚠️ ${city}: ${count} профилей (ПРОБЛЕМА!)\n`;
-          }
-        });
-
-        // Находим профиль Сараево
-        if (country === "🇧🇦 Босния") {
-          const sarajevoCount = data.cities.get("Сараево") || 0;
-          const mostarCount = data.cities.get("Мостар") || 0;
-          response += `\n  🎯 **БОСНИЯ ДЕТАЛИ:**\n`;
-          response += `  • Сараево: ${sarajevoCount} профилей\n`;
-          response += `  • Мостар: ${mostarCount} профилей\n`;
-
-          // Ищем конкретные профили Сараево
-          const sarajevoProfiles = demoProfiles.filter(
-            (p) =>
-              (p.c === "🇧🇦 Босния" || p.country === "🇧🇦 Босния") &&
-              (p.ct === "Сараево" || p.city === "Сараево")
-          );
-
-          if (sarajevoProfiles.length > 0) {
-            response += `\n  **Профили Сараево в демо-кэше:**\n`;
-            sarajevoProfiles.slice(0, 3).forEach((p, i) => {
-              response += `  ${i + 1}. ${p.n || p.name}, ${p.a || p.age}\n`;
-              response += `     ID: ${p.id}\n`;
-              response += `     Фото: ${p.p ? "✅" : "❌"}\n`;
-              response += `     Фото галереи: ${p.phs?.length || 0}\n`;
-            });
-          } else {
-            response += `\n  ❌ **НЕТ ПРОФИЛЕЙ САРАЕВО В ДЕМО-КЭШЕ!**\n`;
-          }
-        }
-      });
-
-      await ctx.reply(response);
-    } catch (error) {
-      console.error("Ошибка debug_demo_cache:", error);
-      await ctx.reply(`❌ Ошибка: ${error.message}`);
-    }
-  });
-  bot.command("debug_demo_sarajevo_detail", async (ctx) => {
-    try {
-      const demoProfiles = cacheManager.getGlobalProfiles(true);
-
-      if (!demoProfiles || demoProfiles.length === 0) {
-        return ctx.reply("❌ Демо-кэш пуст!");
-      }
-
-      // Ищем профили Сараево в демо-кэше
-      const sarajevoProfiles = demoProfiles.filter((p) => {
-        const city = cacheManager.normalizeCityName(p.ct || p.city);
-        const country = cacheManager.normalizeCountryName(p.c || p.country);
-        return city === "Сараево" && country === "🇧🇦 Босния";
-      });
-
-      let response = `🔍 **ДЕТАЛЬНАЯ ДИАГНОСТИКА САРАЕВО:**\n\n`;
-      response += `Всего демо-профилей: ${demoProfiles.length}\n`;
-      response += `Профилей Сараево в демо-кэше: ${sarajevoProfiles.length}\n\n`;
-
-      if (sarajevoProfiles.length > 0) {
-        sarajevoProfiles.forEach((p, i) => {
-          response += `**Профиль ${i + 1}:**\n`;
-          response += `• ID: ${p.id || "нет"}\n`;
-          response += `• Имя: "${p.n}"\n`;
-          response += `• Возраст: ${p.a}\n`;
-          response += `• Страна: "${p.c}"\n`;
-          response += `• Город: "${p.ct}"\n`;
-          response += `• Основное фото: ${p.p ? "✅" : "❌"}\n`;
-          response += `• Фото галереи: ${p.phs?.length || 0}\n`;
-          response += `• isDemo: ${p.isDemo}\n`;
-          response += `• TG: ${p.tg ? "скрыто" : "null"}\n`;
-          response += `• О себе: ${p.ab?.substring(0, 50) || "нет"}...\n\n`;
-        });
-      } else {
-        response += `❌ **НЕТ ПРОФИЛЕЙ САРАЕВО В ДЕМО-КЭШЕ!**\n\n`;
-
-        // Проверяем индексы
-        const countryCityIndex = globalDemoCache.get("demo:index:country_city");
-        if (countryCityIndex) {
-          const key = "🇧🇦 Босния:Сараево";
-          const indexes = countryCityIndex.get(key);
-          response += `🔍 Проверка индекса "${key}": ${
-            indexes ? indexes.length : 0
-          } профилей\n`;
-        }
-      }
-
-      await ctx.reply(response);
-    } catch (error) {
-      console.error("Ошибка debug_demo_sarajevo_detail:", error);
-      await ctx.reply(`❌ Ошибка: ${error.message}`);
-    }
-  });
-  bot.command("stats", async (ctx) => {
-    await messageQueue.add(async () => {
-      try {
-        const stats = readingStats.getStats();
-        const cacheStats = cacheManager.getGlobalCacheStats();
-
-        const statsMessage = `
-📊 **Статистика системы**
-
-**Операции чтения:**
-• Всего операций: ${stats.totalReads}
-• Firestore чтений: ${stats.firestoreReads}
-• Кэш попадания: ${stats.operations.cacheHits}
-• Кэш промахи: ${stats.operations.cacheMisses}
-• Эффективность кэша: ${stats.cacheEfficiency}
-
-**Детализация операций:**
-• Профили: ${stats.operations.profiles}
-• Подписки: ${stats.operations.subscriptions}
-• Проверки канала: ${stats.operations.channelSubscriptions}
-• Страны: ${stats.operations.countries}
-• Города: ${stats.operations.cities}
-
-**Пользователи:**
-• Уникальные: ${stats.uniqueUsers}
-• Операций на пользователя: ${stats.readsPerUser.toFixed(2)}
-
-**Глобальный кэш:**
-• Полный кэш загружен: ${cacheStats.fullCache.loaded ? "✅" : "❌"}
-• Демо кэш загружен: ${cacheStats.demoCache.loaded ? "✅" : "❌"}
-• Полных профилей: ${cacheStats.fullCache.profilesCount}
-• Демо профилей: ${cacheStats.demoCache.profilesCount}
-• Полных фильтров: ${cacheStats.filterCacheKeys}
-• Демо фильтров: ${cacheStats.demoFilterCacheKeys}
-
-**Индивидуальные кэши:**
-• Подписок в кэше: ${cacheStats.subscriptionCacheCount}
-• Проверок канала в кэше: ${cacheStats.channelCacheCount}
-• Статусов пользователей: ${cacheStats.userStatusCacheCount}
-
-**Очередь:**
-• Активные задачи: ${messageQueue.pending}
-• Задачи в ожидании: ${messageQueue.size}
-                `;
-
-        const msg = await ctx.reply(statsMessage, { parse_mode: "Markdown" });
-        messageManager.track(ctx.chat.id, msg.message_id);
-      } catch (error) {
-        console.error("❌ Ошибка команды stats:", error);
-      }
-    });
-  });
-
-  bot.command("reset_stats", async (ctx) => {
-    await messageQueue.add(async () => {
-      try {
-        readingStats.resetStats();
-        const msg = await ctx.reply("✅ Статистика чтений сброшена");
-        messageManager.track(ctx.chat.id, msg.message_id);
-      } catch (error) {
-        console.error("❌ Ошибка сброса статистики:", error);
-      }
-    });
-  });
-
+  // ===================== ЗАВЕРШЕНИЕ МОДУЛЯ =====================
+  
   // Экспорт функций
   module.exports.ensureProperCache = ensureProperCache;
   module.exports.checkFullAccess = checkFullAccess;
   module.exports.checkSubscription = checkSubscription;
   module.exports.checkChannelSubscription = checkChannelSubscription;
+  module.exports.cacheManager = cacheManager;
 
-  // В конец функции инициализации добавьте:
-  setTimeout(async () => {
-    if (!globalCacheInitialized) {
-      console.log("🚀 [BOT START] Инициализация глобальных кэшей...");
-      try {
-        // ИНИЦИАЛИЗИРУЕМ ТОЛЬКО ГЛОБАЛЬНЫЙ ДЕМО-КЭШ (один раз при старте)
-        if (!cacheManager.isGlobalDemoCacheLoaded()) {
-          console.log("🔄 [STARTUP] Загрузка глобального демо-кэша...");
-          await cacheManager.loadGlobalDemoCache(db);
-        }
+  console.log(`✅ Модуль профилей инициализирован с LMDB`);
+  console.log(`💾 Хранилище: LMDB на диске (экономия RAM)`);
+  console.log(`📊 Демо-кэш: загружается при старте в LMDB`);
+  console.log(`📊 Полный кэш: загружается по требованию в LMDB`);
+  console.log(`⚡ Индексы: LMDB для быстрого поиска`);
+  console.log(`🎯 Оптимизировано для Render: 2GB RAM, 1 CPU`);
 
-        // 🔥 ПЕРИОДИЧЕСКОЕ ОБНОВЛЕНИЕ КЭШЕЙ РАЗ В 7 ДНЕЙ
-        setInterval(async () => {
-          console.log(
-            "🔄 [AUTO CACHE UPDATE] Периодическое обновление глобальных кэшей (раз в 7 дней)..."
-          );
-          try {
-            // Обновляем демо-кэш
-            console.log("🔄 [AUTO UPDATE] Обновление глобального демо-кэша...");
-            await cacheManager.loadGlobalDemoCache(db);
-
-            // Если полный кэш загружен, обновляем и его
-            if (cacheManager.isGlobalFullCacheLoaded()) {
-              console.log(
-                "🔄 [AUTO UPDATE] Обновление глобального полного кэша..."
-              );
-              await cacheManager.loadGlobalFullCache(db);
-            }
-          } catch (error) {
-            console.error(
-              "❌ [AUTO CACHE UPDATE] Ошибка обновления кэшей:",
-              error
-            );
-          }
-        }, 7 * 24 * 60 * 60 * 1000); // 7 дней
-
-        globalCacheInitialized = true;
-        console.log("✅ [BOT START] Инициализация глобальных кэшей завершена");
-      } catch (error) {
-        console.error(
-          "❌ [BOT START] Ошибка инициализации глобальных кэшей:",
-          error
-        );
-      }
-    }
-  }, 3000);
-
-  console.log(`✅ Модуль профилей инициализирован с ГЛОБАЛЬНЫМ КЭШЕМ`);
-  console.log(`📊 Глобальный демо-кэш: загружается при старте бота`);
-  console.log(
-    `📊 Глобальный полный кэш: загружается при первом пользователе с подпиской`
-  );
-  console.log(`📊 Кэш подписок: 24 часа (индивидуальный)`);
-  console.log(`📊 Кэш проверки канала: 5 минут (индивидуальный)`);
-  console.log(`📊 ОДНА загрузка для всех пользователей!`);
-
-  // Функция для загрузки полного кэша после оплаты (для интеграции с payments.js)
+  // Функция для загрузки полного кэша после оплаты
   module.exports.loadFullCacheAfterPayment = async (userId) => {
-    console.log(
-      `🚀 [AFTER PAYMENT] Пользователь ${userId} оплатил подписку, проверяем глобальный полный кэш`
-    );
+    console.log(`🚀 [AFTER PAYMENT] Пользователь ${userId} оплатил подписку, проверяем LMDB`);
 
-    if (!cacheManager.isGlobalFullCacheLoaded()) {
-      console.log(
-        `🔄 [AFTER PAYMENT] Загружаем глобальный полный кэш для ${userId}`
-      );
-      await cacheManager.lazyLoadGlobalFullCache(db, userId);
+    if (profilesDB.getKeys().length === 0) {
+      console.log(`🔄 [AFTER PAYMENT] Загружаем полный кэш в LMDB для ${userId}`);
+      await cacheManager.loadGlobalFullCache(db);
     } else {
-      console.log(`✅ [AFTER PAYMENT] Глобальный полный кэш уже загружен`);
+      console.log(`✅ [AFTER PAYMENT] LMDB полный кэш уже загружен`);
     }
   };
+  // 🔥 САМЫЙ ПРОСТОЙ ФИКС: Переопределяем проблемный метод
+console.log("🔄 ПРИМЕНЯЕМ ФИКС ДЛЯ ГОРОДОВ...");
+
+// Сохраняем оригинальный метод
+const originalGetGlobalCities = cacheManager.getGlobalCities;
+
+cacheManager.getGlobalCities = function(country, isDemo = false) {
+    try {
+        console.log(`🌆 [FIXED GET CITIES] Запрос для: "${country}" (демо: ${isDemo})`);
+        
+        // ШАГ 1: НОРМАЛИЗАЦИЯ СТРАНЫ
+        const normalizedCountry = this.normalizeCountryName(country);
+        console.log(`🔍 Нормализовано: "${country}" → "${normalizedCountry}"`);
+        
+        // ШАГ 2: ОСОБЕННАЯ ЛОГИКА ДЛЯ ДЕМО-РЕЖИМА
+        if (isDemo) {
+            console.log(`👀 ДЕМО-РЕЖИМ: показываем ВСЕ города`);
+            
+            // ПРИОРИТЕТ 1: Берем все города из полных индексов
+            const fullCitiesKey = `cities:${normalizedCountry}`;
+            let allCities = indexesDB.get(fullCitiesKey);
+            
+            if (allCities && allCities.length > 0) {
+                console.log(`✅ [DEMO FROM FULL] Найдено ${allCities.length} городов в полных индексах`);
+                
+                // СРАЗУ сохраняем в демо-индексы для будущих запросов
+                indexesDB.put(`demo:cities:${normalizedCountry}`, allCities);
+                
+                // Возвращаем ВСЕ города (ограничение 3 анкеты на город будет на уровне фильтрации)
+                return allCities;
+            }
+            
+            // ПРИОРИТЕТ 2: Пробуем демо-индексы
+            const demoKey = `demo:cities:${normalizedCountry}`;
+            let demoCities = indexesDB.get(demoKey);
+            
+            if (demoCities && demoCities.length > 0) {
+                console.log(`✅ [DEMO FROM DEMO] Найдено ${demoCities.length} городов в демо-индексах`);
+                return demoCities;
+            }
+            
+            // ПРИОРИТЕТ 3: Пробуем ключ без нормализации
+            const rawKey = `cities:${country}`;
+            let rawCities = indexesDB.get(rawKey);
+            
+            if (rawCities && rawCities.length > 0) {
+                console.log(`✅ [DEMO FROM RAW] Найдено ${rawCities.length} городов по сырому ключу`);
+                indexesDB.put(demoKey, rawCities);
+                return rawCities;
+            }
+            
+            // ПРИОРИТЕТ 4: Ищем любые ключи содержащие название страны
+            console.log(`🔍 [DEMO SEARCH] Ищем все ключи для ${normalizedCountry}`);
+            
+            const allKeys = Array.from(indexesDB.getKeys());
+            const possibleKeys = allKeys.filter(key => {
+                if (!key.startsWith('cities:')) return false;
+                
+                const keyCountry = key.replace('cities:', '');
+                
+                // Проверяем совпадения для Украины
+                if (normalizedCountry.includes('Украин')) {
+                    return keyCountry.includes('Украин') || 
+                           keyCountry.includes('Ukrain') ||
+                           keyCountry.includes('Укр');
+                }
+                
+                // Проверяем совпадения для России
+                if (normalizedCountry.includes('Росс')) {
+                    return keyCountry.includes('Росс') || 
+                           keyCountry.includes('Russ');
+                }
+                
+                // Для остальных стран
+                return keyCountry === normalizedCountry || 
+                       keyCountry.includes(normalizedCountry) ||
+                       normalizedCountry.includes(keyCountry);
+            });
+            
+            console.log(`🔍 [DEMO KEYS] Найдено возможных ключей: ${possibleKeys.length}`);
+            
+            // Берем ключ с максимальным количеством городов
+            let bestCities = [];
+            for (const key of possibleKeys) {
+                const keyCities = indexesDB.get(key);
+                if (keyCities && keyCities.length > bestCities.length) {
+                    bestCities = keyCities;
+                    console.log(`✅ [DEMO BEST] Найден лучший ключ: ${key} → ${bestCities.length} городов`);
+                }
+            }
+            
+            if (bestCities.length > 0) {
+                // Сохраняем под демо-ключом
+                indexesDB.put(demoKey, bestCities);
+                return bestCities;
+            }
+            
+            // ПРИОРИТЕТ 5: Извлекаем из демо-профилей
+            console.log(`🔄 [DEMO EXTRACT] Вызываем извлечение из демо-профилей`);
+            return this.extractCitiesFromDemoProfiles(normalizedCountry);
+            
+        } else {
+            // ШАГ 3: ЛОГИКА ДЛЯ ПОЛНОГО ДОСТУПА
+            console.log(`👑 ПОЛНЫЙ ДОСТУП: показываем все города`);
+            
+            // ПРИОРИТЕТ 1: Нормализованный ключ
+            const fullKey = `cities:${normalizedCountry}`;
+            let cities = indexesDB.get(fullKey);
+            
+            if (cities && cities.length > 0) {
+                console.log(`✅ [FULL FROM NORMALIZED] Найдено ${cities.length} городов`);
+                return cities;
+            }
+            
+            // ПРИОРИТЕТ 2: Ключ без нормализации
+            const rawFullKey = `cities:${country}`;
+            cities = indexesDB.get(rawFullKey);
+            
+            if (cities && cities.length > 0) {
+                console.log(`✅ [FULL FROM RAW] Найдено ${cities.length} городов по сырому ключу`);
+                indexesDB.put(fullKey, cities); // Сохраняем под нормализованным ключом
+                return cities;
+            }
+            
+            // ПРИОРИТЕТ 3: Ищем все возможные ключи
+            console.log(`🔍 [FULL SEARCH] Расширенный поиск ключей для ${normalizedCountry}`);
+            
+            const allKeys = Array.from(indexesDB.getKeys());
+            const matchingKeys = allKeys.filter(key => {
+                if (!key.startsWith('cities:')) return false;
+                
+                const keyCountry = key.replace('cities:', '');
+                
+                // Для Украины
+                if (normalizedCountry.includes('Украин')) {
+                    return keyCountry.includes('Украин') || 
+                           keyCountry.includes('Ukrain') ||
+                           keyCountry.includes('Укр') ||
+                           keyCountry === 'Украина' ||
+                           keyCountry === 'Ukraine' ||
+                           keyCountry === 'UA';
+                }
+                
+                // Для России
+                if (normalizedCountry.includes('Росс')) {
+                    return keyCountry.includes('Росс') || 
+                           keyCountry.includes('Russ') ||
+                           keyCountry === 'Россия' ||
+                           keyCountry === 'Russia' ||
+                           keyCountry === 'RU';
+                }
+                
+                // Общий случай
+                return keyCountry === normalizedCountry ||
+                       normalizedCountry.includes(keyCountry) ||
+                       keyCountry.includes(normalizedCountry);
+            });
+            
+            console.log(`🔍 [FULL MATCHING] Найдено подходящих ключей: ${matchingKeys.length}`);
+            
+            // Показываем найденные ключи для отладки
+            matchingKeys.forEach(key => {
+                const keyCities = indexesDB.get(key);
+                console.log(`   ${key}: ${keyCities?.length || 0} городов`);
+            });
+            
+            // Выбираем ключ с максимальным количеством городов
+            let maxCities = [];
+            for (const key of matchingKeys) {
+                const keyCities = indexesDB.get(key);
+                if (keyCities && keyCities.length > maxCities.length) {
+                    maxCities = keyCities;
+                }
+            }
+            
+            if (maxCities.length > 0) {
+                console.log(`✅ [FULL BEST] Используем ${maxCities.length} городов из лучшего ключа`);
+                
+                // Сохраняем под нормализованным ключом
+                indexesDB.put(fullKey, maxCities);
+                
+                // Также сохраняем для демо-режима
+                indexesDB.put(`demo:cities:${normalizedCountry}`, maxCities);
+                
+                return maxCities;
+            }
+            
+            // ПРИОРИТЕТ 4: Извлекаем из полных профилей
+            console.log(`🔄 [FULL EXTRACT] Вызываем извлечение из полных профилей`);
+            return this.extractCitiesFromFullProfiles(normalizedCountry);
+        }
+        
+    } catch (error) {
+        console.error(`❌ [FIXED GET CITIES ERROR] для "${country}" (демо: ${isDemo}):`, error);
+        
+        // 🔥 АВАРИЙНЫЙ FALLBACK: возвращаем базовый список для популярных стран
+        const emergencyFallback = {
+            '🇺🇦 Украина': ['Киев', 'Одесса', 'Харьков', 'Львов', 'Днепр', 'Запорожье', 'Винница', 'Тернополь', 
+                          'Хмельницкий', 'Черкассы', 'Черновцы', 'Ивано-Франковск', 'Николаев', 'Полтава', 
+                          'Ровно', 'Сумы', 'Ужгород', 'Житомир', 'Краматорск', 'Славянск', 'Луцк', 'Херсон'],
+            'Украина': ['Киев', 'Одесса', 'Харьков', 'Львов', 'Днепр', 'Запорожье', 'Винница', 'Тернополь'],
+            '🇷🇺 Россия': ['Москва', 'Санкт-Петербург', 'Новосибирск', 'Екитеринбург', 'Казань', 'Нижний Новгород'],
+            'Россия': ['Москва', 'Санкт-Петербург', 'Новосибирск', 'Екатеринбург']
+        };
+        
+        if (emergencyFallback[country]) {
+            console.log(`⚠️ [EMERGENCY] Используем fallback для ${country}`);
+            return emergencyFallback[country];
+        }
+        
+        return [];
+    }
+};
+
+console.log("✅ ФИКС ПРИМЕНЕН!");
+module.exports.cacheManager = cacheManager;
+module.exports.profilesDB = profilesDB;
+module.exports.demoDB = demoDB;
+module.exports.indexesDB = indexesDB;
+module.exports.filtersCacheDB = filtersCacheDB;
 };

@@ -4,7 +4,7 @@ const admin = require("firebase-admin");
 const fs = require("fs");
 const path = require("path");
 const CryptoPayHandler = require("./cryptoPay");
-
+const { profilesDB, indexesDB } = require('./lmdb-manager');
 module.exports = (bot, db) => {
   // ================= 1. ПРЕДЗАГРУЗКА ИЗОБРАЖЕНИЯ =================
   const welcomeImage = {
@@ -225,17 +225,135 @@ const checkChannelSubscription = async (ctx) => {
   }
 };
   // ================= 6. ФУНКЦИЯ ПРОВЕРКИ ПОЛНОГО ДОСТУПА =================
-  const checkFullAccess = async (ctx) => {
-    try {
-      const subscription = await checkSubscription(ctx.from.id);
-      const hasChannelSubscription = await checkChannelSubscription(ctx);
+ // Добавьте в начале start.js
+const { profilesDB, indexesDB } = require('./lmdb-manager');
 
-      return subscription.active && hasChannelSubscription;
-    } catch (error) {
-      console.error("Ошибка проверки полного доступа:", error);
-      return false;
+// ===================== ФУНКЦИЯ ПРОВЕРКИ ПОЛНОГО ДОСТУПА =====================
+const checkFullAccess = async (ctx, forceRefresh = false) => {
+    const userId = ctx.from.id;
+
+    // Используем сессионное кэширование
+    if (!forceRefresh && ctx.session?.fullAccessCache) {
+        const accessCache = ctx.session.fullAccessCache;
+        const accessAge = Date.now() - accessCache.timestamp;
+
+        if (accessAge < 10 * 60 * 1000) {
+            console.log(`✅ [FULL ACCESS CACHE] Используем кэш для ${userId}: ${accessCache.value}`);
+            return accessCache.value;
+        }
     }
-  };
+
+    try {
+        // 🔥 КРИТИЧЕСКИЙ ФИКС: ПРОВЕРЯЕМ ОБА УСЛОВИЯ
+        const [hasSubscription, hasChannelSubscription] = await Promise.all([
+            checkSubscription(userId),
+            checkChannelSubscription(ctx),
+        ]);
+
+        const hasFullAccess = hasSubscription && hasChannelSubscription;
+
+        console.log(`📊 [FULL ACCESS] ${userId}: подписка=${hasSubscription}, канал=${hasChannelSubscription}, полный доступ=${hasFullAccess}`);
+
+        // Сохраняем в сессионный кэш
+        if (!ctx.session) ctx.session = {};
+        ctx.session.fullAccessCache = {
+            value: hasFullAccess,
+            timestamp: Date.now(),
+            subscription: hasSubscription,
+            channel: hasChannelSubscription,
+        };
+
+        // 🔥 🔥 🔥 ВАЖНОЕ ИСПРАВЛЕНИЕ: ЕСЛИ ПОЛЬЗОВАТЕЛЬ С ПОЛНЫМ ДОСТУПОМ, ЗАГРУЖАЕМ ПОЛНЫЙ КЭШ СРАЗУ
+        if (hasFullAccess) {
+            // Используем profilesDB из lmdb-manager
+            const profileKeys = Array.from(profilesDB.getKeys());
+            const profilesCount = profileKeys.length;
+            
+            console.log(`📊 [LMDB CHECK] Полных профилей в LMDB: ${profilesCount}`);
+            
+            if (profilesCount === 0) {
+                console.log(`🚀 [AUTO LOAD FULL CACHE] Пользователь ${userId} имеет полный доступ, но LMDB пуст. ЗАГРУЖАЕМ!`);
+                
+                // 🔥 СООБЩАЕМ ПОЛЬЗОВАТЕЛЮ
+                const loadingMsg = await ctx.reply(`
+🔄 <b>ЗАГРУЗКА ПОЛНОЙ БАЗЫ ДАННЫХ</b>
+
+🎉 У вас есть полный доступ!
+📊 Загружаем 70,000+ анкет в систему...
+
+⏱️ <i>Это займет 2-3 минуты</i>
+📦 <i>Загружаем пачками по 5000 анкет</i>
+💾 <i>Сохраняем на диск для быстрого доступа</i>
+
+<em>Подождите, загрузка началась...</em>
+                `, { parse_mode: "HTML" });
+
+                // 🔥 ЗАГРУЖАЕМ ПОЛНЫЙ КЭШ (нужно передать cacheManager из profiles)
+                try {
+                    const profilesModule = require('./profiles');
+                    const success = await profilesModule.cacheManager.loadGlobalFullCache(db);
+                    
+                    // Удаляем сообщение о загрузке
+                    try {
+                        await ctx.telegram.deleteMessage(ctx.chat.id, loadingMsg.message_id);
+                    } catch (e) {}
+
+                    if (success) {
+                        console.log(`✅ [AUTO LOAD SUCCESS] Полный кэш загружен для ${userId}`);
+                        await ctx.reply(`
+✅ <b>БАЗА ДАННЫХ ЗАГРУЖЕНА!</b>
+
+🎉 Теперь доступны все 70,000+ анкет!
+• 👤 Все контакты видны
+• 📞 Телефоны, Telegram, WhatsApp
+• 🌍 ${indexesDB.get('countries:all')?.length || 0} стран
+• 🌆 Тысячи городов
+• ⚡ Быстрый поиск через индексы
+
+<code>Теперь выберите страну для начала поиска</code>
+                        `, { parse_mode: "HTML" });
+                    } else {
+                        console.log(`❌ [AUTO LOAD FAILED] Не удалось загрузить полный кэш для ${userId}`);
+                        await ctx.reply(`
+⚠️ <b>ОШИБКА ЗАГРУЗКИ БАЗЫ</b>
+
+Не удалось загрузить полную базу данных.
+Попробуйте еще раз через минуту или напишите в поддержку @MagicAdd.
+
+<em>Используйте демо-режим пока исправляем проблему</em>
+                        `, { parse_mode: "HTML" });
+                    }
+                } catch (loadError) {
+                    console.error(`❌ [LMDB LOAD CRITICAL] Ошибка загрузки:`, loadError);
+                    await ctx.telegram.deleteMessage(ctx.chat.id, loadingMsg.message_id);
+                    await ctx.reply(`
+❌ <b>КРИТИЧЕСКАЯ ОШИБКА ЗАГРУЗКИ</b>
+
+${loadError.message}
+
+<em>Используйте демо-режим или напишите в поддержку @MagicAdd</em>
+                    `, { parse_mode: "HTML" });
+                }
+            } else {
+                console.log(`✅ [LMDB READY] Полный кэш уже загружен: ${profilesCount} профилей`);
+            }
+        }
+
+        return hasFullAccess;
+    } catch (error) {
+        console.error(`❌ [FULL ACCESS ERROR] Ошибка для ${userId}:`, error);
+
+        // При ошибке - демо
+        if (!ctx.session) ctx.session = {};
+        ctx.session.fullAccessCache = {
+            value: false,
+            timestamp: Date.now(),
+            error: error.message,
+        };
+
+        return false;
+    }
+};
 
   // ================= 7. ФУНКЦИЯ ПОКАЗА СООБЩЕНИЯ О ПОДПИСКЕ НА КАНАЛ =================
 //   const showChannelSubscriptionMessage = async (ctx) => {
