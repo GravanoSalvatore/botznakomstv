@@ -1481,7 +1481,9 @@ async createDemoCacheFromProfilesLMDB(profiles) {
             const hasPhoto = demoProfile.p && demoProfile.p.trim() !== "";
             const hasPhotos = demoProfile.phs && demoProfile.phs.length > 0;
 
-            
+            if (!hasPhoto && !hasPhotos) {
+                continue;
+            }
 
             // 🔥 СОХРАНЯЕМ В LMDB
             demoDB.put(demoProfile.id, demoProfile);
@@ -1547,12 +1549,7 @@ await new Promise(resolve => setTimeout(resolve, 100));
             totalCitiesSaved += citiesArray.length;
             
             // 🔥 СРАЗУ ПРОВЕРЯЕМ СОХРАНИЛОСЬ ЛИ
-            const savedCities = indexesDB.get(cityKey);
-            if (!savedCities || savedCities.length === 0) {
-                console.log(`❌ [DEMO CITIES FAILED] ${country}: города не сохранились!`);
-            } else {
-                console.log(`✅ [DEMO CITIES SAVED] ${country}: ${savedCities.length} городов`);
-            }
+            
         }
 
         console.log(`✅ [DEMO GEO FINAL] Всего сохранено: ${sortedCountries.length} стран, ${totalCitiesSaved} городов`);
@@ -1913,8 +1910,6 @@ getGlobalCountries(isDemo = false) {
         
         if (isDemo) {
             const countries = indexesDB.get('demo:countries');
-            const altCountries = indexesDB.get('demo:all_countries');
-if (altCountries && altCountries.length > 0) return altCountries;
             if (countries && countries.length > 0) {
                 console.log(`✅ [DEMO COUNTRIES] Из LMDB: ${countries.length} стран`);
                 return countries;
