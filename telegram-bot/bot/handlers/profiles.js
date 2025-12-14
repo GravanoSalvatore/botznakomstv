@@ -1481,9 +1481,7 @@ async createDemoCacheFromProfilesLMDB(profiles) {
             const hasPhoto = demoProfile.p && demoProfile.p.trim() !== "";
             const hasPhotos = demoProfile.phs && demoProfile.phs.length > 0;
 
-            if (!hasPhoto && !hasPhotos) {
-                continue;
-            }
+            
 
             // 🔥 СОХРАНЯЕМ В LMDB
             demoDB.put(demoProfile.id, demoProfile);
@@ -1520,7 +1518,8 @@ async createDemoCacheFromProfilesLMDB(profiles) {
         
         // Сохраняем новые
         indexesDB.put('demo:countries', sortedCountries);
-        
+        // 🔥 ДАЁМ ВРЕМЯ НА СОХРАНЕНИЕ (100мс)
+await new Promise(resolve => setTimeout(resolve, 100));
         // ПРОВЕРЯЕМ
         const savedCountries = indexesDB.get('demo:countries');
         if (!savedCountries || savedCountries.length === 0) {
@@ -1914,11 +1913,17 @@ getGlobalCountries(isDemo = false) {
         
         if (isDemo) {
             const countries = indexesDB.get('demo:countries');
+            const altCountries = indexesDB.get('demo:all_countries');
+if (altCountries && altCountries.length > 0) return altCountries;
             if (countries && countries.length > 0) {
                 console.log(`✅ [DEMO COUNTRIES] Из LMDB: ${countries.length} стран`);
                 return countries;
             }
-            
+            const alternativeCountries = indexesDB.get('demo:all_countries');
+            if (alternativeCountries && alternativeCountries.length > 0) {
+                console.log(`✅ [DEMO COUNTRIES ALT] Из альтернативного ключа: ${alternativeCountries.length} стран`);
+                return alternativeCountries;
+            }
             // 🔥 ЕСЛИ НЕТ В ИНДЕКСАХ - ПРОБУЕМ ИЗ ПРОФИЛЕЙ
             console.log(`🔍 [DEMO COUNTRIES MISSING] Извлекаем из профилей...`);
             return this.extractCountriesFromDemoProfiles();
