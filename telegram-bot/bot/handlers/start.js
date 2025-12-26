@@ -1696,33 +1696,65 @@ TON (The Open Network) - это быстрая и безопасная блок�
   });
 
   // ================= 22. ОБРАБОТЧИКИ ПОДПИСОК STARS =================
-  const handleSubscriptionPurchase = async (ctx, planId, amount, duration) => {
-    try {
-      await ctx.replyWithInvoice({
-        title: `Подписка на ${
-          planId === "1day"
-            ? "1 день"
-            : planId === "1month"
-            ? "1 месяц"
-            : "1 год"
-        }`,
-        description:
-          planId === "1day"
-            ? "Доступ на 24 часа"
-            : planId === "1month"
-            ? "Доступ на 30 дней"
-            : "Доступ на 365 дней",
-        payload: `${planId}_${ctx.from.id}_${Date.now()}`,
-        currency: "XTR",
-        prices: [{ label: "Подписка", amount: amount }],
-        start_parameter: `${planId}_sub`,
-      });
-    } catch (error) {
-      console.error("Ошибка создания счета:", error);
-      await ctx.reply("⚠️ Ошибка при создании платежа");
-    }
-  };
-
+  // const handleSubscriptionPurchase = async (ctx, planId, amount, duration) => {
+  //   try {
+  //     await ctx.replyWithInvoice({
+  //       title: `Подписка на ${
+  //         planId === "1day"
+  //           ? "1 день"
+  //           : planId === "1month"
+  //           ? "1 месяц"
+  //           : "1 год"
+  //       }`,
+  //       description:
+  //         planId === "1day"
+  //           ? "Доступ на 24 часа"
+  //           : planId === "1month"
+  //           ? "Доступ на 30 дней"
+  //           : "Доступ на 365 дней",
+  //       payload: `${planId}_${ctx.from.id}_${Date.now()}`,
+  //       currency: "XTR",
+  //       prices: [{ label: "Подписка", amount: amount }],
+  //       start_parameter: `${planId}_sub`,
+  //     });
+  //   } catch (error) {
+  //     console.error("Ошибка создания счета:", error);
+  //     await ctx.reply("⚠️ Ошибка при создании платежа");
+  //   }
+  // };
+const handleSubscriptionPurchase = async (ctx, planId, amount, duration) => {
+  try {
+    console.log('💰 ========== CREATING INVOICE ==========');
+    console.log('User:', ctx.from.id, ctx.from.username);
+    console.log('Plan:', planId);
+    console.log('Amount:', amount);
+    console.log('Environment:', process.env.NODE_ENV);
+    console.log('Bot token:', process.env.TELEGRAM_BOT_TOKEN?.substring(0, 10) + '...');
+    
+    await ctx.replyWithInvoice({
+      title: `Подписка на ${planId === "1day" ? "1 день" : planId === "1month" ? "1 месяц" : "1 год"}`,
+      description: planId === "1day" ? "Доступ на 24 часа" : 
+                   planId === "1month" ? "Доступ на 30 дней" : 
+                   "Доступ на 365 дней",
+      payload: `${planId}_${ctx.from.id}_${Date.now()}`,
+      currency: "XTR",
+      prices: [{ label: "Подписка", amount: amount }],
+      start_parameter: `${planId}_sub`,
+    });
+    
+    console.log('✅ Invoice created successfully');
+    console.log('💰 =====================================');
+    
+  } catch (error) {
+    console.error('❌ INVOICE CREATION ERROR:');
+    console.error('Error:', error);
+    console.error('Response:', error.response);
+    console.error('Code:', error.response?.error_code);
+    console.error('Description:', error.response?.description);
+    
+    await ctx.reply(`❌ Ошибка создания платежа: ${error.response?.description || error.message}`);
+  }
+};
   bot.action("buy_1day", (ctx) =>
     handleSubscriptionPurchase(ctx, "1day", 1, 86400000)
   );
@@ -1732,77 +1764,254 @@ TON (The Open Network) - это быстрая и безопасная блок�
   bot.action("buy_forever", (ctx) =>
     handleSubscriptionPurchase(ctx, "forever", 1999, 31536000000)
   );
+bot.on("pre_checkout_query", async (ctx) => {
+  console.log('🔍 ========== PRE CHECKOUT QUERY ==========');
+  console.log('User ID:', ctx.from.id);
+  console.log('Query ID:', ctx.preCheckoutQuery.id);
+  console.log('Currency:', ctx.preCheckoutQuery.currency);
+  console.log('Amount:', ctx.preCheckoutQuery.total_amount);
+  console.log('Payload:', ctx.preCheckoutQuery.invoice_payload);
+  console.log('✅ =====================================');
+  
+  try {
+    await ctx.answerPreCheckoutQuery(true);
+    console.log('✅ Pre-checkout approved');
+  } catch (error) {
+    console.error('❌ Pre-checkout error:', error);
+    console.error('Error response:', error.response);
+    await ctx.answerPreCheckoutQuery(false, "Payment system error");
+  }
+});
+  // bot.on("pre_checkout_query", (ctx) => ctx.answerPreCheckoutQuery(true));
+bot.on("successful_payment", async (ctx) => {
+  console.log('🚀 ========== PAYMENT SUCCESS START ==========');
+  
+  // 1. Логируем ВСЕ детали платежа
+  console.log('📅 Timestamp:', new Date().toISOString());
+  console.log('🌍 Environment:', process.env.NODE_ENV);
+  console.log('👤 User ID:', ctx.from.id);
+  console.log('👤 Username:', ctx.from.username);
+  console.log('💰 Payment object:', JSON.stringify(ctx.message.successful_payment, null, 2));
+  console.log('📦 Invoice payload:', ctx.message.successful_payment?.invoice_payload);
+  console.log('💳 Currency:', ctx.message.successful_payment?.currency);
+  console.log('💵 Total amount:', ctx.message.successful_payment?.total_amount);
+  console.log('📝 Provider charge ID:', ctx.message.successful_payment?.provider_payment_charge_id);
+  console.log('🤖 Telegram charge ID:', ctx.message.successful_payment?.telegram_payment_charge_id);
+  
+  // 2. Логируем конфигурацию бота
+  console.log('🤖 Bot token exists:', !!process.env.TELEGRAM_BOT_TOKEN);
+  console.log('🌐 Webhook URL:', process.env.WEBAPP_URL);
+  console.log('🏗 Render URL:', process.env.RENDER_EXTERNAL_URL);
+  
+  const userId = ctx.from.id;
+  const payment = ctx.message.successful_payment;
+  const [planId, _] = payment.invoice_payload.split("_");
+  
+  console.log('🎯 Plan ID from payload:', planId);
+  console.log('🔍 Parsed user ID from payload:', _);
+  
+  console.log('✅ ========== PAYMENT DATA LOGGED ==========');
 
-  bot.on("pre_checkout_query", (ctx) => ctx.answerPreCheckoutQuery(true));
+  try {
+    // 3. Очищаем чат (как у тебя было)
+    await clearChat(ctx);
 
-  bot.on("successful_payment", async (ctx) => {
-    const userId = ctx.from.id;
-    const payment = ctx.message.successful_payment;
-    const [planId, _] = payment.invoice_payload.split("_");
+    // 4. Сохраняем платеж в Firestore
+    console.log('💾 Saving payment to Firestore...');
+    const paymentRef = db.collection("payment_logs").doc(`${userId}_${Date.now()}`);
+    await paymentRef.set({
+      userId: userId,
+      telegramId: ctx.from.id,
+      username: ctx.from.username,
+      paymentData: payment,
+      planId: planId,
+      timestamp: admin.firestore.FieldValue.serverTimestamp(),
+      // environment: process.env.NODE_ENV || 'development',
+      status: 'processing'
+    });
+    console.log('💾 Payment saved to Firestore with ID:', paymentRef.id);
 
-    try {
-      await clearChat(ctx);
+    // 5. Активация подписки (твой существующий код)
+    const subRef = db.collection("subscriptions").doc(userId.toString());
+    
+    console.log('🔄 Activating subscription for plan:', planId);
+    
+    const subData = {
+      userId,
+      plan: planId,
+      subscriptionType: planId,
+      startDate: admin.firestore.FieldValue.serverTimestamp(),
+      status: 'active',
+      isActive: true,
+      lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
+      paymentMethod: "stars",
+      paymentLogId: paymentRef.id,
+      paymentAmount: payment.total_amount,
+      paymentCurrency: payment.currency
+    };
 
-      const subRef = db.collection("subscriptions").doc(userId.toString());
-      const subData = {
-        userId,
-        plan: planId,
-        subscriptionType: planId,
-        startDate: admin.firestore.FieldValue.serverTimestamp(),
-        status: "active",
-        isActive: true,
-        lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
-        paymentMethod: "stars",
-      };
-
-      if (planId === "1day") {
-        subData.endDate = admin.firestore.Timestamp.fromDate(
-          new Date(Date.now() + 86400000)
-        );
-      } else if (planId === "1month") {
-        subData.endDate = admin.firestore.Timestamp.fromDate(
-          new Date(Date.now() + 2592000000)
-        );
-      } else if (planId === "forever") {
-        subData.endDate = admin.firestore.Timestamp.fromDate(
-          new Date(Date.now() + 31536000000)
-        );
-      }
-
-      await subRef.set(subData, { merge: true });
-
-      // ЗАГРУЖАЕМ ПОЛНЫЙ КЭШ ПОСЛЕ УСПЕШНОЙ ОПЛАТЫ
-      const profilesModule = require("./profiles");
-      if (profilesModule && profilesModule.loadFullCacheAfterPayment) {
-        await profilesModule.loadFullCacheAfterPayment(userId);
-      }
-
-      const subscription = await checkSubscription(userId);
-      const keyboard = {
-        inline_keyboard: [
-          [
-            {
-              text: "🌍 Все страны",
-              callback_data: "all_countries_with_check",
-            },
-          ],
-          [{ text: "🧹 Очистить экран", callback_data: "clear_screen" }],
-        ],
-      };
-
-      await ctx.reply(
-        `✅ <b>Подписка успешно активирована!</b>\n\n${subscription.message}\n\n` +
-          `<b>📢 Не забудьте подписаться на наш канал <a href="https://t.me/+H6Eovikei9xiZWU0"><b>MagicClubPrivate</b></a> для полного доступа к анкетам!</b>`,
-        {
-          parse_mode: "HTML",
-          reply_markup: keyboard,
-        }
-      );
-    } catch (error) {
-      console.error("Ошибка обработки платежа:", error);
-      await ctx.reply("⚠️ Ошибка активации подписки");
+    // Устанавливаем дату окончания
+    if (planId === "1day") {
+      subData.endDate = admin.firestore.Timestamp.fromDate(new Date(Date.now() + 86400000));
+      console.log('📅 End date set: 1 day');
+    } else if (planId === "1month") {
+      subData.endDate = admin.firestore.Timestamp.fromDate(new Date(Date.now() + 2592000000));
+      console.log('📅 End date set: 1 month');
+    } else if (planId === "forever") {
+      subData.endDate = admin.firestore.Timestamp.fromDate(new Date(Date.now() + 31536000000));
+      console.log('📅 End date set: 1 year (forever)');
     }
-  });
+
+    await subRef.set(subData, { merge: true });
+    console.log('✅ Subscription activated in Firestore');
+
+    // 6. Загружаем полный кэш
+    console.log('🚀 Loading full cache after payment...');
+    const profilesModule = require("./profiles");
+    if (profilesModule && profilesModule.loadFullCacheAfterPayment) {
+      await profilesModule.loadFullCacheAfterPayment(userId);
+    }
+    console.log('✅ Full cache loaded');
+
+    // 7. Проверяем подписку
+    console.log('🔍 Checking subscription status...');
+    const subscription = await checkSubscription(userId);
+    console.log('📊 Subscription check result:', subscription);
+
+    // 8. Отправляем сообщение пользователю
+    const keyboard = {
+      inline_keyboard: [
+        [
+          {
+            text: "🌍 Все страны",
+            callback_data: "all_countries_with_check",
+          },
+        ],
+        [{ text: "🧹 Очистить экран", callback_data: "clear_screen" }],
+      ],
+    };
+
+    const messageText = 
+      `🎉 <b>ПЛАТЕЖ УСПЕШНО ОБРАБОТАН!</b>\n\n` +
+      `✅ Подписка активирована: <b>${planId === "1day" ? "1 день" : planId === "1month" ? "1 месяц" : "1 год"}</b>\n` +
+      `💰 Сумма: ${payment.total_amount} ${payment.currency}\n` +
+      `🆔 ID платежа: <code>${paymentRef.id}</code>\n\n` +
+      `${subscription.message || "Подписка активна!"}\n\n` +
+      `<b>📢 Не забудьте подписаться на наш канал <a href="https://t.me/+H6Eovikei9xiZWU0">MagicClubPrivate</a> для полного доступа!</b>`;
+
+    await ctx.reply(messageText, {
+      parse_mode: "HTML",
+      reply_markup: keyboard,
+    });
+    
+    console.log('📨 Success message sent to user');
+    
+    // 9. Обновляем статус платежа
+    await paymentRef.update({
+      status: 'completed',
+      subscriptionId: subRef.id,
+      completedAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+    
+    console.log('🚀 ========== PAYMENT SUCCESS END ==========');
+
+  } catch (error) {
+    console.error('❌ ========== PAYMENT PROCESSING ERROR ==========');
+    console.error('Error:', error);
+    console.error('Error stack:', error.stack);
+    console.error('Error message:', error.message);
+    console.error('❌ ============================================');
+    
+    // Сохраняем ошибку
+    if (paymentRef) {
+      await paymentRef.update({
+        status: 'failed',
+        error: error.message,
+        errorStack: error.stack,
+        failedAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+    }
+    
+    // Сообщаем пользователю
+    await ctx.reply(
+      `⚠️ <b>ПЛАТЕЖ ПРИНЯТ, НО ВОЗНИКЛА ОШИБКА</b>\n\n` +
+      `✅ Средства списаны\n` +
+      `❌ Ошибка активации подписки\n\n` +
+      `🆔 ID платежа: <code>${paymentRef?.id || 'неизвестно'}</code>\n` +
+      `📞 Свяжитесь с поддержкой: @MagicAdd\n\n` +
+      `<i>Сообщите этот ID для быстрого решения проблемы</i>`,
+      { parse_mode: "HTML" }
+    );
+  }
+});
+  // bot.on("successful_payment", async (ctx) => {
+  //   const userId = ctx.from.id;
+  //   const payment = ctx.message.successful_payment;
+  //   const [planId, _] = payment.invoice_payload.split("_");
+
+  //   try {
+  //     await clearChat(ctx);
+
+  //     const subRef = db.collection("subscriptions").doc(userId.toString());
+  //     const subData = {
+  //       userId,
+  //       plan: planId,
+  //       subscriptionType: planId,
+  //       startDate: admin.firestore.FieldValue.serverTimestamp(),
+  //       status: "active",
+  //       isActive: true,
+  //       lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
+  //       paymentMethod: "stars",
+  //     };
+
+  //     if (planId === "1day") {
+  //       subData.endDate = admin.firestore.Timestamp.fromDate(
+  //         new Date(Date.now() + 86400000)
+  //       );
+  //     } else if (planId === "1month") {
+  //       subData.endDate = admin.firestore.Timestamp.fromDate(
+  //         new Date(Date.now() + 2592000000)
+  //       );
+  //     } else if (planId === "forever") {
+  //       subData.endDate = admin.firestore.Timestamp.fromDate(
+  //         new Date(Date.now() + 31536000000)
+  //       );
+  //     }
+
+  //     await subRef.set(subData, { merge: true });
+
+  //     // ЗАГРУЖАЕМ ПОЛНЫЙ КЭШ ПОСЛЕ УСПЕШНОЙ ОПЛАТЫ
+  //     const profilesModule = require("./profiles");
+  //     if (profilesModule && profilesModule.loadFullCacheAfterPayment) {
+  //       await profilesModule.loadFullCacheAfterPayment(userId);
+  //     }
+
+  //     const subscription = await checkSubscription(userId);
+  //     const keyboard = {
+  //       inline_keyboard: [
+  //         [
+  //           {
+  //             text: "🌍 Все страны",
+  //             callback_data: "all_countries_with_check",
+  //           },
+  //         ],
+  //         [{ text: "🧹 Очистить экран", callback_data: "clear_screen" }],
+  //       ],
+  //     };
+
+  //     await ctx.reply(
+  //       `✅ <b>Подписка успешно активирована!</b>\n\n${subscription.message}\n\n` +
+  //         `<b>📢 Не забудьте подписаться на наш канал <a href="https://t.me/+H6Eovikei9xiZWU0"><b>MagicClubPrivate</b></a> для полного доступа к анкетам!</b>`,
+  //       {
+  //         parse_mode: "HTML",
+  //         reply_markup: keyboard,
+  //       }
+  //     );
+  //   } catch (error) {
+  //     console.error("Ошибка обработки платежа:", error);
+  //     await ctx.reply("⚠️ Ошибка активации подписки");
+  //   }
+  // });
 
   // ================= 23. НАЗАД В ГЛАВНОЕ МЕНЮ =================
   bot.action("back_to_main", async (ctx) => {
