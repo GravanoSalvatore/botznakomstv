@@ -1791,12 +1791,12 @@ const handleSubscriptionPurchase = async (ctx, planId, amount, duration) => {
       // 🔥 ДОПОЛНИТЕЛЬНАЯ ИНФОРМАЦИЯ ДЛЯ ПОЛЬЗОВАТЕЛЯ
       await ctx.reply(
         `ℹ️ <b>ИНФОРМАЦИЯ О ПЛАТЕЖЕ</b>\n\n` +
-        `Сервер: <code>Render (polling mode)</code>\n` +
+        // `Сервер: <code>Render (polling mode)</code>\n` +
         `Если возникла ошибка:\n` +
         `1. Нажмите "Попробовать снова"\n` +
         `2. Подождите 30 секунд\n` +
         `3. Используйте USDT/TON\n\n` +
-        `<i>Проблемы с Render иногда возникают на бесплатном тарифе</i>`,
+        // `<i>Проблемы с Render иногда возникают на бесплатном тарифе</i>`,
         {
           parse_mode: 'HTML',
           reply_markup: {
@@ -1846,7 +1846,7 @@ const handleSubscriptionPurchase = async (ctx, planId, amount, duration) => {
         `❌ <b>ОШИБКА СОЗДАНИЯ ПЛАТЕЖА</b>\n\n` +
         `<b>Причина:</b> ${errorMessage}\n\n` +
         `<b>Решение:</b>\n` +
-        `1. Проверьте что Stars активированы в @BotFather\n` +
+        // `1. Проверьте что Stars активированы в @BotFather\n` +
         `2. Используйте USDT или TON\n` +
         `3. Свяжитесь с поддержкой: @MagicAdd\n\n` +
         `<i>Код ошибки: ${invoiceError.response?.error_code || 'неизвестно'}</i>`,
@@ -1883,7 +1883,7 @@ const handleSubscriptionPurchase = async (ctx, planId, amount, duration) => {
   }
 };
   bot.action("buy_1day", (ctx) =>
-    handleSubscriptionPurchase(ctx, "1day", 1, 86400000)
+    handleSubscriptionPurchase(ctx, "1day", 99, 86400000)
   );
   bot.action("buy_1month", (ctx) =>
     handleSubscriptionPurchase(ctx, "1month", 499, 2592000000)
