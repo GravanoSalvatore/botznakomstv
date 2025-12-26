@@ -225,6 +225,13 @@ const SCALING_CONFIG = {
     PARALLEL_CHUNKS: 8, // ← НОВЫЙ ПАРАМЕТР для параллельной обработки
     PARALLEL_BATCH_SIZE: 10000, // ← НОВЫЙ ПАРАМЕТР
   },
+  PAGINATION: {
+    MAX_SAFE_PAGE: 20000,          // Максимальная безопасная страница
+    PROFILES_PER_PAGE_NORMAL: 1,  // Обычное количество
+    PROFILES_PER_PAGE_HIGH: 1,    // Для высоких страниц (оставляем 1)
+    DELAY_BETWEEN_PROFILES: 500,  // Пауза между анкетами
+    USER_LOCK_TIMEOUT: 10000,     // Таймаут блокировки пользователя
+  },
 };
 
 // ===================== ВСПОМОГАТЕЛЬНЫЕ КОНСТАНТЫ =====================
@@ -268,9 +275,9 @@ const POPULAR_COUNTRIES = [
 ];
 
 const PAGINATION_JUMP_SECTIONS = [
-  { label: "1-1000", start: 0, end: 999 },
-  { label: "1000-2000", start: 1000, end: 1999 },
-  { label: "2000-3000", start: 2000, end: 2999 },
+  // { label: "1-1000", start: 0, end: 999 },
+  // { label: "1000-2000", start: 1000, end: 1999 },
+  // { label: "2000-3000", start: 2000, end: 2999 },
 ];
 
 // Карта нормализации украинских городов
@@ -3546,196 +3553,397 @@ const getUniqueCountries = async (isDemo = false) => {
   };
 
   // ===================== ОПТИМИЗИРОВАННАЯ ПАГИНАЦИЯ С LMDB =====================
-  const createEnhancedPaginationKeyboard = (currentPage, totalPages, filterKey, currentFilters = {}, isDemo = false) => {
-    // 🔥 ВАЖНОЕ ИСПРАВЛЕНИЕ: Если totalPages = 0 или undefined, ставим 1
-    if (!totalPages || totalPages < 1 || isNaN(totalPages)) {
-      totalPages = 1;
-      console.log(`⚠️ [PAGINATION FIX] Исправляем totalPages на 1 (было: ${totalPages})`);
+  // const createEnhancedPaginationKeyboard = (currentPage, totalPages, filterKey, currentFilters = {}, isDemo = false) => {
+  //   // 🔥 ВАЖНОЕ ИСПРАВЛЕНИЕ: Если totalPages = 0 или undefined, ставим 1
+  //   if (!totalPages || totalPages < 1 || isNaN(totalPages)) {
+  //     totalPages = 1;
+  //     console.log(`⚠️ [PAGINATION FIX] Исправляем totalPages на 1 (было: ${totalPages})`);
+  //   }
+
+  //   // 🔥 ВАЖНОЕ ИСПРАВЛЕНИЕ: currentPage не может быть больше totalPages
+  //   if (currentPage >= totalPages) {
+  //     currentPage = Math.max(0, totalPages - 1);
+  //     console.log(`⚠️ [PAGINATION FIX] Исправляем currentPage на ${currentPage} (было больше totalPages)`);
+  //   }
+
+  //   console.log(`🔢 [PAGINATION] Создание клавиатуры: страница ${currentPage + 1}/${totalPages}, всего страниц: ${totalPages}, демо: ${isDemo}, filterKey: ${filterKey}`);
+
+  //   const keyboard = [];
+
+  //   // 🔥 ВАЖНО: Показываем фильтры только если они есть
+  //   if (currentFilters.country || currentFilters.city || currentFilters.ageRange) {
+  //     let filtersText = "";
+  //     const filters = [];
+  //     if (currentFilters.country) filters.push(currentFilters.country);
+  //     if (currentFilters.city) filters.push(currentFilters.city);
+  //     if (currentFilters.ageRange) filters.push(currentFilters.ageRange.label);
+  //     filtersText = filters.join(", ");
+
+  //     if (filtersText.length > 0) {
+  //       keyboard.push([{
+  //         text: `🎯 Фильтры: ${filtersText.substring(0, 30)}${filtersText.length > 30 ? '...' : ''}`,
+  //         callback_data: "filters_info"
+  //       }]);
+  //     }
+  //   }
+
+  //   // 🔥 ОСНОВНАЯ ПАГИНАЦИЯ
+  //   const navRow = [];
+
+  //   // Кнопка "В начало" (⏪)
+  //   if (currentPage > 0) {
+  //     navRow.push({
+  //       text: "⏪",
+  //       callback_data: `page_first_${currentPage}`,
+  //       hide: false
+  //     });
+  //   }
+
+  //   // Кнопка "Назад" (◀️)
+  //   if (currentPage > 0) {
+  //     navRow.push({
+  //       text: "◀️",
+  //       callback_data: `page_prev_${currentPage}`,
+  //       hide: false
+  //     });
+  //   }
+
+  //   // Текущая страница
+  //   navRow.push({
+  //     text: `${currentPage + 1}/${totalPages}`,
+  //     callback_data: "page_info",
+  //     hide: false
+  //   });
+
+  //   // Кнопка "Вперед" (▶️)
+  //   if (currentPage < totalPages - 1) {
+  //     navRow.push({
+  //       text: "▶️",
+  //       callback_data: `page_next_${currentPage}`,
+  //       hide: false
+  //     });
+  //   }
+
+  //   // Кнопка "В конец" (⏩)
+  //   if (currentPage < totalPages - 1) {
+  //     navRow.push({
+  //       text: "⏩",
+  //       callback_data: `page_last_${currentPage}`,
+  //       hide: false
+  //     });
+  //   }
+
+  //   // 🔥 ВАЖНОЕ ИСПРАВЛЕНИЕ: Добавляем строку навигации только если есть кнопки
+  //   if (navRow.length > 1) { // Больше 1, потому что всегда есть кнопка с номером страницы
+  //     keyboard.push(navRow);
+  //   }
+
+  //   // 🔥 БЫСТРЫЕ ПЕРЕХОДЫ ДЛЯ БОЛЬШИХ СПИСКОВ
+  //   if (totalPages > 10) {
+  //     const jumpRow = [];
+  //     const totalProfiles = totalPages * SCALING_CONFIG.PERFORMANCE.PROFILES_PER_PAGE;
+
+  //     PAGINATION_JUMP_SECTIONS.forEach(section => {
+  //       if (section.start < totalProfiles) {
+  //         const sectionPage = Math.floor(section.start / SCALING_CONFIG.PERFORMANCE.PROFILES_PER_PAGE);
+  //         if (sectionPage < totalPages && sectionPage !== currentPage) {
+  //           jumpRow.push({
+  //             text: section.label,
+  //             callback_data: `page_${sectionPage}_${currentPage}`,
+  //             hide: false
+  //           });
+  //         }
+  //       }
+  //     });
+
+  //     if (jumpRow.length > 0) {
+  //       keyboard.push(jumpRow);
+  //     }
+  //   }
+
+  //   // 🔥 БЫСТРЫЕ КНОПКИ СТРАНИЦ (показываем максимум 5)
+  //   if (totalPages > 1) {
+  //     const quickPagesRow = [];
+  //     const pagesToShow = Math.min(5, totalPages);
+  //     let startPage = Math.max(0, currentPage - Math.floor(pagesToShow / 2));
+
+  //     // Если выходим за границы - корректируем
+  //     if (startPage + pagesToShow > totalPages) {
+  //       startPage = Math.max(0, totalPages - pagesToShow);
+  //     }
+
+  //     for (let i = 0; i < pagesToShow; i++) {
+  //       const pageNum = startPage + i;
+  //       if (pageNum >= 0 && pageNum < totalPages) {
+  //         const isCurrent = pageNum === currentPage;
+  //         quickPagesRow.push({
+  //           text: isCurrent ? `• ${pageNum + 1} •` : `${pageNum + 1}`,
+  //           callback_data: `page_${pageNum}_${currentPage}`,
+  //           hide: false
+  //         });
+  //       }
+  //     }
+
+  //     // 🔥 ВАЖНО: Добавляем многоточие если много страниц
+  //     if (totalPages > pagesToShow && startPage + pagesToShow < totalPages) {
+  //       if (currentPage >= startPage + pagesToShow) {
+  //         quickPagesRow.push({
+  //           text: "...",
+  //           callback_data: "page_info",
+  //           hide: false
+  //         });
+  //         quickPagesRow.push({
+  //           text: `• ${currentPage + 1} •`,
+  //           callback_data: `page_${currentPage}_${currentPage}`,
+  //           hide: false
+  //         });
+  //       }
+  //     }
+
+  //     if (quickPagesRow.length > 0) {
+  //       keyboard.push(quickPagesRow);
+  //     }
+  //   }
+
+  //   // 🔥 ОСНОВНЫЕ КНОПКИ
+  //   keyboard.push([{
+  //     text: "📝 СОЗДАТЬ АНКЕТУ",
+  //     web_app: { url: "https://bot-vai-web-app.web.app/?tab=catalog" },
+  //     hide: false
+  //   }]);
+
+  //   // 🔥 ДЛЯ ДЕМО-РЕЖИМА - кнопка получения полного доступа
+  //   if (isDemo) {
+  //     keyboard.push([{
+  //       text: "💎 ПОЛУЧИТЬ ПОЛНЫЙ ДОСТУП",
+  //       callback_data: "get_full_access",
+  //       hide: false
+  //     }]);
+  //   }
+
+  //   // 🔥 ВАЖНО: Добавляем информационную строку о режиме
+  //   if (isDemo) {
+  //     keyboard.push([{
+  //       text: `👀 ДЕМО: 3 анкеты на город`,
+  //       callback_data: "demo_info",
+  //       hide: false
+  //     }]);
+  //   }
+
+  //   console.log(`✅ [PAGINATION] Клавиатура создана: ${keyboard.length} строк, ${totalPages} страниц, демо: ${isDemo}`);
+
+  //   // 🔥 ОТЛАДКА: Показываем структуру клавиатуры
+  //   if (keyboard.length > 0) {
+  //     console.log(`📋 [PAGINATION STRUCTURE] Строки клавиатуры:`);
+  //     keyboard.forEach((row, i) => {
+  //       console.log(`   Строка ${i + 1}: ${row.map(btn => `"${btn.text}"`).join(' | ')}`);
+  //     });
+  //   }
+
+  //   return keyboard;
+  // };
+const createEnhancedPaginationKeyboard = (currentPage, totalPages, filterKey, currentFilters = {}, isDemo = false) => {
+  // 🔥 ВАЖНОЕ ИСПРАВЛЕНИЕ: Если totalPages = 0 или undefined, ставим 1
+  if (!totalPages || totalPages < 1 || isNaN(totalPages)) {
+    totalPages = 1;
+    console.log(`⚠️ [PAGINATION FIX] Исправляем totalPages на 1 (было: ${totalPages})`);
+  }
+
+  // 🔥 ВАЖНОЕ ИСПРАВЛЕНИЕ: currentPage не может быть больше totalPages
+  if (currentPage >= totalPages) {
+    currentPage = Math.max(0, totalPages - 1);
+    console.log(`⚠️ [PAGINATION FIX] Исправляем currentPage на ${currentPage} (было больше totalPages)`);
+  }
+
+  console.log(`🔢 [PAGINATION] Создание клавиатуры: страница ${currentPage + 1}/${totalPages}, всего страниц: ${totalPages}, демо: ${isDemo}, filterKey: ${filterKey}`);
+
+  const keyboard = [];
+
+  // 🔥 ВАЖНО: Показываем фильтры только если они есть
+  if (currentFilters.country || currentFilters.city || currentFilters.ageRange) {
+    let filtersText = "";
+    const filters = [];
+    if (currentFilters.country) filters.push(currentFilters.country);
+    if (currentFilters.city) filters.push(currentFilters.city);
+    if (currentFilters.ageRange) filters.push(currentFilters.ageRange.label);
+    filtersText = filters.join(", ");
+
+    if (filtersText.length > 0) {
+      keyboard.push([{
+        text: `🎯 Фильтры: ${filtersText.substring(0, 30)}${filtersText.length > 30 ? '...' : ''}`,
+        callback_data: "filters_info"
+      }]);
     }
+  }
 
-    // 🔥 ВАЖНОЕ ИСПРАВЛЕНИЕ: currentPage не может быть больше totalPages
-    if (currentPage >= totalPages) {
-      currentPage = Math.max(0, totalPages - 1);
-      console.log(`⚠️ [PAGINATION FIX] Исправляем currentPage на ${currentPage} (было больше totalPages)`);
-    }
+  // 🔥 ОСНОВНАЯ ПАГИНАЦИЯ (УПРОЩЕННАЯ)
+  const navRow = [];
 
-    console.log(`🔢 [PAGINATION] Создание клавиатуры: страница ${currentPage + 1}/${totalPages}, всего страниц: ${totalPages}, демо: ${isDemo}, filterKey: ${filterKey}`);
-
-    const keyboard = [];
-
-    // 🔥 ВАЖНО: Показываем фильтры только если они есть
-    if (currentFilters.country || currentFilters.city || currentFilters.ageRange) {
-      let filtersText = "";
-      const filters = [];
-      if (currentFilters.country) filters.push(currentFilters.country);
-      if (currentFilters.city) filters.push(currentFilters.city);
-      if (currentFilters.ageRange) filters.push(currentFilters.ageRange.label);
-      filtersText = filters.join(", ");
-
-      if (filtersText.length > 0) {
-        keyboard.push([{
-          text: `🎯 Фильтры: ${filtersText.substring(0, 30)}${filtersText.length > 30 ? '...' : ''}`,
-          callback_data: "filters_info"
-        }]);
-      }
-    }
-
-    // 🔥 ОСНОВНАЯ ПАГИНАЦИЯ
-    const navRow = [];
-
-    // Кнопка "В начало" (⏪)
-    if (currentPage > 0) {
-      navRow.push({
-        text: "⏪",
-        callback_data: `page_first_${currentPage}`,
-        hide: false
-      });
-    }
-
-    // Кнопка "Назад" (◀️)
-    if (currentPage > 0) {
-      navRow.push({
-        text: "◀️",
-        callback_data: `page_prev_${currentPage}`,
-        hide: false
-      });
-    }
-
-    // Текущая страница
+  // Кнопка "В начало" (⏪) - ВСЕГДА ПОКАЗЫВАЕМ
+  if (currentPage > 0) {
     navRow.push({
-      text: `${currentPage + 1}/${totalPages}`,
-      callback_data: "page_info",
+      text: "⏪",
+      callback_data: `page_first_${currentPage}`,
       hide: false
     });
+  } else {
+    // Даже если на первой странице, показываем неактивную кнопку
+    navRow.push({
+      text: "⏪",
+      callback_data: "no_action",
+      hide: false
+    });
+  }
 
-    // Кнопка "Вперед" (▶️)
-    if (currentPage < totalPages - 1) {
-      navRow.push({
-        text: "▶️",
-        callback_data: `page_next_${currentPage}`,
-        hide: false
-      });
-    }
+  // Кнопка "Назад" (◀️)
+  if (currentPage > 0) {
+    navRow.push({
+      text: "◀️",
+      callback_data: `page_prev_${currentPage}`,
+      hide: false
+    });
+  } else {
+    navRow.push({
+      text: "◀️",
+      callback_data: "no_action",
+      hide: false
+    });
+  }
 
-    // Кнопка "В конец" (⏩)
-    if (currentPage < totalPages - 1) {
-      navRow.push({
-        text: "⏩",
-        callback_data: `page_last_${currentPage}`,
-        hide: false
-      });
-    }
+  // Текущая страница
+  navRow.push({
+    text: `${currentPage + 1}/${totalPages}`,
+    callback_data: "page_info",
+    hide: false
+  });
 
-    // 🔥 ВАЖНОЕ ИСПРАВЛЕНИЕ: Добавляем строку навигации только если есть кнопки
-    if (navRow.length > 1) { // Больше 1, потому что всегда есть кнопка с номером страницы
-      keyboard.push(navRow);
-    }
+  // Кнопка "Вперед" (▶️)
+  if (currentPage < totalPages - 1) {
+    navRow.push({
+      text: "▶️",
+      callback_data: `page_next_${currentPage}`,
+      hide: false
+    });
+  } else {
+    navRow.push({
+      text: "▶️",
+      callback_data: "no_action",
+      hide: false
+    });
+  }
 
-    // 🔥 БЫСТРЫЕ ПЕРЕХОДЫ ДЛЯ БОЛЬШИХ СПИСКОВ
-    if (totalPages > 10) {
-      const jumpRow = [];
-      const totalProfiles = totalPages * SCALING_CONFIG.PERFORMANCE.PROFILES_PER_PAGE;
+  // Кнопка "В конец" (⏩) - ВСЕГДА ПОКАЗЫВАЕМ
+  if (currentPage < totalPages - 1) {
+    navRow.push({
+      text: "⏩",
+      callback_data: `page_last_${currentPage}`,
+      hide: false
+    });
+  } else {
+    navRow.push({
+      text: "⏩",
+      callback_data: "no_action",
+      hide: false
+    });
+  }
 
-      PAGINATION_JUMP_SECTIONS.forEach(section => {
-        if (section.start < totalProfiles) {
-          const sectionPage = Math.floor(section.start / SCALING_CONFIG.PERFORMANCE.PROFILES_PER_PAGE);
-          if (sectionPage < totalPages && sectionPage !== currentPage) {
-            jumpRow.push({
-              text: section.label,
-              callback_data: `page_${sectionPage}_${currentPage}`,
-              hide: false
-            });
-          }
-        }
-      });
+  // 🔥 ВАЖНОЕ ИСПРАВЛЕНИЕ: Добавляем строку навигации только если есть кнопки
+  keyboard.push(navRow);
 
-      if (jumpRow.length > 0) {
-        keyboard.push(jumpRow);
-      }
-    }
+  // 🔥 🔥 🔥 УБИРАЕМ ВСЕ БЫСТРЫЕ ПЕРЕХОДЫ НА 1000+ СТРАНИЦ!
+  // УДАЛЯЕМ ЭТОТ БЛОК ПОЛНОСТЬЮ:
+  /*
+  // 🔥 БЫСТРЫЕ ПЕРЕХОДЫ ДЛЯ БОЛЬШИХ СПИСКОВ
+  if (totalPages > 10) {
+    const jumpRow = [];
+    const totalProfiles = totalPages * SCALING_CONFIG.PERFORMANCE.PROFILES_PER_PAGE;
 
-    // 🔥 БЫСТРЫЕ КНОПКИ СТРАНИЦ (показываем максимум 5)
-    if (totalPages > 1) {
-      const quickPagesRow = [];
-      const pagesToShow = Math.min(5, totalPages);
-      let startPage = Math.max(0, currentPage - Math.floor(pagesToShow / 2));
-
-      // Если выходим за границы - корректируем
-      if (startPage + pagesToShow > totalPages) {
-        startPage = Math.max(0, totalPages - pagesToShow);
-      }
-
-      for (let i = 0; i < pagesToShow; i++) {
-        const pageNum = startPage + i;
-        if (pageNum >= 0 && pageNum < totalPages) {
-          const isCurrent = pageNum === currentPage;
-          quickPagesRow.push({
-            text: isCurrent ? `• ${pageNum + 1} •` : `${pageNum + 1}`,
-            callback_data: `page_${pageNum}_${currentPage}`,
+    PAGINATION_JUMP_SECTIONS.forEach(section => {
+      if (section.start < totalProfiles) {
+        const sectionPage = Math.floor(section.start / SCALING_CONFIG.PERFORMANCE.PROFILES_PER_PAGE);
+        if (sectionPage < totalPages && sectionPage !== currentPage) {
+          jumpRow.push({
+            text: section.label,
+            callback_data: `page_${sectionPage}_${currentPage}`,
             hide: false
           });
         }
       }
+    });
 
-      // 🔥 ВАЖНО: Добавляем многоточие если много страниц
-      if (totalPages > pagesToShow && startPage + pagesToShow < totalPages) {
-        if (currentPage >= startPage + pagesToShow) {
-          quickPagesRow.push({
-            text: "...",
-            callback_data: "page_info",
-            hide: false
-          });
-          quickPagesRow.push({
-            text: `• ${currentPage + 1} •`,
-            callback_data: `page_${currentPage}_${currentPage}`,
-            hide: false
-          });
-        }
-      }
+    if (jumpRow.length > 0) {
+      keyboard.push(jumpRow);
+    }
+  }
+  */
 
-      if (quickPagesRow.length > 0) {
-        keyboard.push(quickPagesRow);
+  // 🔥 БЫСТРЫЕ КНОПКИ СТРАНИЦ (показываем максимум 5) - ОСТАВЛЯЕМ
+  if (totalPages > 1) {
+    const quickPagesRow = [];
+    const pagesToShow = Math.min(5, totalPages);
+    let startPage = Math.max(0, currentPage - Math.floor(pagesToShow / 2));
+
+    // Если выходим за границы - корректируем
+    if (startPage + pagesToShow > totalPages) {
+      startPage = Math.max(0, totalPages - pagesToShow);
+    }
+
+    for (let i = 0; i < pagesToShow; i++) {
+      const pageNum = startPage + i;
+      if (pageNum >= 0 && pageNum < totalPages) {
+        const isCurrent = pageNum === currentPage;
+        quickPagesRow.push({
+          text: isCurrent ? `• ${pageNum + 1} •` : `${pageNum + 1}`,
+          callback_data: `page_${pageNum}_${currentPage}`,
+          hide: false
+        });
       }
     }
 
-    // 🔥 ОСНОВНЫЕ КНОПКИ
+    // 🔥 ВАЖНО: Убираем многоточие и логику больших прыжков
+    // ПРОСТО ДОБАВЛЯЕМ СТРОЧКУ С 5 КНОПКАМИ
+    if (quickPagesRow.length > 0) {
+      keyboard.push(quickPagesRow);
+    }
+  }
+
+  // 🔥 ОСНОВНЫЕ КНОПКИ
+  keyboard.push([{
+    text: "📝 СОЗДАТЬ АНКЕТУ",
+    web_app: { url: "https://bot-vai-web-app.web.app/?tab=catalog" },
+    hide: false
+  }]);
+
+  // 🔥 ДЛЯ ДЕМО-РЕЖИМА - кнопка получения полного доступа
+  if (isDemo) {
     keyboard.push([{
-      text: "📝 СОЗДАТЬ АНКЕТУ",
-      web_app: { url: "https://bot-vai-web-app.web.app/?tab=catalog" },
+      text: "💎 ПОЛУЧИТЬ ПОЛНЫЙ ДОСТУП",
+      callback_data: "get_full_access",
       hide: false
     }]);
+  }
 
-    // 🔥 ДЛЯ ДЕМО-РЕЖИМА - кнопка получения полного доступа
-    if (isDemo) {
-      keyboard.push([{
-        text: "💎 ПОЛУЧИТЬ ПОЛНЫЙ ДОСТУП",
-        callback_data: "get_full_access",
-        hide: false
-      }]);
-    }
+  // 🔥 ВАЖНО: Добавляем информационную строку о режиме
+  if (isDemo) {
+    keyboard.push([{
+      text: `👀 ДЕМО: 3 анкеты на город`,
+      callback_data: "demo_info",
+      hide: false
+    }]);
+  }
 
-    // 🔥 ВАЖНО: Добавляем информационную строку о режиме
-    if (isDemo) {
-      keyboard.push([{
-        text: `👀 ДЕМО: 3 анкеты на город`,
-        callback_data: "demo_info",
-        hide: false
-      }]);
-    }
+  console.log(`✅ [PAGINATION] Клавиатура создана: ${keyboard.length} строк, ${totalPages} страниц, демо: ${isDemo}`);
 
-    console.log(`✅ [PAGINATION] Клавиатура создана: ${keyboard.length} строк, ${totalPages} страниц, демо: ${isDemo}`);
+  // 🔥 ОТЛАДКА: Показываем структуру клавиатуры
+  if (keyboard.length > 0) {
+    console.log(`📋 [PAGINATION STRUCTURE] Строки клавиатуры:`);
+    keyboard.forEach((row, i) => {
+      console.log(`   Строка ${i + 1}: ${row.map(btn => `"${btn.text}"`).join(' | ')}`);
+    });
+  }
 
-    // 🔥 ОТЛАДКА: Показываем структуру клавиатуры
-    if (keyboard.length > 0) {
-      console.log(`📋 [PAGINATION STRUCTURE] Строки клавиатуры:`);
-      keyboard.forEach((row, i) => {
-        console.log(`   Строка ${i + 1}: ${row.map(btn => `"${btn.text}"`).join(' | ')}`);
-      });
-    }
-
-    return keyboard;
-  };
-
+  return keyboard;
+};
   // ===================== ОПТИМИЗИРОВАННАЯ ФУНКЦИЯ ПОЛУЧЕНИЯ ПРОФИЛЕЙ С LMDB =====================
   const getProfilesPage = async (page = 0, searchCountry = null, ageRange = null, searchCity = null, isDemo = false) => {
     try {
@@ -6918,92 +7126,120 @@ ${(fullProfile.phone || fullProfile.telegram || fullProfile.whatsapp) ? '━━�
       }
     });
   });
-  bot.action(/^page_(first|prev|next|last|\d+)_(\d+)$/, async (ctx) => {
-    const userId = ctx.from.id;
+  // 🔥 ОПТИМИЗИРОВАННЫЙ ОБРАБОТЧИК ПАГИНАЦИИ
+bot.action(/^page_(first|prev|next|last|\d+)_(\d+)$/, async (ctx) => {
+  const userId = ctx.from.id;
 
-    if (!acquireUserLock(userId, 2500)) {
-      console.log(
-        `⏳ [LOCK] Пользователь ${userId} уже выполняет действие, игнорируем клик`
+  // 🔥 УМЕНЬШАЕМ ТАЙМАУТ БЛОКИРОВКИ (было 60 секунд!)
+  if (!acquireUserLock(userId, 10000)) { // 👈 ТЕПЕРЬ 10 СЕКУНД
+    console.log(`⏳ [LOCK] Пользователь ${userId} уже выполняет действие`);
+    try {
+      await ctx.answerCbQuery("⏳ Подождите, обрабатываем предыдущий запрос...", { show_alert: true });
+    } catch (e) {}
+    return;
+  }
+
+  await messageQueue.add(async () => {
+    try {
+      const [_, action, currentPage] = ctx.match;
+      let newPage = parseInt(currentPage);
+
+      // 🔥 УПРОЩЕННАЯ ЛОГИКА ПАГИНАЦИИ
+      if (action === "first") {
+        newPage = 0;
+      } else if (action === "prev") {
+        newPage = Math.max(0, newPage - 1);
+      } else if (action === "next") {
+        newPage = newPage + 1; // Просто +1, проверка будет дальше
+      } else if (action === "last") {
+        const isDemo = ctx.session?.isDemo || false;
+        const filterKey = `country:${ctx.session.filterCountry || "all"}:age:${ctx.session.ageRange?.label || "all"}:city:${ctx.session.filterCity || "all"}`;
+        const filteredProfiles = cacheManager.getGlobalFilter(filterKey, isDemo);
+        newPage = Math.ceil(
+          (filteredProfiles?.length || 0) /
+            SCALING_CONFIG.PERFORMANCE.PROFILES_PER_PAGE
+        ) - 1;
+      } else {
+        newPage = parseInt(action);
+      }
+
+      // 🔥 ОГРАНИЧИВАЕМ МАКСИМАЛЬНУЮ СТРАНИЦУ (безопасный лимит)
+      const MAX_SAFE_PAGE = 2000; // 👈 Вместо 9243 ставим безопасный лимит
+      if (newPage > MAX_SAFE_PAGE) {
+        console.log(`⚠️ [PAGE LIMIT] Страница ${newPage} > ${MAX_SAFE_PAGE}, ограничиваем`);
+        newPage = MAX_SAFE_PAGE;
+      }
+
+      // 🔥 ОТВЕЧАЕМ ПОЛЬЗОВАТЕЛЮ СРАЗУ
+      await ctx.answerCbQuery(`📄 Загружаем страницу ${newPage + 1}...`);
+
+      await messageManager.clear(ctx, true);
+
+      ctx.session = ctx.session || {};
+      const isDemo = ctx.session.isDemo || false;
+      
+      // 🔥 ОГРАНИЧИВАЕМ КОЛИЧЕСТВО ПРОФИЛЕЙ НА СТРАНИЦУ ДЛЯ БОЛЬШИХ СТРАНИЦ
+      const originalPerPage = SCALING_CONFIG.PERFORMANCE.PROFILES_PER_PAGE;
+      if (newPage > 500) {
+        SCALING_CONFIG.PERFORMANCE.PROFILES_PER_PAGE = 1;
+        console.log(`📉 [HIGH PAGE] Страница ${newPage}, показываем 1 профиль`);
+      }
+
+      const profiles = await getProfilesPage(
+        newPage,
+        ctx.session.filterCountry,
+        ctx.session.ageRange,
+        ctx.session.filterCity,
+        isDemo
       );
-      try {
-        await ctx.answerCbQuery("⏳ Подождите, загружаем...");
-      } catch (e) {}
-      return;
-    }
 
-    await messageQueue.add(async () => {
-      try {
-        const [_, action, currentPage] = ctx.match;
-        let newPage = parseInt(currentPage);
+      // Восстанавливаем значение
+      SCALING_CONFIG.PERFORMANCE.PROFILES_PER_PAGE = originalPerPage;
 
-        if (action === "first") newPage = 0;
-        else if (action === "prev") newPage = Math.max(0, newPage - 1);
-        else if (action === "next") newPage = newPage + 1;
-        else if (action === "last") {
-          const isDemo = ctx.session?.isDemo || false;
-          const filterKey = `country:${
-            ctx.session.filterCountry || "all"
-          }:age:${ctx.session.ageRange?.label || "all"}:city:${
-            ctx.session.filterCity || "all"
-          }`;
-          const filteredProfiles = cacheManager.getGlobalFilter(
-            filterKey,
+      if (profiles.length) {
+        ctx.session.profilesPage = newPage;
+
+        // 🔥 ОГРАНИЧИВАЕМ ФОТО ДЛЯ БОЛЬШИХ СТРАНИЦ
+        for (let i = 0; i < profiles.length; i++) {
+          const isLast = i === profiles.length - 1;
+          
+          // Ограничиваем фото для высоких страниц
+          if (newPage > 500 && profiles[i].photos) {
+            profiles[i].photos = profiles[i].photos.slice(0, 3);
+            console.log(`📸 [PHOTO LIMIT] Ограничено до 3 фото для страницы ${newPage}`);
+          }
+          
+          await sendProfile(
+            ctx,
+            profiles[i],
+            newPage,
+            profiles.length,
+            isLast,
             isDemo
           );
-          newPage =
-            Math.ceil(
-              (filteredProfiles?.length || 0) /
-                SCALING_CONFIG.PERFORMANCE.PROFILES_PER_PAGE
-            ) - 1;
-        } else {
-          newPage = parseInt(action);
-        }
-
-        await messageManager.clear(ctx, true);
-
-        ctx.session = ctx.session || {};
-        const isDemo = ctx.session.isDemo || false;
-        const profiles = await getProfilesPage(
-          newPage,
-          ctx.session.filterCountry,
-          ctx.session.ageRange,
-          ctx.session.filterCity,
-          isDemo
-        );
-
-        if (profiles.length) {
-          ctx.session.profilesPage = newPage;
-
-          for (let i = 0; i < profiles.length; i++) {
-            const isLast = i === profiles.length - 1;
-            await sendProfile(
-              ctx,
-              profiles[i],
-              newPage,
-              profiles.length,
-              isLast,
-              isDemo
-            );
-            if (!isLast)
-              await new Promise((resolve) => setTimeout(resolve, 300));
+          
+          // Пауза между профилями
+          if (!isLast) {
+            await new Promise((resolve) => setTimeout(resolve, 500));
           }
-
-          await ctx.answerCbQuery(`📄 Страница ${newPage + 1}`);
-        } else {
-          const msg = await ctx.reply("Больше анкет нет");
-          messageManager.track(ctx.chat.id, msg.message_id);
-          await ctx.answerCbQuery("❌ Больше анкет нет");
         }
-      } catch (error) {
-        console.error("❌ Ошибка пагинации:", error);
-        try {
-          await ctx.answerCbQuery("❌ Ошибка загрузки");
-        } catch (e) {}
-      } finally {
-        releaseUserLock(userId);
+
+        console.log(`✅ [PAGINATION COMPLETE] Страница ${newPage + 1} загружена для ${userId}`);
+      } else {
+        const msg = await ctx.reply("❌ Больше анкет нет");
+        messageManager.track(ctx.chat.id, msg.message_id);
+        await ctx.answerCbQuery("❌ Больше анкет нет");
       }
-    });
+    } catch (error) {
+      console.error("❌ Ошибка пагинации:", error);
+      try {
+        await ctx.answerCbQuery("❌ Ошибка загрузки. Попробуйте снова");
+      } catch (e) {}
+    } finally {
+      releaseUserLock(userId);
+    }
   });
+});
 
   bot.action("clear_screen", async (ctx) => {
     const userId = ctx.from.id;

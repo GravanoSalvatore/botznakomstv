@@ -1724,7 +1724,7 @@ TON (The Open Network) - это быстрая и безопасная блок�
   };
 
   bot.action("buy_1day", (ctx) =>
-    handleSubscriptionPurchase(ctx, "1day", 99, 86400000)
+    handleSubscriptionPurchase(ctx, "1day", 1, 86400000)
   );
   bot.action("buy_1month", (ctx) =>
     handleSubscriptionPurchase(ctx, "1month", 499, 2592000000)
