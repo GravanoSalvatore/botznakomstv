@@ -1761,7 +1761,8 @@ const handleSubscriptionPurchase = async (ctx, planId, amount, duration) => {
         : planId === "1month" 
         ? "✅ Полный доступ на 30 дней\n• Все анкеты\n• Все контакты\n• Все страны\n• 🔥 Экономия 83%" 
         : "✅ Полный доступ на 365 дней\n• Все анкеты\n• Все контакты\n• Все страны\n• 🎉 Максимальная экономия",
-      payload: `magic_${planId}_${ctx.from.id}_${Date.now()}`,
+      payload: `${planId}_${ctx.from.id}_${Date.now()}`,
+// Просто: "1day_123456_timestamp"
       currency: "XTR",
       prices: [{ label: "Подписка Magic Bot", amount: amount }],
       start_parameter: `magic_${planId}`,
@@ -1918,86 +1919,107 @@ bot.on("pre_checkout_query", async (ctx) => {
 bot.on("successful_payment", async (ctx) => {
   console.log('🚀 ========== PAYMENT SUCCESS START ==========');
   
-  // 1. Логируем ВСЕ детали платежа
-  console.log('📅 Timestamp:', new Date().toISOString());
-  console.log('🌍 Environment:', process.env.NODE_ENV);
-  console.log('👤 User ID:', ctx.from.id);
-  console.log('👤 Username:', ctx.from.username);
-  console.log('💰 Payment object:', JSON.stringify(ctx.message.successful_payment, null, 2));
-  console.log('📦 Invoice payload:', ctx.message.successful_payment?.invoice_payload);
-  console.log('💳 Currency:', ctx.message.successful_payment?.currency);
-  console.log('💵 Total amount:', ctx.message.successful_payment?.total_amount);
-  console.log('📝 Provider charge ID:', ctx.message.successful_payment?.provider_payment_charge_id);
-  console.log('🤖 Telegram charge ID:', ctx.message.successful_payment?.telegram_payment_charge_id);
-  
-  // 2. Логируем конфигурацию бота
-  console.log('🤖 Bot token exists:', !!process.env.TELEGRAM_BOT_TOKEN);
-  console.log('🌐 Webhook URL:', process.env.WEBAPP_URL);
-  console.log('🏗 Render URL:', process.env.RENDER_EXTERNAL_URL);
-  
   const userId = ctx.from.id;
   const payment = ctx.message.successful_payment;
-  const [planId, _] = payment.invoice_payload.split("_");
   
-  console.log('🎯 Plan ID from payload:', planId);
-  console.log('🔍 Parsed user ID from payload:', _);
+  // 🔥 ИСПРАВЛЕННЫЙ ПАРСИНГ PAYLOAD
+  let planId;
+  const payloadParts = payment.invoice_payload.split("_");
   
-  console.log('✅ ========== PAYMENT DATA LOGGED !==========');
-
+  console.log('🔍 Payload to parse:', payment.invoice_payload);
+  console.log('📦 Payload parts:', payloadParts);
+  
+  // Определяем planId из payload
+  if (payloadParts.length >= 2) {
+    // Смотрим на первый элемент (если не "magic") или второй (если "magic")
+    if (payloadParts[0] === 'magic' && payloadParts.length >= 2) {
+      planId = payloadParts[1]; // "magic_1day_..."
+    } else {
+      planId = payloadParts[0]; // "1day_..."
+    }
+  } else {
+    planId = "1day"; // Фолбек
+  }
+  
+  // Нормализуем planId
+  const planMap = {
+    '1day': '1day',
+    '1month': '1month', 
+    'forever': 'forever',
+    '1year': 'forever', // если где-то 1year
+    'year': 'forever'
+  };
+  
+  planId = planMap[planId] || '1day';
+  
+  console.log(`🎯 Final planId: ${planId}`);
+  console.log(`👤 User ID: ${userId}`);
+  console.log(`💰 Amount: ${payment.total_amount} ${payment.currency}`);
+  
   try {
-    // 3. Очищаем чат (как у тебя было)
+    // 1. Очищаем чат
     await clearChat(ctx);
 
-    // 4. Сохраняем платеж в Firestore
+    // 2. Сохраняем платеж в Firestore
     console.log('💾 Saving payment to Firestore...');
-    const paymentRef = db.collection("payment_logs").doc(`${userId}_${Date.now()}`);
+    const paymentRef = ctx.db.collection("payment_logs").doc(`${userId}_${Date.now()}`);
     await paymentRef.set({
       userId: userId,
       telegramId: ctx.from.id,
-      username: ctx.from.username,
+      username: ctx.from.username || '',
+      firstName: ctx.from.first_name || '',
+      lastName: ctx.from.last_name || '',
       paymentData: payment,
       planId: planId,
+      amount: payment.total_amount,
+      currency: payment.currency,
       timestamp: admin.firestore.FieldValue.serverTimestamp(),
-      // environment: process.env.NODE_ENV || 'development',
-      status: 'processing'
+      environment: process.env.NODE_ENV || 'development',
+      status: 'processing',
+      payload: payment.invoice_payload,
+      payloadParts: payloadParts
     });
-    console.log('💾 Payment saved to Firestore with ID:', paymentRef.id);
+    console.log('✅ Payment saved to Firestore');
 
-    // 5. Активация подписки (твой существующий код)
-    const subRef = db.collection("subscriptions").doc(userId.toString());
+    // 3. Активируем подписку
+    console.log(`🔄 Activating subscription: ${planId}`);
+    const subRef = ctx.db.collection("subscriptions").doc(userId.toString());
     
-    console.log('🔄 Activating subscription for plan:', planId);
+    // Рассчитываем дату окончания
+    const startDate = new Date();
+    let endDate = new Date();
+    
+    if (planId === "1day") {
+      endDate.setDate(endDate.getDate() + 1);
+      console.log('📅 End date: +1 day');
+    } else if (planId === "1month") {
+      endDate.setDate(endDate.getDate() + 30);
+      console.log('📅 End date: +30 days');
+    } else if (planId === "forever") {
+      endDate.setFullYear(endDate.getFullYear() + 100); // "навсегда"
+      console.log('📅 End date: +100 years (forever)');
+    }
     
     const subData = {
-      userId,
+      userId: userId,
       plan: planId,
       subscriptionType: planId,
       startDate: admin.firestore.FieldValue.serverTimestamp(),
+      endDate: admin.firestore.Timestamp.fromDate(endDate),
       status: 'active',
       isActive: true,
       lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
       paymentMethod: "stars",
       paymentLogId: paymentRef.id,
       paymentAmount: payment.total_amount,
-      paymentCurrency: payment.currency
+      paymentCurrency: payment.currency,
+      telegramPaymentPayload: payment
     };
-
-    // Устанавливаем дату окончания
-    if (planId === "1day") {
-      subData.endDate = admin.firestore.Timestamp.fromDate(new Date(Date.now() + 86400000));
-      console.log('📅 End date set: 1 day');
-    } else if (planId === "1month") {
-      subData.endDate = admin.firestore.Timestamp.fromDate(new Date(Date.now() + 2592000000));
-      console.log('📅 End date set: 1 month');
-    } else if (planId === "forever") {
-      subData.endDate = admin.firestore.Timestamp.fromDate(new Date(Date.now() + 31536000000));
-      console.log('📅 End date set: 1 year (forever)');
-    }
-
+    
     await subRef.set(subData, { merge: true });
     console.log('✅ Subscription activated in Firestore');
 
-    // 6. Загружаем полный кэш
+    // 4. Загружаем полный кэш если нужно
     console.log('🚀 Loading full cache after payment...');
     const profilesModule = require("./profiles");
     if (profilesModule && profilesModule.loadFullCacheAfterPayment) {
@@ -2005,12 +2027,19 @@ bot.on("successful_payment", async (ctx) => {
     }
     console.log('✅ Full cache loaded');
 
-    // 7. Проверяем подписку
+    // 5. Проверяем подписку
     console.log('🔍 Checking subscription status...');
     const subscription = await checkSubscription(userId);
-    console.log('📊 Subscription check result:', subscription);
+    console.log('📊 Subscription check:', subscription.active ? 'ACTIVE' : 'INACTIVE');
 
-    // 8. Отправляем сообщение пользователю
+    // 6. Отправляем сообщение пользователю
+    const planNames = {
+      '1day': '1 день',
+      '1month': '1 месяц', 
+      'forever': '1 год (бессрочно)'
+    };
+    
+    const planName = planNames[planId] || planId;
     const keyboard = {
       inline_keyboard: [
         [
@@ -2019,17 +2048,21 @@ bot.on("successful_payment", async (ctx) => {
             callback_data: "all_countries_with_check",
           },
         ],
-        [{ text: "🧹 Очистить экран", callback_data: "clear_screen" }],
+        [
+          { text: "🧹 Очистить экран", callback_data: "clear_screen" },
+          { text: "📊 Мой профиль", callback_data: "my_profile" }
+        ],
       ],
     };
 
     const messageText = 
       `🎉 <b>ПЛАТЕЖ УСПЕШНО ОБРАБОТАН!</b>\n\n` +
-      `✅ Подписка активирована: <b>${planId === "1day" ? "1 день" : planId === "1month" ? "1 месяц" : "1 год"}</b>\n` +
+      `✅ Подписка активирована: <b>${planName}</b>\n` +
       `💰 Сумма: ${payment.total_amount} ${payment.currency}\n` +
-      `🆔 ID платежа: <code>${paymentRef.id}</code>\n\n` +
-      `${subscription.message || "Подписка активна!"}\n\n` +
-      `<b>📢 Не забудьте подписаться на наш канал <a href="https://t.me/+H6Eovikei9xiZWU0">MagicClubPrivate</a> для полного доступа!</b>`;
+      `👤 Пользователь: ${ctx.from.first_name || ''} ${ctx.from.last_name || ''}\n` +
+      `🆔 ID: <code>${userId}</code>\n\n` +
+      `${subscription.message || '✅ Подписка активна!'}\n\n` +
+      `<b>Теперь у вас полный доступ ко всем анкетам!</b>`;
 
     await ctx.reply(messageText, {
       parse_mode: "HTML",
@@ -2038,7 +2071,7 @@ bot.on("successful_payment", async (ctx) => {
     
     console.log('📨 Success message sent to user');
     
-    // 9. Обновляем статус платежа
+    // 7. Обновляем статус платежа
     await paymentRef.update({
       status: 'completed',
       subscriptionId: subRef.id,
@@ -2049,29 +2082,31 @@ bot.on("successful_payment", async (ctx) => {
 
   } catch (error) {
     console.error('❌ ========== PAYMENT PROCESSING ERROR ==========');
-    console.error('Error:', error);
-    console.error('Error stack:', error.stack);
-    console.error('Error message:', error.message);
+    console.error('Error:', error.message);
+    console.error('Stack:', error.stack);
     console.error('❌ ============================================');
     
     // Сохраняем ошибку
-    if (paymentRef) {
-      await paymentRef.update({
-        status: 'failed',
+    try {
+      const errorRef = ctx.db.collection("payment_errors").doc(`${userId}_${Date.now()}`);
+      await errorRef.set({
+        userId: userId,
         error: error.message,
-        errorStack: error.stack,
-        failedAt: admin.firestore.FieldValue.serverTimestamp()
+        stack: error.stack,
+        paymentData: payment,
+        timestamp: admin.firestore.FieldValue.serverTimestamp()
       });
+    } catch (e) {
+      console.error('Failed to save error:', e.message);
     }
     
     // Сообщаем пользователю
     await ctx.reply(
       `⚠️ <b>ПЛАТЕЖ ПРИНЯТ, НО ВОЗНИКЛА ОШИБКА</b>\n\n` +
       `✅ Средства списаны\n` +
-      `❌ Ошибка активации подписки\n\n` +
-      `🆔 ID платежа: <code>${paymentRef?.id || 'неизвестно'}</code>\n` +
+      `❌ Ошибка: ${error.message.substring(0, 100)}\n\n` +
       `📞 Свяжитесь с поддержкой: @MagicAdd\n\n` +
-      `<i>Сообщите этот ID для быстрого решения проблемы</i>`,
+      `<i>Сообщите о проблеме для быстрого решения</i>`,
       { parse_mode: "HTML" }
     );
   }
