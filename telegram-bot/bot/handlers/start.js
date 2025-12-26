@@ -1762,7 +1762,6 @@ const handleSubscriptionPurchase = async (ctx, planId, amount, duration) => {
         ? "✅ Полный доступ на 30 дней\n• Все анкеты\n• Все контакты\n• Все страны\n• 🔥 Экономия 83%" 
         : "✅ Полный доступ на 365 дней\n• Все анкеты\n• Все контакты\n• Все страны\n• 🎉 Максимальная экономия",
       payload: `${planId}_${ctx.from.id}_${Date.now()}`,
-// Просто: "1day_123456_timestamp"
       currency: "XTR",
       prices: [{ label: "Подписка Magic Bot", amount: amount }],
       start_parameter: `magic_${planId}`,
@@ -1772,7 +1771,6 @@ const handleSubscriptionPurchase = async (ctx, planId, amount, duration) => {
         env: process.env.NODE_ENV || "development",
         url: "https://botznakomstv-m1pe.onrender.com"
       }),
-      // Дополнительные параметры для лучшей совместимости
       need_name: false,
       need_phone_number: false,
       need_email: false,
@@ -1784,43 +1782,9 @@ const handleSubscriptionPurchase = async (ctx, planId, amount, duration) => {
 
     // 🔥 СОЗДАЕМ ИНВОЙС
     try {
-      const message = await ctx.replyWithInvoice(invoiceData);
+      await ctx.replyWithInvoice(invoiceData);
       console.log('✅ Invoice created successfully!');
       console.log('💰 ==== INVOICE CREATED ====');
-      
-      // 🔥 ДОПОЛНИТЕЛЬНАЯ ИНФОРМАЦИЯ ДЛЯ ПОЛЬЗОВАТЕЛЯ
-      await ctx.reply(
-        `ℹ️ <b>ИНФОРМАЦИЯ О ПЛАТЕЖЕ</b>\n\n` +
-        // `Сервер: <code>Render (polling mode)</code>\n` +
-        `Если возникла ошибка:\n` +
-        `1. Нажмите "Попробовать снова"\n` +
-        `2. Подождите 30 секунд\n` +
-        `3. Используйте USDT/TON\n\n` +
-        // `<i>Проблемы с Render иногда возникают на бесплатном тарифе</i>`,
-        {
-          parse_mode: 'HTML',
-          reply_markup: {
-            inline_keyboard: [
-              [
-                { 
-                  text: "🔄 Попробовать снова", 
-                  callback_data: `start_pay_${planId}` 
-                }
-              ],
-              [
-                { 
-                  text: "💲 Оплатить USDT", 
-                  callback_data: "show_crypto_plans" 
-                },
-                { 
-                  text: "💎 Оплатить TON", 
-                  callback_data: "show_ton_plans" 
-                }
-              ]
-            ]
-          }
-        }
-      );
       
     } catch (invoiceError) {
       console.error('❌ ==== INVOICE CREATION ERROR ====');
@@ -1846,9 +1810,8 @@ const handleSubscriptionPurchase = async (ctx, planId, amount, duration) => {
         `❌ <b>ОШИБКА СОЗДАНИЯ ПЛАТЕЖА</b>\n\n` +
         `<b>Причина:</b> ${errorMessage}\n\n` +
         `<b>Решение:</b>\n` +
-        // `1. Проверьте что Stars активированы в @BotFather\n` +
-        `2. Используйте USDT или TON\n` +
-        `3. Свяжитесь с поддержкой: @MagicAdd\n\n` +
+        `1. Используйте USDT или TON\n` +
+        `2. Свяжитесь с поддержкой: @MagicAdd\n\n` +
         `<i>Код ошибки: ${invoiceError.response?.error_code || 'неизвестно'}</i>`,
         {
           parse_mode: 'HTML',
