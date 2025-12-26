@@ -1723,79 +1723,161 @@ TON (The Open Network) - это быстрая и безопасная блок�
   //   }
   // };
 const handleSubscriptionPurchase = async (ctx, planId, amount, duration) => {
-  console.log('💰 ==== CREATING STARS INVOICE ====');
-  console.log('User:', ctx.from.id);
-  console.log('Plan:', planId);
-  console.log('Amount:', amount);
+  console.log('🚀 ==== RENDER STARS PAYMENT START ====');
+  console.log('User:', ctx.from.id, ctx.from.username);
+  console.log('Plan:', planId, 'Amount:', amount);
   console.log('Environment:', process.env.NODE_ENV || 'development');
-  console.log('Webhook URL:', process.env.WEBAPP_URL);
-  
+  console.log('Bot URL:', 'https://botznakomstv-m1pe.onrender.com');
+  console.log('======================================');
+
   try {
-    // 🔥 ВАЖНО ДЛЯ RENDER: Проверяем токен
-    if (!process.env.TELEGRAM_BOT_TOKEN) {
-      throw new Error('TELEGRAM_BOT_TOKEN не найден!');
+    // 🔥 ВАЖНО ДЛЯ RENDER: Проверяем доступность бота
+    console.log('🔍 Checking bot availability on Render...');
+    
+    try {
+      const me = await ctx.telegram.getMe();
+      console.log('✅ Bot is online:', me.username);
+    } catch (botError) {
+      console.error('❌ Bot check failed:', botError.message);
+      await ctx.reply(
+        '⚠️ <b>ПРОБЛЕМА С СЕРВЕРОМ RENDER</b>\n\n' +
+        'Бот временно недоступен на сервере.\n\n' +
+        '<b>Попробуйте:</b>\n' +
+        '1. Через 2-3 минуты\n' +
+        '2. Оплату USDT/TON\n' +
+        '3. Написать в поддержку: @MagicAdd',
+        { parse_mode: 'HTML' }
+      );
+      return;
     }
+
+    // 🔥 СОЗДАЕМ ИНВОЙС ДЛЯ RENDER
+    console.log('💰 Creating invoice for Render...');
     
-    // 🔥 ДЛЯ RENDER: Добавляем provider_data
-    const invoice = await ctx.replyWithInvoice({
-      title: `Подписка на ${planId === "1day" ? "1 день" : planId === "1month" ? "1 месяц" : "1 год"}`,
-      description: planId === "1day" ? "Доступ на 24 часа" : 
-                   planId === "1month" ? "Доступ на 30 дней" : 
-                   "Доступ на 365 дней",
-      payload: `${planId}_${ctx.from.id}_${Date.now()}`,
+    const invoiceData = {
+      title: `Подписка Magic Bot: ${planId === "1day" ? "1 день" : planId === "1month" ? "1 месяц" : "1 год"}`,
+      description: planId === "1day" 
+        ? "✅ Полный доступ на 24 часа\n• Все анкеты\n• Все контакты\n• Все страны" 
+        : planId === "1month" 
+        ? "✅ Полный доступ на 30 дней\n• Все анкеты\n• Все контакты\n• Все страны\n• 🔥 Экономия 83%" 
+        : "✅ Полный доступ на 365 дней\n• Все анкеты\n• Все контакты\n• Все страны\n• 🎉 Максимальная экономия",
+      payload: `magic_${planId}_${ctx.from.id}_${Date.now()}`,
       currency: "XTR",
-      prices: [{ label: "Подписка", amount: amount }],
-      start_parameter: `${planId}_sub`,
+      prices: [{ label: "Подписка Magic Bot", amount: amount }],
+      start_parameter: `magic_${planId}`,
       provider_data: JSON.stringify({
-        bot_username: process.env.BOT_USERNAME || 'magicboss_bot',
-        webhook_url: process.env.WEBAPP_URL
-      })
-    });
-    
-    console.log('✅ Invoice created successfully on Render');
-    console.log('💰 ==== INVOICE CREATED ====');
-    
-  } catch (error) {
-    console.error('❌ ==== INVOICE CREATION FAILED ON RENDER ====');
-    console.error('Full error:', error);
-    console.error('Error code:', error.response?.error_code);
-    console.error('Error description:', error.response?.description);
-    console.error('Bot token (first 10):', process.env.TELEGRAM_BOT_TOKEN?.substring(0, 10));
-    console.error('NODE_ENV:', process.env.NODE_ENV);
-    console.error('❌ ==============================');
-    
-    // 🔥 СООБЩЕНИЕ ДЛЯ ПОЛЬЗОВАТЕЛЯ НА RENDER
-    await ctx.reply(
-      `❌ <b>ПЛАТЕЖНАЯ СИСТЕМА НА RENDER</b>\n\n` +
-      `⚠️ Временная ошибка на сервере\n\n` +
-      `Попробуйте:\n` +
-      `1. Нажмите кнопку оплаты еще раз\n` +
-      `2. Подождите 1 минуту\n` +
-      `3. Если не работает - используйте USDT/TON\n\n` +
-      `<i>Сообщите в поддержку если ошибка повторяется: @MagicAdd</i>`,
-      {
-        parse_mode: "HTML",
-        reply_markup: {
-          inline_keyboard: [
-            [
-              { 
-                text: "🔄 Попробовать снова", 
-                callback_data: `start_pay_${planId}` 
-              }
-            ],
-            [
-              { 
-                text: "💲 Оплатить USDT", 
-                callback_data: "show_crypto_plans" 
-              },
-              { 
-                text: "💎 Оплатить TON", 
-                callback_data: "show_ton_plans" 
-              }
+        bot: "magicboss_bot",
+        mode: "polling",
+        env: process.env.NODE_ENV || "development",
+        url: "https://botznakomstv-m1pe.onrender.com"
+      }),
+      // Дополнительные параметры для лучшей совместимости
+      need_name: false,
+      need_phone_number: false,
+      need_email: false,
+      need_shipping_address: false,
+      is_flexible: false
+    };
+
+    console.log('📦 Invoice data:', JSON.stringify(invoiceData, null, 2));
+
+    // 🔥 СОЗДАЕМ ИНВОЙС
+    try {
+      const message = await ctx.replyWithInvoice(invoiceData);
+      console.log('✅ Invoice created successfully!');
+      console.log('💰 ==== INVOICE CREATED ====');
+      
+      // 🔥 ДОПОЛНИТЕЛЬНАЯ ИНФОРМАЦИЯ ДЛЯ ПОЛЬЗОВАТЕЛЯ
+      await ctx.reply(
+        `ℹ️ <b>ИНФОРМАЦИЯ О ПЛАТЕЖЕ</b>\n\n` +
+        `Сервер: <code>Render (polling mode)</code>\n` +
+        `Если возникла ошибка:\n` +
+        `1. Нажмите "Попробовать снова"\n` +
+        `2. Подождите 30 секунд\n` +
+        `3. Используйте USDT/TON\n\n` +
+        `<i>Проблемы с Render иногда возникают на бесплатном тарифе</i>`,
+        {
+          parse_mode: 'HTML',
+          reply_markup: {
+            inline_keyboard: [
+              [
+                { 
+                  text: "🔄 Попробовать снова", 
+                  callback_data: `start_pay_${planId}` 
+                }
+              ],
+              [
+                { 
+                  text: "💲 Оплатить USDT", 
+                  callback_data: "show_crypto_plans" 
+                },
+                { 
+                  text: "💎 Оплатить TON", 
+                  callback_data: "show_ton_plans" 
+                }
+              ]
             ]
-          ]
+          }
         }
+      );
+      
+    } catch (invoiceError) {
+      console.error('❌ ==== INVOICE CREATION ERROR ====');
+      console.error('Error:', invoiceError.message);
+      console.error('Code:', invoiceError.response?.error_code);
+      console.error('Description:', invoiceError.response?.description);
+      console.error('❌ ===============================');
+      
+      // 🔥 ДЕТАЛЬНОЕ СООБЩЕНИЕ ОБ ОШИБКЕ
+      let errorMessage = '';
+      
+      if (invoiceError.response?.error_code === 400) {
+        errorMessage = 'Неверные параметры платежа. Проблема с конфигурацией бота.';
+      } else if (invoiceError.response?.error_code === 403) {
+        errorMessage = 'Платежи отключены для этого бота. Проверьте настройки в @BotFather.';
+      } else if (invoiceError.response?.description?.includes('currency')) {
+        errorMessage = 'Проблема с валютой платежа (Stars).';
+      } else {
+        errorMessage = invoiceError.response?.description || invoiceError.message;
       }
+      
+      await ctx.reply(
+        `❌ <b>ОШИБКА СОЗДАНИЯ ПЛАТЕЖА</b>\n\n` +
+        `<b>Причина:</b> ${errorMessage}\n\n` +
+        `<b>Решение:</b>\n` +
+        `1. Проверьте что Stars активированы в @BotFather\n` +
+        `2. Используйте USDT или TON\n` +
+        `3. Свяжитесь с поддержкой: @MagicAdd\n\n` +
+        `<i>Код ошибки: ${invoiceError.response?.error_code || 'неизвестно'}</i>`,
+        {
+          parse_mode: 'HTML',
+          reply_markup: {
+            inline_keyboard: [
+              [
+                { text: "📞 Поддержка", url: "https://t.me/MagicAdd" },
+                { text: "🔄 Повторить", callback_data: `start_pay_${planId}` }
+              ]
+            ]
+          }
+        }
+      );
+    }
+
+  } catch (outerError) {
+    console.error('🔥 ==== CRITICAL RENDER ERROR ====');
+    console.error('Critical error:', outerError);
+    console.error('Stack:', outerError.stack);
+    console.error('🔥 =============================');
+    
+    await ctx.reply(
+      `🔥 <b>КРИТИЧЕСКАЯ ОШИБКА RENDER</b>\n\n` +
+      `Платежная система временно не работает на сервере Render.\n\n` +
+      `<b>Используйте:</b>\n` +
+      `• 💲 USDT (CryptoPay)\n` +
+      `• 💎 TON (CryptoPay)\n\n` +
+      `Или попробуйте позже через 10 минут.\n\n` +
+      `<i>Техническая информация: ${outerError.message}</i>`,
+      { parse_mode: 'HTML' }
     );
   }
 };
@@ -1809,21 +1891,27 @@ const handleSubscriptionPurchase = async (ctx, planId, amount, duration) => {
     handleSubscriptionPurchase(ctx, "forever", 1999, 31536000000)
   );
 bot.on("pre_checkout_query", async (ctx) => {
-  console.log('🔍 ========== PRE CHECKOUT QUERY ==========');
-  console.log('User ID:', ctx.from.id);
+  console.log('🎯 ==== PRE_CHECKOUT ON RENDER ====');
   console.log('Query ID:', ctx.preCheckoutQuery.id);
-  console.log('Currency:', ctx.preCheckoutQuery.currency);
+  console.log('User:', ctx.from.id);
   console.log('Amount:', ctx.preCheckoutQuery.total_amount);
   console.log('Payload:', ctx.preCheckoutQuery.invoice_payload);
-  console.log('✅ =====================================');
   
   try {
+    // Всегда подтверждаем для теста
     await ctx.answerPreCheckoutQuery(true);
-    console.log('✅ Pre-checkout approved');
+    console.log('✅ Pre-checkout approved!');
+    
   } catch (error) {
-    console.error('❌ Pre-checkout error:', error);
-    console.error('Error response:', error.response);
-    await ctx.answerPreCheckoutQuery(false, "Payment system error");
+    console.error('❌ Pre-checkout error:', error.message);
+    console.error('Error details:', error.response);
+    
+    // Пытаемся отправить хоть какой-то ответ
+    try {
+      await ctx.answerPreCheckoutQuery(false, "Payment error. Try USDT/TON.");
+    } catch (e) {
+      console.error('❌ Cannot even send error response:', e.message);
+    }
   }
 });
   // bot.on("pre_checkout_query", (ctx) => ctx.answerPreCheckoutQuery(true));
