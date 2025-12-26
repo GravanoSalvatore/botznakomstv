@@ -4,7 +4,7 @@ rm telegram-bot/bot/handlers/bot.lock
 kill -9 18044 17397 9886 2371 22658 20770 23467
 
 
-
+ps aux | grep node
 
 
 

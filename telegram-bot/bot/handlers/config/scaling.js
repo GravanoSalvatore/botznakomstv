@@ -1,0 +1,39 @@
+// config/scaling.js
+const SCALING_CONFIG = {
+  MESSAGE_QUEUE: {
+    CONCURRENCY: 50,
+    INTERVAL: 1000,
+    INTERVAL_CAP: 200,
+    TIMEOUT: 30000,
+  },
+
+  CACHE: {
+    PROFILES_TTL: 30 * 24 * 60 * 60, // 30 дней
+    FILTERS_TTL: 24 * 60 * 60, // ← 24 ЧАСА вместо 10 минут!
+    SESSIONS_TTL: 7 * 24 * 60 * 60, // 7 дней
+    SUBSCRIPTION_TTL: 24 * 60 * 60, // 24 часа для проверки подписки
+    CHANNEL_TTL: 5 * 60, // 5 минут для канала
+    MAX_FILTER_KEYS: 500,
+    CHECKPERIOD: 300,
+  },
+
+  PERFORMANCE: {
+    PROFILES_PER_PAGE: 1,
+    MAX_CAPTION_LENGTH: 900,
+    MESSAGE_TTL: 86400000,
+    FILTER_CHUNK_SIZE: 500,
+    MAX_CONCURRENT_FILTERS: 10,
+    PARALLEL_CHUNKS: 8,
+    PARALLEL_BATCH_SIZE: 10000,
+  },
+  
+  PAGINATION: {
+    MAX_SAFE_PAGE: 20000,
+    PROFILES_PER_PAGE_NORMAL: 1,
+    PROFILES_PER_PAGE_HIGH: 1,
+    DELAY_BETWEEN_PROFILES: 500,
+    USER_LOCK_TIMEOUT: 10000,
+  },
+};
+
+module.exports = { SCALING_CONFIG };
