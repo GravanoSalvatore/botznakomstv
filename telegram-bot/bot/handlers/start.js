@@ -1854,7 +1854,7 @@ bot.on("successful_payment", async (ctx) => {
   console.log('🎯 Plan ID from payload:', planId);
   console.log('🔍 Parsed user ID from payload:', _);
   
-  console.log('✅ ========== PAYMENT DATA LOGGED ==========');
+  console.log('✅ ========== PAYMENT DATA LOGGED !==========');
 
   try {
     // 3. Очищаем чат (как у тебя было)
