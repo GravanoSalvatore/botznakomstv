@@ -298,7 +298,7 @@
 
 
 
-
+//payments.js
 const admin = require('firebase-admin');
 
 module.exports = (bot, db) => {
@@ -517,4 +517,4 @@ module.exports = (bot, db) => {
       await ctx.reply('⚠️ Ошибка при отмене');
     }
   });
-};
+}; 

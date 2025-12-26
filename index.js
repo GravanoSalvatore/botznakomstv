@@ -71,53 +71,6 @@ const loadHandler = (name) => {
   'webapp'
 ].forEach(loadHandler);
 
-// Запуск бота
-// const startBot = async () => {
-//   try {
-   
-// if (process.env.NODE_ENV === 'production') {
-//   const express = require('express');
-//   const app = express();
-//   const PORT = process.env.PORT || 3000;
-  
-//   app.use(express.json());
-  
-//   // ✅ Обработка callback_data
-//   app.use(bot.webhookCallback('/webhook', {
-//     allowedUpdates: ['message', 'callback_query', 'chat_member', 'my_chat_member']
-//   }));
-  
-//   // ✅ Установка вебхука
-//   await bot.telegram.setWebhook(`${process.env.WEBAPP_URL}/webhook`, {
-//     allowed_updates: ['message', 'callback_query', 'chat_member', 'my_chat_member']
-//   });
-  
-//   // ✅ Health check для Render
-//   app.get('/health', (req, res) => {
-//     res.status(200).json({ status: 'OK', timestamp: new Date().toISOString() });
-//   });
-  
-//   // ✅ Корневой endpoint
-//   app.get('/', (req, res) => {
-//     res.status(200).json({ service: 'Telegram Bot', status: 'running' });
-//   });
-  
-//   // ✅ Явно слушаем порт с указанием хоста
-//   app.listen(PORT, '0.0.0.0', () => {
-//     console.log(`[Production] Бот запущен на порту ${PORT}`);
-//   });
-// } else {
-//   // Локальная разработка - polling
-//   await bot.launch();
-//   console.log('[Development] Бот запущен в polling режиме');
-// }
-//   } catch (error) {
-//     console.error('[Startup Error] Ошибка запуска бота:', error);
-//     process.exit(1);
-//   }
-// };
-
-// Запуск бота
 const startBot = async () => {
   try {
     if (process.env.NODE_ENV === 'production') {
