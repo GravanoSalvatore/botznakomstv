@@ -510,7 +510,7 @@ module.exports = (bot, db) => {
       });
       
       await ctx.deleteMessage();
-      await ctx.reply('ℹ️ Платеж отменен');
+      await ctx.reply('ℹ️ Платеж отменен!');
 
     } catch (error) {
       console.error('Payment cancel error:', error);
