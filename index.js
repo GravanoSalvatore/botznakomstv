@@ -23,8 +23,15 @@ console.log('[Firebase] Инициализирован');
 
 // Инициализация Telegraf
 const { Telegraf, session } = require('telegraf');
+// const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN, {
+//   telegram: { webhookReply: process.env.NODE_ENV === 'production' }
+// });
+const https = require('https'); // ← ДОБАВЬ ЭТУ СТРОКУ
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN, {
-  telegram: { webhookReply: process.env.NODE_ENV === 'production' }
+  telegram: { 
+    webhookReply: true,
+    agent: require('https').globalAgent
+  }
 });
 bot.telegram.setMyCommands([
   { command: '/start', description: '🟢 Перезапустить бота' },
@@ -72,6 +79,13 @@ const loadHandler = (name) => {
 ].forEach(loadHandler);
 
 const startBot = async () => {
+  // 🔥 ДОБАВЬ ЭТУ ПРОВЕРКУ ДЛЯ RENDER
+  console.log('=== RENDER STARTUP CHECK ===');
+  console.log('NODE_ENV:', process.env.NODE_ENV);
+  console.log('WEBAPP_URL:', process.env.WEBAPP_URL);
+  console.log('BOT_TOKEN_EXISTS:', !!process.env.TELEGRAM_BOT_TOKEN);
+  console.log('BOT_USERNAME:', process.env.BOT_USERNAME);
+  console.log('==========================');
   try {
     if (process.env.NODE_ENV === 'production') {
       const express = require('express');

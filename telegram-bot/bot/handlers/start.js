@@ -1723,15 +1723,21 @@ TON (The Open Network) - это быстрая и безопасная блок�
   //   }
   // };
 const handleSubscriptionPurchase = async (ctx, planId, amount, duration) => {
+  console.log('💰 ==== CREATING STARS INVOICE ====');
+  console.log('User:', ctx.from.id);
+  console.log('Plan:', planId);
+  console.log('Amount:', amount);
+  console.log('Environment:', process.env.NODE_ENV || 'development');
+  console.log('Webhook URL:', process.env.WEBAPP_URL);
+  
   try {
-    console.log('💰 ========== CREATING INVOICE ==========');
-    console.log('User:', ctx.from.id, ctx.from.username);
-    console.log('Plan:', planId);
-    console.log('Amount:', amount);
-    console.log('Environment:', process.env.NODE_ENV);
-    console.log('Bot token:', process.env.TELEGRAM_BOT_TOKEN?.substring(0, 10) + '...');
+    // 🔥 ВАЖНО ДЛЯ RENDER: Проверяем токен
+    if (!process.env.TELEGRAM_BOT_TOKEN) {
+      throw new Error('TELEGRAM_BOT_TOKEN не найден!');
+    }
     
-    await ctx.replyWithInvoice({
+    // 🔥 ДЛЯ RENDER: Добавляем provider_data
+    const invoice = await ctx.replyWithInvoice({
       title: `Подписка на ${planId === "1day" ? "1 день" : planId === "1month" ? "1 месяц" : "1 год"}`,
       description: planId === "1day" ? "Доступ на 24 часа" : 
                    planId === "1month" ? "Доступ на 30 дней" : 
@@ -1740,19 +1746,57 @@ const handleSubscriptionPurchase = async (ctx, planId, amount, duration) => {
       currency: "XTR",
       prices: [{ label: "Подписка", amount: amount }],
       start_parameter: `${planId}_sub`,
+      provider_data: JSON.stringify({
+        bot_username: process.env.BOT_USERNAME || 'magicboss_bot',
+        webhook_url: process.env.WEBAPP_URL
+      })
     });
     
-    console.log('✅ Invoice created successfully');
-    console.log('💰 =====================================');
+    console.log('✅ Invoice created successfully on Render');
+    console.log('💰 ==== INVOICE CREATED ====');
     
   } catch (error) {
-    console.error('❌ INVOICE CREATION ERROR:');
-    console.error('Error:', error);
-    console.error('Response:', error.response);
-    console.error('Code:', error.response?.error_code);
-    console.error('Description:', error.response?.description);
+    console.error('❌ ==== INVOICE CREATION FAILED ON RENDER ====');
+    console.error('Full error:', error);
+    console.error('Error code:', error.response?.error_code);
+    console.error('Error description:', error.response?.description);
+    console.error('Bot token (first 10):', process.env.TELEGRAM_BOT_TOKEN?.substring(0, 10));
+    console.error('NODE_ENV:', process.env.NODE_ENV);
+    console.error('❌ ==============================');
     
-    await ctx.reply(`❌ Ошибка создания платежа: ${error.response?.description || error.message}`);
+    // 🔥 СООБЩЕНИЕ ДЛЯ ПОЛЬЗОВАТЕЛЯ НА RENDER
+    await ctx.reply(
+      `❌ <b>ПЛАТЕЖНАЯ СИСТЕМА НА RENDER</b>\n\n` +
+      `⚠️ Временная ошибка на сервере\n\n` +
+      `Попробуйте:\n` +
+      `1. Нажмите кнопку оплаты еще раз\n` +
+      `2. Подождите 1 минуту\n` +
+      `3. Если не работает - используйте USDT/TON\n\n` +
+      `<i>Сообщите в поддержку если ошибка повторяется: @MagicAdd</i>`,
+      {
+        parse_mode: "HTML",
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { 
+                text: "🔄 Попробовать снова", 
+                callback_data: `start_pay_${planId}` 
+              }
+            ],
+            [
+              { 
+                text: "💲 Оплатить USDT", 
+                callback_data: "show_crypto_plans" 
+              },
+              { 
+                text: "💎 Оплатить TON", 
+                callback_data: "show_ton_plans" 
+              }
+            ]
+          ]
+        }
+      }
+    );
   }
 };
   bot.action("buy_1day", (ctx) =>
